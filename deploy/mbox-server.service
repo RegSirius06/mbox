@@ -1,0 +1,20 @@
+[Unit]
+Description=MBox transport server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mbox-server -config /etc/mbox/server.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/etc/mbox
+
+[Install]
+WantedBy=multi-user.target

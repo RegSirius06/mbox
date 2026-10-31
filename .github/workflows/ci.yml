@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Server
+        run: |
+          cd server
+          gofmt -w *.go
+          git diff --exit-code
+          go vet *.go
+          go build *.go
+      - name: Client
+        run: |
+          cd client
+          gofmt -w *.go
+          git diff --exit-code
+          go vet *.go
+          go build *.go
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build *.go
+      - name: Relay
+        run: |
+          cd relay
+          gofmt -w *.go
+          git diff --exit-code
+          CGO_ENABLED=0 go build *.go
+      - name: Tools
+        run: |
+          cd tools/mbox-key && go build *.go
+          cd ../mbox-link && go build *.go
+          cd ../..
+          python3 -m py_compile tools/mboxctl/mboxctl.py
+          bash -n install.sh

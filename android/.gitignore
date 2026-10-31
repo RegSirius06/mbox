@@ -1,0 +1,8 @@
+.gradle/
+.bootstrap/
+local.properties
+**/build/
+*.apk
+*.aab
+core/libmbox.so
+app/src/main/jniLibs/*/libmbox.so

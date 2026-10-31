@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.mbox.android'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'io.mbox.android'
+        minSdk 29
+        targetSdk 33
+        versionCode 3
+        versionName '1.0.0-beta.1'
+
+        // The MBox Go core is currently built only for Android arm64.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // libmbox.so is a PIE executable rather than a JNI library. It must
+            // be extracted to nativeLibraryDir so Android permits execve().
+            useLegacyPackaging = true
+        }
+    }
+}
+
+dependencies {
+    implementation files('libs/hev-socks5-tunnel.aar')
+}

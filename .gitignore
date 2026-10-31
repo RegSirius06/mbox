@@ -1,0 +1,47 @@
+# Build outputs
+*.exe
+*.so
+*.apk
+*.aab
+*.o
+*.out
+relay.fcgi
+/build/
+**/build/
+android/.gradle/
+android/local.properties
+
+# MBox secrets and provisioning
+*.psk
+*.key
+*.mbox
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+provisioning/
+*provisioning*.tar.gz
+*backup*.tar.gz
+
+# Runtime / production state
+server.json
+mbox.conf
+relay.json
+server.pub
+.env
+.env.*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+
+# Release binaries
+dist/
