@@ -50,6 +50,18 @@ Be precise about these limitations when reviewing the project:
 
 ---
 
+## Documentation
+
+- [Administration](docs/ADMIN.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Cover traffic](docs/COVER.md)
+- [Security](docs/SECURITY.md)
+- [Testing](docs/TESTING.md)
+- [Project status](docs/STATUS.md)
+- [Database schema](docs/SCHEMA.sql)
+
+---
+
 # 1. Architecture
 
 Typical production path:
