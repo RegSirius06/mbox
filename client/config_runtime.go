@@ -78,8 +78,8 @@ func loadRuntimeConfig(path string) error {
 	if cfg.Crypto.ServerPublicKeyFile == "" {
 		return fmt.Errorf("crypto.server_public_key_file is required")
 	}
-	if cfg.Crypto.ClientID != "" && !validClientID(cfg.Crypto.ClientID) {
-		return fmt.Errorf("invalid crypto.client_id %q", cfg.Crypto.ClientID)
+	if !validClientID(cfg.Crypto.ClientID) {
+		return fmt.Errorf("Noise-only MBox requires valid crypto.client_id, got %q", cfg.Crypto.ClientID)
 	}
 
 	listen = cfg.Transport.Listen

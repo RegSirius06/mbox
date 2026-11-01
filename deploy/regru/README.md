@@ -1,7 +1,33 @@
-# REG.RU deployment-specific routing
+# REG.RU shared-hosting deployment
 
-`mboxctl relay bundle/deploy` manages the generated `relay.fcgi` and `relay.json`.
+The REG.RU/shared-hosting frontend is a separate component from the MBox origin VPS and from the eventual Internet exit.
 
-The exact `.htaccess`/FastCGI activation rule is provider/account specific and is intentionally not guessed here. Before publishing a reproducible deployment, copy the currently working live `.htaccess`, remove account/domain-specific data if needed, review it, and commit a sanitized `.htaccess.example`.
+A typical layout is:
 
-Do not replace a working shared-host `.htaccess` blindly: it may also contain unrelated website configuration.
+```text
+client -> HTTPS -> REG.RU shared-host site/FastCGI -> HTTPS -> MBox origin -> sing-box -> chosen exit
+```
+
+The origin can be RU/FI/PL/etc.; sing-box can route onward to another server. Do not install the decoy website on the origin merely because the origin currently happens to be an RU VPS.
+
+`mboxctl relay bundle/deploy` manages generated `relay.fcgi` and `relay.json`. The bundle also contains:
+
+```text
+site/index.html
+site/404.html
+```
+
+These are the current `Private Rooms` decoy pages. A normal relay deploy deliberately leaves an existing web site untouched. Add `--site` only when you intentionally want MBox to publish these pages into the chosen shared-host web root:
+
+```bash
+mboxctl relay deploy \
+  --ssh USER@HOST \
+  --remote-dir /path/to/webroot \
+  --site
+```
+
+Existing site files receive timestamped rollback names before replacement.
+
+The exact `.htaccess`/FastCGI activation rule is provider/account specific and is intentionally not guessed here. Preserve the currently working FastCGI mapping. Before publishing a generic `.htaccess` example, sanitize account/domain-specific values and verify it on a disposable/shared-host test path.
+
+Do not replace a working shared-host `.htaccess` blindly: it may contain unrelated website configuration.

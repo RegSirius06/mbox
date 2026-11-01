@@ -1,6 +1,6 @@
 # MBox
 
-> **1.0.0-beta.1:** first beta release of the complete MBox stack, including Android VPN client, authenticated multiplexed transport, REG.RU FastCGI relay tooling, administration CLI and optional server-originated cover traffic.
+> **1.0.0-beta.2:** Noise-only security + reliability/resource-control beta. The custom handshake is removed; DOWN delivery is acknowledged/replayable, stream flow control is bounded, subscriptions support limits/expiry, and observable HTTP flow sizes/timing are deliberately less deterministic.
 
 MBox is an experimental encrypted multiplexed TCP transport designed to work through HTTP intermediaries that buffer complete requests/responses and therefore cannot carry an ordinary long-lived streaming tunnel.
 
@@ -16,13 +16,18 @@ The current implementation includes:
 - TCP multiplexing over one logical MBox session;
 - per-device `client_id` authentication;
 - one independently revocable PSK per client;
-- X25519 key agreement with an ephemeral client key and a static server key;
-- HMAC-SHA256 authentication;
-- AES-256-GCM encrypted records;
-- independent UP/DOWN keys and counters;
+- Noise `NKpsk0` handshake with fresh client/server ephemeral X25519 keys, the provisioned server static X25519 key and per-client 256-bit PSK;
+- `Noise_NKpsk0_25519_AESGCM_SHA256` authenticated encryption with direct Noise transport cipher states;
+- independent UP/DOWN Noise transport keys, nonces and logical MBox counters;
+- no legacy/custom-handshake downgrade path;
 - exact encrypted UP retry without re-encrypting/reusing a new counter;
-- server-side UP deduplication and cached response replay;
-- DOWN reordering;
+- server-side UP deduplication and response replay;
+- reliable DOWN request sequencing, contiguous ACK and exact encrypted replay after a lost HTTP response;
+- one serialized DOWN commit path shared by GET polling and POST piggyback delivery;
+- one client DOWN delivery queue with bounded out-of-order buffering;
+- bounded/chunked UP queues with round-robin stream scheduling;
+- per-stream WINDOW credits, writer queues, backpressure and write deadlines;
+- configurable global/session/stream/rate/memory safety limits;
 - piggyback DOWN data in POST responses;
 - standalone DOWN polling;
 - JSON HTTP envelope;
@@ -32,19 +37,23 @@ The current implementation includes:
 - exponential transport recovery and fail-fast;
 - Android `VpnService` + HEV TUN-to-SOCKS integration;
 - Android physical-network DNS resolution before the VPN tunnel is established;
-- Android automatic reconnect supervisor;
-- `mbox://` provisioning links;
-- SQLite-backed user administration;
+- Android automatic reconnect supervisor with persisted desired VPN state;
+- confirmed transactional Android profile replacement with server-key fingerprint display;
+- `mbox://` provisioning links plus deployment-specific Verified App Links/QR support;
+- SQLite-backed user administration with concurrent-session/device-style limits and expiry/renewal;
 - bulk user creation/import/export;
-- generated REG.RU relay configuration and deployment over SSH/SCP or FTP/FTPS.
+- generated REG.RU relay configuration and deployment over SSH/SCP or FTP/FTPS;
+- optional deployment of a normal decoy `index.html`/`404.html` on the shared-hosting frontend;
+- `mboxctl resources` for low-memory VPS monitoring.
 
 ## What is *not* implemented
 
 Be precise about these limitations when reviewing the project:
 
 - MBox currently transports TCP through its SOCKS endpoint; it is not a general UDP tunnel.
+- Browser TLS impersonation is not yet enabled in this release: the Go client still has a Go TLS ClientHello. The planned mode is a coherent sticky Firefox/Chrome persona rather than per-request random fingerprints. See `docs/STEALTH.md`.
 - Server-side cover traffic is optional and disabled by default. It changes the traffic history seen by the shared frontend, but it does **not** hide the absence of traffic on a particular client ISP/mobile link.
-- The current static server X25519 key means the handshake should **not** be advertised as providing strong post-compromise forward secrecy. See `docs/SECURITY.md`.
+- Noise adds an ephemeral-ephemeral DH and forward secrecy after ephemeral key destruction, but the complete MBox integration has not received an independent security audit. See `docs/SECURITY.md`.
 - The project has not been independently audited.
 - The REG.RU `.htaccess` / FastCGI activation mechanism is hosting-specific. MBox generates the FastCGI binary and `relay.json`; it deliberately does not blindly overwrite an existing `.htaccess`.
 
@@ -56,8 +65,13 @@ Be precise about these limitations when reviewing the project:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Cover traffic](docs/COVER.md)
 - [Security](docs/SECURITY.md)
+- [Noise-only wire/cryptography](docs/NOISE.md)
 - [Testing](docs/TESTING.md)
 - [Project status](docs/STATUS.md)
+- [sing-box routing handoff](docs/SINGBOX.md)
+- [Small-VPS resource profile](docs/RESOURCES.md)
+- [Stealth/camouflage status](docs/STEALTH.md)
+- [Network compatibility / known carrier issues](docs/NETWORK_COMPATIBILITY.md)
 - [Database schema](docs/SCHEMA.sql)
 
 ---
@@ -85,19 +99,24 @@ HTTPS public frontend
 REG.RU shared hosting / FastCGI relay
         │
         ▼
-HTTPS origin on RU VPS
+HTTPS origin / MBox server host
         │
         ▼
 MBox server 127.0.0.1:18449
         │
         ▼
-SOCKS upstream 127.0.0.1:2080
+sing-box mixed inbound 127.0.0.1:2080
         │
-        ▼
-exit transport / next hop
+        ├── direct exit on this VPS
+        └── Hysteria2 / VLESS / Shadowsocks / SOCKS / other next hop
+             (Finland, Poland, Denmark, etc.)
 ```
 
 The MBox server does **not** require `mbox-client` to be running on the server. `mbox-client` is installed only as a useful test/debug binary.
+
+`127.0.0.1:2080` is not an unexplained "exit port": the recommended deployment puts a sing-box `mixed` inbound there. MBox hands each TCP stream to sing-box and sing-box decides whether to exit directly or chain to another server. See `docs/SINGBOX.md` and `examples/sing-box-router.json`.
+
+The REG.RU decoy website/FastCGI frontend lives on **shared hosting**, independently of the MBox server/exit geography. It is not installed on the RU VPS by the MBox server service.
 
 See `docs/ARCHITECTURE.md` for protocol details.
 
@@ -167,7 +186,7 @@ On a clean machine, `install.sh` calls `mboxctl init` automatically.
 The wizard asks only for deployment-specific values that cannot safely be guessed:
 
 - public frontend URL/hostname;
-- RU origin URL;
+- MBox origin URL;
 - initial client ID.
 
 Defaults:
@@ -234,7 +253,7 @@ It then imports users into SQLite and generates the new runtime config.
 
 ---
 
-# 5. Files installed on the RU server
+# 5. Files installed on the MBox server/admin host
 
 Human/admin configuration:
 
@@ -305,6 +324,7 @@ mboxctl --help
 
 ```bash
 sudo mboxctl status
+sudo mboxctl resources
 sudo mboxctl doctor
 sudo mboxctl logs
 sudo mboxctl logs -f
@@ -381,6 +401,18 @@ sudo mboxctl user add alice-phone
 
 The PSK is generated with a CSPRNG. It is never requested from the administrator.
 
+Create a 30-day subscription limited to two simultaneous sessions (normally two active devices):
+
+```bash
+sudo mboxctl user add alice --max-devices 2 --days 30
+```
+
+Create an unlimited-per-profile subscription (global server safety limits still apply):
+
+```bash
+sudo mboxctl user add family --unlimited
+```
+
 ## Add several named users at once
 
 ```bash
@@ -418,10 +450,10 @@ A hundred users do not create a hundred authoritative PSK files. They are rows i
 Example `users.csv`:
 
 ```csv
-id,label,note
-alice-phone,Alice phone,primary
-alice-tablet,Alice tablet,
-bob-phone,Bob phone,work
+id,label,note,max_sessions,expires_at
+alice-phone,Alice phone,primary,2,
+family,Family,family subscription,unlimited,2026-12-31T23:59:59+00:00
+bob-phone,Bob phone,work,default,
 ```
 
 Import:
@@ -441,6 +473,8 @@ sudo mboxctl user list --revoked
 sudo mboxctl user count
 ```
 
+`user list` also shows the current active-session count (from `/run/mbox/status.json`), configured limit and expiry for each profile.
+
 ## Inspect one user
 
 ```bash
@@ -448,6 +482,40 @@ sudo mboxctl user show alice-phone
 ```
 
 The command deliberately does not print the PSK.
+
+## Concurrent-session / device-style limits
+
+A profile may use the server default, a fixed limit, or unlimited concurrent sessions:
+
+```bash
+sudo mboxctl user devices alice-phone 2
+sudo mboxctl user devices family --unlimited
+```
+
+`user limit` is an exact alias for `user devices`. Enforcement is currently based on **concurrent authenticated MBox sessions**, not immutable hardware IDs. A normal Android installation uses one logical MBox session, so this behaves like a device limit in ordinary use. Strong hardware/device enrollment is a future control-plane feature.
+
+Global `[limits]` still cap total sessions/streams/memory even for `--unlimited`.
+
+## Expiry and renewal
+
+Set an expiry relative to now or at an explicit RFC3339 time:
+
+```bash
+sudo mboxctl user expiry alice-phone --days 30
+sudo mboxctl user expiry alice-phone --at 2026-12-31T23:59:59Z
+```
+
+When the timestamp passes, new authentication is rejected and active sessions are revoked by the server's policy sweep/reload. The SQLite row, PSK and provisioning link remain present. Renew without recreating credentials:
+
+```bash
+sudo mboxctl user renew alice-phone 30
+```
+
+If the old expiry is still in the future, renewal extends from that date; otherwise it extends from the current time. Renewal also re-enables the profile. Remove expiry entirely with:
+
+```bash
+sudo mboxctl user expiry alice-phone --clear
+```
 
 ## Rename
 
@@ -468,7 +536,7 @@ sudo mboxctl user enable alice-pixel
 sudo mboxctl user revoke alice-pixel
 ```
 
-Revocation blocks future MBox OPEN handshakes for that ID. Already-established sessions are not forcibly killed by the auth reload.
+Revocation blocks future MBox OPEN handshakes and immediately terminates active authenticated sessions for that ID after the auth reload.
 
 ## Rotate a leaked PSK
 
@@ -482,7 +550,7 @@ Generate and immediately print a replacement link:
 sudo mboxctl user rotate alice-pixel --print-link
 ```
 
-The previous PSK stops authenticating new sessions after the auth reload.
+The previous PSK stops authenticating new sessions and active sessions created with the old PSK are terminated after the auth reload.
 
 ## Delete permanently
 
@@ -595,7 +663,7 @@ SIGHUP mbox-server
 server atomically swaps its in-memory client_id → PSK auth map
 ```
 
-Existing sessions remain alive; new handshakes use the updated map.
+New handshakes use the updated policy map. Sessions whose client was revoked/disabled/expired, whose PSK changed, or which exceed a newly lowered per-client session limit are terminated.
 
 This avoids both per-packet DB overhead and hundreds of authoritative PSK files.
 
@@ -622,6 +690,8 @@ Default files:
 /var/lib/mbox/regru/current/relay.json
 /var/lib/mbox/regru/current/DEPLOY.txt
 /var/lib/mbox/regru/current/SHA256SUMS
+/var/lib/mbox/regru/current/site/index.html
+/var/lib/mbox/regru/current/site/404.html
 ```
 
 The generated `relay.json` contains no client PSKs. It contains only relay routing/limits such as:
@@ -659,6 +729,17 @@ sudo mboxctl relay deploy \
 ```
 
 Use the account's real web root.
+
+The decoy HTML is intentionally **not** overwritten by a normal relay deployment. To deploy the packaged `Private Rooms` `index.html` and matching `404.html` to the shared-hosting web root as well:
+
+```bash
+sudo mboxctl relay deploy \
+  --ssh USER@HOST \
+  --remote-dir /path/to/shared-hosting/webroot \
+  --site
+```
+
+`--site` makes rollback copies of existing `index.html`/`404.html`. Use it only when that web root is dedicated to the MBox decoy site. These files belong on REG.RU/shared hosting, **not** on the MBox origin VPS.
 
 ## Deploy over FTPS
 
@@ -716,7 +797,7 @@ MBox does not automatically replace `.htaccess` because shared-hosting FastCGI a
 
 ---
 
-# 11. RU origin / Caddy
+# 11. Origin / Caddy
 
 Generate the current Caddy snippet:
 
@@ -742,7 +823,29 @@ It is **not automatically merged into an arbitrary existing Caddyfile** because 
 
 ---
 
-# 12. Camouflage currently implemented
+# 12. Small-VPS resource controls
+
+MBox is intended to remain practical on 1 vCPU / 1 GiB VPSes. The default generated `[limits]` reserves only bounded transport memory; the default global queued-byte budget is 64 MiB, while systemd supplies Go with `GOMEMLIMIT=192MiB` and applies `MemoryHigh=256M` as soft pressure rather than a hard kill.
+
+Inspect live usage and configured ceilings with:
+
+```bash
+sudo mboxctl resources
+```
+
+The server no longer logs every TCP data chunk, which reduces journal growth and CPU/disk activity. See `docs/RESOURCES.md`.
+
+---
+
+# 13. sing-box routing handoff
+
+The default `server.upstream = 127.0.0.1:2080` is intended to point at a local sing-box `mixed` inbound. MBox terminates the HTTPS transport and hands each TCP stream to this local proxy. sing-box then performs the actual route/exit choice.
+
+A generalized example is in `examples/sing-box-router.json`; details are in `docs/SINGBOX.md`.
+
+---
+
+# 14. Camouflage currently implemented
 
 ## HTTP shape
 
@@ -789,6 +892,10 @@ Default probability of deliberately selecting one class above the minimum fittin
 
 Padding bytes are random.
 
+## TLS/browser fingerprint status
+
+The public frontend uses real HTTPS, but beta.2 still uses Go's native TLS ClientHello. It does **not** yet claim Firefox/Chrome impersonation. A future browser-persona mode must keep TLS/ALPN/HTTP2/header/reuse behavior coherent and use a sticky/current persona rather than randomizing browser identity every request. See `docs/STEALTH.md`.
+
 ## Timing camouflage
 
 Default client timing profile:
@@ -818,7 +925,7 @@ Client timing camouflage belongs to a real MBox session: idle polls, wake delay 
 Server cover traffic is optional (`cover.enabled = false` by default). When there is no recently active real MBox session, `mbox-server` creates irregular HTTPS activity using the configured public frontend URL. The request path is inside the already permitted MBox prefix:
 
 ```text
-RU mbox-server
+mbox-server
   → https://PUBLIC_FRONTEND/<base>/api/v1/assets/...
   → REG.RU FastCGI relay
   → RU Caddy
@@ -864,41 +971,25 @@ Use `mboxctl config set cover.<key> <value>` for changes. Cover configuration ch
 
 ---
 
-# 13. Cryptography summary
+# 15. Cryptography summary
 
-Authenticated client OPEN v2 contains:
+MBox beta.2 is Noise-only. OPEN uses the standard suite:
 
 ```text
-1 byte client_id length
-client_id
-32-byte ephemeral X25519 client public key
-32-byte HMAC-SHA256
+Noise_NKpsk0_25519_AESGCM_SHA256
 ```
 
-Authentication uses the per-client PSK.
+The outer HTTPS OPEN envelope carries `client_id` plus Noise handshake message 1. `client_id` selects the per-client PSK and is also mixed into the Noise prologue, so it is authenticated by the handshake transcript. The server static X25519 public key is already present in the provisioning profile; both peers also generate fresh ephemeral X25519 keys for each session.
 
-Key derivation combines:
+Noise message 2 authenticates the generated MBox session ID. After Noise `Split`, the resulting initiator->responder and responder->initiator CipherStates protect UP and DOWN traffic directly; MBox does not derive another home-grown set of record keys.
 
-- X25519 shared secret;
-- per-client PSK;
-- session ID;
-- client ID;
-- client ephemeral public key;
-- protocol-domain separation strings.
+A logical MBox record can contain several <=65535-byte Noise transport messages. MBox's logical direction/counter/nonce range/chunk metadata/session ID are authenticated as associated data. HTTP `seq`/`ack`, exact replay and MUX WINDOW flow control remain the reliability layer outside Noise.
 
-It derives separate key material for:
-
-- UP AES-256-GCM;
-- DOWN AES-256-GCM;
-- handshake confirmation.
-
-Encrypted records include a direction and counter. UP retry retransmits the exact same encrypted record; the server deduplicates already committed counters and can replay the cached corresponding HTTP response rather than processing MUX data twice.
-
-See `docs/SECURITY.md` for limitations and threat-model notes.
+There is intentionally no beta.1/custom-handshake parser or downgrade. Client and server must be upgraded together. See `docs/NOISE.md` and `docs/SECURITY.md`.
 
 ---
 
-# 14. Android client
+# 16. Android client
 
 The Android project is under:
 
@@ -919,9 +1010,12 @@ The Android wrapper provides:
 
 - `VpnService`;
 - HEV TUN → SOCKS;
-- `mbox://` import;
-- clipboard import;
+- `mbox://` import plus optional Verified HTTPS App Links;
+- explicit profile replacement confirmation showing endpoint/client ID/server-key SHA-256 fingerprint;
+- transactional profile generations with atomic active-config replacement;
+- clipboard/QR import;
 - Connect/Disconnect UI;
+- persisted desired VPN state for sticky-service recreation;
 - physical-network DNS resolution using Android's active `Network`;
 - automatic core/TUN recovery with reconnect backoff;
 - protection against routing the MBox app itself back into its own VPN.
@@ -930,7 +1024,7 @@ The manifest includes `ACCESS_NETWORK_STATE` because endpoint resolution uses `C
 
 ---
 
-# 15. Backups
+# 17. Backups
 
 Create a configuration/user backup:
 
@@ -950,11 +1044,19 @@ Verify an archive:
 sudo mboxctl backup verify /root/mbox-backup.tar.gz
 ```
 
-Backups contain secrets. Keep them private.
+`backup create` itself performs the same isolated extraction/SQLite-integrity/config parse before declaring success. On small disks, inspect and explicitly prune accumulated manual/installer rollback archives:
+
+```bash
+sudo mboxctl backup list
+sudo mboxctl backup prune --keep 3 --dry-run
+sudo mboxctl backup prune --keep 3
+```
+
+Backups contain secrets. Keep them private. MBox never silently prunes recovery copies.
 
 ---
 
-# 16. Preparing a private GitHub repository
+# 18. Preparing a private GitHub repository
 
 Never commit live server state.
 
@@ -993,13 +1095,13 @@ Before ever making the repository public, review third-party component licensing
 
 ---
 
-# 17. Moving the current running deployment into this repository
+# 19. Moving the current running deployment into this repository
 
 For the current production system, do **not** copy `/etc/mbox`, SQLite DBs, PSKs or generated provisioning links into Git.
 
 Copy only source/code that is not already represented by this repository.
 
-On the RU server, after uploading this repository:
+On the MBox origin/admin server, after uploading this repository:
 
 ```bash
 cd /root/mbox
@@ -1052,7 +1154,7 @@ Do not paste the resulting link into public logs/issues; it contains a PSK.
 
 ---
 
-# 18. Development checks
+# 20. Development checks
 
 Go server:
 
@@ -1101,12 +1203,12 @@ cd android
 
 ---
 
-# 19. Suggested review focus
+# 21. Suggested review focus
 
 If you are reviewing this project, the most useful areas to challenge are:
 
-1. custom handshake/key-derivation design and forward-secrecy properties;
-2. AEAD nonce/counter and exact-retry invariants;
+1. Noise NKpsk0 integration, transcript/prologue binding and transport AAD/nonce rules;
+2. exact-retry/replay invariants and proof that committed ciphertext is never regenerated with a reused nonce;
 3. MUX ordering/deduplication under HTTP retries/reordering;
 4. session cleanup/resource exhaustion;
 5. traffic-analysis effectiveness of padding/timing camouflage;

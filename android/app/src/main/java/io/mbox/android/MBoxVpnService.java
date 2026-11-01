@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.VpnService;
@@ -34,6 +35,8 @@ public class MBoxVpnService extends VpnService {
     private static final String TAG = "MBox";
     private static final String CHANNEL_ID = "mbox-vpn";
     private static final int NOTIFICATION_ID = 1;
+    private static final String STATE_PREFS = "mbox-vpn-state";
+    private static final String PREF_DESIRED_RUNNING = "desired_running";
 
     private static final long RECONNECT_MIN_MS = 1_000;
     private static final long RECONNECT_MAX_MS = 30_000;
@@ -63,33 +66,44 @@ public class MBoxVpnService extends VpnService {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         manager.createNotificationChannel(new NotificationChannel(
                 CHANNEL_ID, "MBox VPN", NotificationManager.IMPORTANCE_LOW));
+        desiredRunning = getSharedPreferences(STATE_PREFS, MODE_PRIVATE)
+                .getBoolean(PREF_DESIRED_RUNNING, false);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
-
         if (ACTION_STOP.equals(action)) {
+            setDesiredRunning(false);
             requestStop();
             return START_NOT_STICKY;
         }
-
-        if (!ACTION_START.equals(action)) {
-            return desiredRunning ? START_STICKY : START_NOT_STICKY;
+        if (ACTION_START.equals(action)) {
+            setDesiredRunning(true);
+        } else if (!desiredRunning) {
+            return START_NOT_STICKY;
         }
+        beginSupervisorIfNeeded();
+        return START_STICKY;
+    }
 
+    private void setDesiredRunning(boolean running) {
+        desiredRunning = running;
+        if (!getSharedPreferences(STATE_PREFS, MODE_PRIVATE).edit().putBoolean(PREF_DESIRED_RUNNING, running).commit()) {
+            Log.e(TAG, "Failed to persist desired VPN state");
+        }
+    }
+
+    private void beginSupervisorIfNeeded() {
         desiredRunning = true;
         stoppedLogged.set(false);
         ensureForeground("Connecting…");
-
         synchronized (this) {
             if (supervisor == null || !supervisor.isAlive()) {
                 supervisor = new Thread(this::runSupervisor, "MBox-supervisor");
                 supervisor.start();
             }
         }
-
-        return START_STICKY;
     }
 
     private void runSupervisor() {
@@ -190,7 +204,11 @@ public class MBoxVpnService extends VpnService {
                 .setOngoing(true)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .build();
-        startForeground(NOTIFICATION_ID, notification);
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
 
     private void updateNotification(String text) {
@@ -329,7 +347,7 @@ public class MBoxVpnService extends VpnService {
     }
 
     private void requestStop() {
-        desiredRunning = false;
+        setDesiredRunning(false);
 
         Thread thread;
         synchronized (this) {

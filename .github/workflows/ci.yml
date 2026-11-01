@@ -1,42 +1,93 @@
 name: CI
-
 on:
   push:
   pull_request:
-
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 0'
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GO_VERSION: '1.27.3'
+  PYTHON_VERSION: '3.13'
+  JAVA_VERSION: '17.0.21+9'
+  ANDROID_API: '36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
 jobs:
-  core:
-    runs-on: ubuntu-latest
+  go-test:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
-      - name: Server
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - name: Format, vet, tests
+        env: {GO111MODULE: 'off'}
         run: |
-          cd server
-          gofmt -w *.go
-          git diff --exit-code
-          go vet *.go
-          go build *.go
-      - name: Client
+          test -z "$(find common/noise client server relay tools/mbox-key tools/mbox-link -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+          for d in common/noise server client relay tools/mbox-key tools/mbox-link; do (cd "$d" && go vet . && go test .); done
+  go-race:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - name: Race tests
+        env: {GO111MODULE: 'off'}
         run: |
-          cd client
-          gofmt -w *.go
-          git diff --exit-code
-          go vet *.go
-          go build *.go
-          GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build *.go
-      - name: Relay
+          (cd common/noise && go test -race .)
+          (cd server && go test -race .)
+          (cd client && go test -race .)
+          (cd relay && go test -race .)
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - name: Fuzz parser smoke
+        env: {GO111MODULE: 'off'}
         run: |
-          cd relay
-          gofmt -w *.go
-          git diff --exit-code
-          CGO_ENABLED=0 go build *.go
-      - name: Tools
-        run: |
-          cd tools/mbox-key && go build *.go
-          cd ../mbox-link && go build *.go
-          cd ../..
-          python3 -m py_compile tools/mboxctl/mboxctl.py
-          bash -n install.sh
+          (cd server && go test -run=^$ -fuzz=FuzzDownRequestMeta -fuzztime=10s .)
+          (cd client && go test -run=^$ -fuzz=FuzzMuxFrameParser -fuzztime=10s .)
+          (cd client && go test -run=^$ -fuzz=FuzzNoiseTransportRecord -fuzztime=10s .)
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '${{ env.PYTHON_VERSION }}'}
+      - run: python -m pip install --disable-pip-version-check pytest==8.4.2
+      - run: python -m pytest -q tests
+      - run: python -m py_compile tools/mboxctl/mboxctl.py && bash -n install.sh android/tools/*.sh tools/*.sh
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '${{ env.JAVA_VERSION }}'}
+      - uses: android-actions/setup-android@v3
+      - run: yes | sdkmanager --licenses >/dev/null; sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}"
+      - run: cd android && ./tools/build-debug.sh
+  secret-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - run: ./tools/secret-scan.sh
+      - uses: gitleaks/gitleaks-action@v2
+        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
+  long-transport:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - name: 3 GiB transport scheduler under race
+        env: {GO111MODULE: 'off', MBOX_LONG_TEST: '1'}
+        run: cd client && go test -race -run TestMultiGBUploadChunking -timeout 30m .

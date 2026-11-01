@@ -9,12 +9,34 @@ ExecStart=/usr/local/bin/mbox-server -config /etc/mbox/server.json
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2s
-User=root
+User=mbox
+Group=mbox
+UMask=0077
+LimitNOFILE=65536
+MemoryAccounting=true
+MemoryHigh=256M
+Environment=GOMEMLIMIT=192MiB
+RuntimeDirectory=mbox
+RuntimeDirectoryMode=0750
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectHome=true
-ProtectSystem=full
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 ReadOnlyPaths=/etc/mbox
+ReadWritePaths=/run/mbox
 
 [Install]
 WantedBy=multi-user.target

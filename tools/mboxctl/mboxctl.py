@@ -6,6 +6,7 @@ import csv
 import datetime as dt
 import ftplib
 import getpass
+import grp
 import hashlib
 import json
 import os
@@ -15,13 +16,14 @@ import time
 import secrets
 import shlex
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 ETC = Path(os.environ.get("MBOX_ETC", "/etc/mbox"))
 STATE = Path(os.environ.get("MBOX_STATE", "/var/lib/mbox"))
@@ -31,7 +33,9 @@ DB = STATE / "users.db"
 REGRU = STATE / "regru" / "current"
 ORIGIN = STATE / "origin" / "current"
 RELAY_TEMPLATE = Path(os.environ.get("MBOX_RELAY_TEMPLATE", "/usr/local/lib/mbox/relay.fcgi"))
+SITE_TEMPLATE = Path(os.environ.get("MBOX_SITE_TEMPLATE", "/usr/local/share/mbox/regru-site"))
 SERVICE = "mbox-server.service"
+RUNTIME_STATUS = Path(os.environ.get("MBOX_RUNTIME_STATUS", "/run/mbox/status.json"))
 KEY_TOOL = Path(os.environ.get("MBOX_KEY_TOOL", "/usr/local/bin/mbox-key"))
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,63}$")
 
@@ -42,13 +46,21 @@ DEFAULT_CAMO = {
     "close_path": "/api/v1/session/",
     "content_type": "application/json",
     "down_max_bytes": "262144",
+    "up_max_bytes": "262144",
     "padding_classes": "512,1024,2048,4096,8192,16384,32768,65536,131072,262144,524288",
-    "padding_extra_class_percent": "20",
+    "padding_extra_class_percent": "0",
+    "padding_random_max_bytes": "16384",
+    "batch_min_bytes": "73728",
+    "noise_chunk_min_bytes": "16384",
+    "noise_chunk_max_bytes": "61440",
     "idle_min_ms": "45000",
     "idle_max_ms": "90000",
     "wake_min_ms": "100",
     "wake_max_ms": "220",
-    "active_jitter_percent": "20",
+    "active_jitter_percent": "35",
+    "active_min_ms": "120",
+    "active_max_ms": "420",
+    "active_backoff_max_ms": "2200",
     "failure_timeout_ms": "30000",
     "retry_min_ms": "300",
     "retry_max_ms": "5000",
@@ -58,10 +70,24 @@ DEFAULT_CAMO = {
 def eprint(msg):
     print(msg, file=sys.stderr)
 
+DEFAULT_LIMITS = {
+    # Conservative defaults for cheap 1 GiB / 1 vCPU VPSes.  Queued memory is
+    # deliberately bounded far below total RAM; raise these only after load tests.
+    "max_sessions_global": "128",
+    "default_max_sessions_per_client": "4",
+    "max_streams_per_session": "64",
+    "max_total_streams": "1024",
+    "max_stream_opens_per_second": "32",
+    "max_session_opens_per_minute": "180",
+    "max_down_queue_bytes": "4194304",
+    "max_down_replay_bytes": "8388608",
+    "global_queued_bytes": "67108864",
+}
+
 DEFAULT_COVER = {
     "enabled": "false",
     "path": "/api/v1/assets/",
-    "status_file": "/run/mbox-cover-status.json",
+    "status_file": "/run/mbox/cover-status.json",
     "idle_after_ms": "120000",
     "start_grace_min_ms": "60000",
     "start_grace_max_ms": "180000",
@@ -99,7 +125,12 @@ def mkdirs():
     ETC.mkdir(parents=True, exist_ok=True)
     STATE.mkdir(parents=True, exist_ok=True)
     REGRU.mkdir(parents=True, exist_ok=True)
-    os.chmod(ETC, 0o700)
+    try:
+        gid = grp.getgrnam("mbox").gr_gid
+        os.chown(ETC, 0, gid)
+        os.chmod(ETC, 0o750)
+    except KeyError:
+        os.chmod(ETC, 0o700)
     os.chmod(STATE, 0o700)
 
 
@@ -110,13 +141,33 @@ def load_conf(required=True):
             die(f"configuration not found: {CONF}; run 'mboxctl init'")
         return cp
     cp.read(CONF)
-    if "cover" not in cp:
-        cp["cover"] = DEFAULT_COVER.copy()
-    else:
-        for k, v in DEFAULT_COVER.items():
-            if k not in cp["cover"]:
-                cp["cover"][k] = v
+    for section, defaults in (("camouflage", DEFAULT_CAMO), ("cover", DEFAULT_COVER), ("limits", DEFAULT_LIMITS)):
+        if section not in cp:
+            cp[section] = defaults.copy()
+        else:
+            for k, v in defaults.items():
+                if k not in cp[section]:
+                    cp[section][k] = v
     return cp
+
+
+def apply_server_read_permissions(cp=None):
+    try:
+        gid=grp.getgrnam("mbox").gr_gid
+    except KeyError:
+        return
+    try:
+        os.chown(ETC,0,gid); os.chmod(ETC,0o750)
+    except FileNotFoundError:
+        return
+    paths=[RUNTIME]
+    if cp is not None and "server" in cp:
+        for key in ("server_private_key",):
+            value=cp["server"].get(key,"").strip()
+            if value: paths.append(Path(value))
+    for path in paths:
+        try: os.chown(path,0,gid); os.chmod(path,0o640)
+        except FileNotFoundError: pass
 
 
 def save_conf(cp):
@@ -144,10 +195,18 @@ def db_connect():
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       rotated_at TEXT,
-      revoked_at TEXT
+      revoked_at TEXT,
+      max_sessions INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_users_enabled ON users(enabled);
     """)
+    # Online schema migration for databases created by beta.1/beta.2.
+    cols={row[1] for row in con.execute("PRAGMA table_info(users)")}
+    if "max_sessions" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN max_sessions INTEGER NOT NULL DEFAULT 0")
+    if "expires_at" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN expires_at TEXT")
     con.commit()
     try:
         os.chmod(DB, 0o600)
@@ -184,6 +243,7 @@ def ensure_keys(cp):
         run([str(KEY_TOOL), "-mode", "derive", "-private", str(priv), "-public", str(pub)])
     os.chmod(priv, 0o600)
     os.chmod(pub, 0o644)
+    apply_server_read_permissions(cp)
 
 
 def camo_dict(cp, include_timing=True):
@@ -197,8 +257,13 @@ def camo_dict(cp, include_timing=True):
         "request_headers": {"Accept": c["content_type"]},
         "response_headers": {"Cache-Control": "no-store"},
         "down_max_bytes": int(c["down_max_bytes"]),
+        "up_max_bytes": int(c["up_max_bytes"]),
         "padding_classes": [int(x) for x in c["padding_classes"].split(",") if x.strip()],
         "padding_extra_class_percent": int(c["padding_extra_class_percent"]),
+        "padding_random_max_bytes": int(c["padding_random_max_bytes"]),
+        "batch_min_bytes": int(c["batch_min_bytes"]),
+        "noise_chunk_min_bytes": int(c["noise_chunk_min_bytes"]),
+        "noise_chunk_max_bytes": int(c["noise_chunk_max_bytes"]),
     }
     if include_timing:
         d["timing"] = {
@@ -207,6 +272,9 @@ def camo_dict(cp, include_timing=True):
             "wake_min_ms": int(c["wake_min_ms"]),
             "wake_max_ms": int(c["wake_max_ms"]),
             "active_jitter_percent": int(c["active_jitter_percent"]),
+            "active_min_ms": int(c["active_min_ms"]),
+            "active_max_ms": int(c["active_max_ms"]),
+            "active_backoff_max_ms": int(c["active_backoff_max_ms"]),
         }
         d["recovery"] = {
             "failure_timeout_ms": int(c["failure_timeout_ms"]),
@@ -221,8 +289,11 @@ def render_runtime(reload_auth=False, restart=False):
     validate_config(cp)
     con = db_connect()
     clients = {}
-    for row in con.execute("SELECT id, psk FROM users WHERE enabled=1 ORDER BY id"):
-        clients[row["id"]] = {"psk": bytes(row["psk"]).hex()}
+    for row in con.execute("SELECT id, psk, max_sessions, expires_at FROM users WHERE enabled=1 ORDER BY id"):
+        ent={"psk": bytes(row["psk"]).hex(), "max_sessions": int(row["max_sessions"] or 0)}
+        if row["expires_at"]:
+            ent["expires_at"] = row["expires_at"]
+        clients[row["id"]] = ent
     obj = {
         "camouflage": camo_dict(cp, include_timing=False),
         "transport": {
@@ -231,10 +302,10 @@ def render_runtime(reload_auth=False, restart=False):
             "base_path": cp["server"]["base_path"],
         },
         "crypto": {
-            "psk_file": cp["server"].get("legacy_psk_file", ""),
             "server_private_key_file": cp["server"]["server_private_key"],
             "clients": clients,
         },
+        "limits": {k:int(cp["limits"][k]) for k in DEFAULT_LIMITS},
         "cover": {
             "enabled": cp.getboolean("cover", "enabled"),
             "public_url": cp["server"]["public_url"],
@@ -257,6 +328,7 @@ def render_runtime(reload_auth=False, restart=False):
     tmp.write_text(json.dumps(obj, indent=2) + "\n")
     os.chmod(tmp, 0o600)
     os.replace(tmp, RUNTIME)
+    apply_server_read_permissions(cp)
     if restart:
         service_action("restart", quiet=True)
     elif reload_auth:
@@ -264,7 +336,7 @@ def render_runtime(reload_auth=False, restart=False):
 
 
 def service_active():
-    p = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE])
+    p = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return p.returncode == 0
 
 
@@ -309,6 +381,7 @@ def validate_config(cp):
     needed += [("relay", k) for k in ["max_slots", "max_body_bytes", "slot_lock_prefix"]]
     needed += [("camouflage", k) for k in DEFAULT_CAMO]
     needed += [("cover", k) for k in DEFAULT_COVER]
+    needed += [("limits", k) for k in DEFAULT_LIMITS]
     for section, key in needed:
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
@@ -327,6 +400,17 @@ def validate_config(cp):
         die("relay.max_slots out of range")
     if int(cp["camouflage"]["idle_min_ms"]) > int(cp["camouflage"]["idle_max_ms"]):
         die("camouflage idle range invalid")
+    if not (20 <= int(cp["camouflage"]["active_min_ms"]) <= int(cp["camouflage"]["active_max_ms"]) <= 5000):
+        die("camouflage active polling range invalid")
+    if not (int(cp["camouflage"]["active_max_ms"]) <= int(cp["camouflage"]["active_backoff_max_ms"]) <= 30000):
+        die("camouflage active_backoff_max_ms invalid")
+    c=cp["camouflage"]
+    pad_random=int(c["padding_random_max_bytes"]); batch_min=int(c["batch_min_bytes"])
+    chunk_min=int(c["noise_chunk_min_bytes"]); chunk_max=int(c["noise_chunk_max_bytes"])
+    up_max=int(c["up_max_bytes"]); down_max=int(c["down_max_bytes"])
+    if not (0 <= pad_random <= 256*1024): die("camouflage.padding_random_max_bytes out of range")
+    if not (65545 <= batch_min <= min(up_max,down_max)): die("camouflage.batch_min_bytes out of range")
+    if not (1024 <= chunk_min <= chunk_max <= 65519): die("camouflage Noise chunk range invalid")
     cv=cp["cover"]
     try:
         cv_enabled=cp.getboolean("cover","enabled")
@@ -345,6 +429,21 @@ def validate_config(cp):
     weights=sum(int(cv[k]) for k in ["quiet_weight","casual_weight","active_weight","burst_weight"])
     if weights <= 0:
         die("cover profile weights sum to zero")
+    lm=cp["limits"]
+    max_sessions=int(lm["max_sessions_global"]); default_sessions=int(lm["default_max_sessions_per_client"])
+    streams_per_session=int(lm["max_streams_per_session"]); total_streams=int(lm["max_total_streams"])
+    stream_rate=int(lm["max_stream_opens_per_second"]); session_rate=int(lm["max_session_opens_per_minute"])
+    down_queue=int(lm["max_down_queue_bytes"]); down_replay=int(lm["max_down_replay_bytes"]); global_queue=int(lm["global_queued_bytes"])
+    if not (1 <= max_sessions <= 100000): die("limits.max_sessions_global out of range")
+    if default_sessions != -1 and not (1 <= default_sessions <= 10000): die("limits.default_max_sessions_per_client must be -1 or 1..10000")
+    if default_sessions > 0 and default_sessions > max_sessions: die("limits.default_max_sessions_per_client must be <= max_sessions_global")
+    if not (1 <= streams_per_session <= 4096): die("limits.max_streams_per_session out of range")
+    if not (streams_per_session <= total_streams <= 200000): die("limits.max_total_streams out of range")
+    if not (1 <= stream_rate <= 10000): die("limits.max_stream_opens_per_second out of range")
+    if not (1 <= session_rate <= 100000): die("limits.max_session_opens_per_minute out of range")
+    if not (256*1024 <= down_queue <= 256*1024*1024): die("limits.max_down_queue_bytes out of range")
+    if not (256*1024 <= down_replay <= 256*1024*1024): die("limits.max_down_replay_bytes out of range")
+    if not (8*1024*1024 <= global_queue <= 2*1024*1024*1024): die("limits.global_queued_bytes out of range")
     return True
 
 
@@ -417,7 +516,7 @@ def init_cmd(args):
         public = "https://" + host + base
     elif urlparse(public).path in ("", "/"):
         public = public.rstrip("/") + base
-    origin = args.origin_url or prompt("Origin URL on RU server, e.g. https://origin.example.com")
+    origin = args.origin_url or prompt("MBox origin URL, e.g. https://origin.example.com")
     if not origin:
         die("origin URL is required")
     first = args.first_user or prompt("Initial client id", "android-main")
@@ -446,7 +545,6 @@ def init_cmd(args):
         "origin_url": origin.rstrip("/"),
         "server_private_key": str(ETC / "server.key"),
         "server_public_key": str(ETC / "server.pub"),
-        "legacy_psk_file": "",
     }
     cp["relay"] = {
         "max_slots": str(args.max_slots),
@@ -455,6 +553,7 @@ def init_cmd(args):
     }
     cp["camouflage"] = DEFAULT_CAMO.copy()
     cp["cover"] = DEFAULT_COVER.copy()
+    cp["limits"] = DEFAULT_LIMITS.copy()
     try:
         save_conf(cp); ensure_keys(cp); db_connect().close()
         con = db_connect()
@@ -529,7 +628,6 @@ def migrate_legacy(args):
         "origin_url": origin.rstrip("/"),
         "server_private_key": obj["crypto"]["server_private_key_file"],
         "server_public_key": str(ETC / "server.pub"),
-        "legacy_psk_file": obj.get("crypto", {}).get("psk_file", ""),
     }
     relay_obj = {}
     rp = Path("/root/mbox-production-out/relay.json")
@@ -557,6 +655,7 @@ def migrate_legacy(args):
             except Exception: pass
     cp["camouflage"] = cam
     cp["cover"] = DEFAULT_COVER.copy()
+    cp["limits"] = DEFAULT_LIMITS.copy()
     save_conf(cp); ensure_keys(cp)
     con = db_connect()
     imported = 0
@@ -585,6 +684,38 @@ def migrate_legacy(args):
     print(f"REG.RU artifacts: {REGRU}")
 
 
+def normalize_expiry(value):
+    if not value:
+        return None
+    text=value.strip()
+    if text.lower() in {"none","never","unlimited"}:
+        return None
+    try:
+        parsed=dt.datetime.fromisoformat(text.replace("Z","+00:00"))
+    except ValueError:
+        die("expiry must be RFC3339, e.g. 2026-12-01T00:00:00Z")
+    if parsed.tzinfo is None:
+        parsed=parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def expiry_from_args(args):
+    if getattr(args,"days",None) is not None:
+        if args.days <= 0: die("--days must be > 0")
+        return (dt.datetime.now(dt.timezone.utc)+dt.timedelta(days=args.days)).replace(microsecond=0).isoformat()
+    if getattr(args,"expires_at",None):
+        return normalize_expiry(args.expires_at)
+    return None
+
+
+def resolve_max_sessions(args):
+    if getattr(args,"unlimited",False): return -1
+    n=getattr(args,"max_sessions",None)
+    if n is None: return 0
+    if n < 1 or n > 10000: die("--max-sessions must be 1..10000")
+    return n
+
+
 def user_add(args):
     require_root(); load_conf()
     ids = list(args.ids)
@@ -594,12 +725,12 @@ def user_add(args):
     if not ids: die("provide user ids or --count")
     for uid in ids: validate_client_id(uid)
     if len(ids) != len(set(ids)): die("duplicate user ids in request")
-    con = db_connect(); ts=now()
+    con = db_connect(); ts=now(); max_sessions=resolve_max_sessions(args); expires_at=expiry_from_args(args)
     try:
         with con:
             for uid in ids:
-                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                            (uid, secrets.token_bytes(32), 1, uid, args.note or "", ts, ts))
+                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (uid, secrets.token_bytes(32), 1, uid, args.note or "", ts, ts, max_sessions, expires_at))
     except sqlite3.IntegrityError as e:
         die(f"user already exists: {e}")
     finally: con.close()
@@ -615,31 +746,57 @@ def user_import(args):
         if not r.fieldnames or "id" not in r.fieldnames: die("CSV must contain an 'id' column")
         for row in r:
             uid=(row.get("id") or "").strip(); validate_client_id(uid)
-            rows.append((uid,(row.get("label") or uid).strip(),(row.get("note") or "").strip()))
+            raw_limit=(row.get("max_sessions") or "").strip().lower()
+            if raw_limit in {"", "default"}: max_sessions=0
+            elif raw_limit in {"unlimited", "none", "-1"}: max_sessions=-1
+            else:
+                try: max_sessions=int(raw_limit)
+                except ValueError: die(f"invalid max_sessions for {uid}")
+                if max_sessions < 1 or max_sessions > 10000: die(f"max_sessions out of range for {uid}")
+            expires_at=normalize_expiry((row.get("expires_at") or "").strip())
+            rows.append((uid,(row.get("label") or uid).strip(),(row.get("note") or "").strip(),max_sessions,expires_at))
     con=db_connect(); ts=now()
     try:
         with con:
-            for uid,label,note in rows:
-                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                            (uid,secrets.token_bytes(32),1,label,note,ts,ts))
+            for uid,label,note,max_sessions,expires_at in rows:
+                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (uid,secrets.token_bytes(32),1,label,note,ts,ts,max_sessions,expires_at))
     except sqlite3.IntegrityError as e: die(str(e))
     finally: con.close()
     render_runtime(reload_auth=True); print(f"Imported {len(rows)} user(s).")
 
 
+def read_runtime_status():
+    try:
+        obj=json.loads(RUNTIME_STATUS.read_text())
+        if not isinstance(obj,dict): return {}
+        return obj
+    except (OSError,json.JSONDecodeError):
+        return {}
+
+
 def user_list(args):
     con=db_connect()
-    q="SELECT id,enabled,label,created_at,rotated_at,revoked_at FROM users"
+    q="SELECT id,enabled,label,created_at,rotated_at,revoked_at,max_sessions,expires_at FROM users"
     cond=[]
     if args.enabled: cond.append("enabled=1")
     if args.revoked: cond.append("revoked_at IS NOT NULL")
     if cond: q += " WHERE "+" AND ".join(cond)
     q += " ORDER BY id"
     rows=con.execute(q).fetchall(); con.close()
-    print(f"{'ID':<28} {'STATE':<9} {'LABEL':<22} CREATED")
+    status=read_runtime_status(); active=status.get("clients",{}) if isinstance(status.get("clients",{}),dict) else {}
+    print(f"{'ID':<24} {'STATE':<9} {'ACTIVE':>6} {'LIMIT':<10} {'EXPIRES':<22} LABEL")
+    now_utc=dt.datetime.now(dt.timezone.utc)
     for r in rows:
-        state="enabled" if r["enabled"] else ("revoked" if r["revoked_at"] else "disabled")
-        print(f"{r['id']:<28} {state:<9} {r['label'][:22]:<22} {r['created_at']}")
+        expired=False
+        if r["expires_at"]:
+            try: expired=dt.datetime.fromisoformat(r["expires_at"].replace("Z","+00:00")) <= now_utc
+            except ValueError: expired=True
+        state=("expired" if r["enabled"] and expired else ("enabled" if r["enabled"] else ("revoked" if r["revoked_at"] else "disabled")))
+        limit="unlimited" if r["max_sessions"] == -1 else ("default" if not r["max_sessions"] else str(r["max_sessions"]))
+        expires=r["expires_at"] or "never"
+        online=int(active.get(r["id"],0) or 0)
+        print(f"{r['id']:<24} {state:<9} {online:>6} {limit:<10} {expires[:22]:<22} {r['label'][:22]}")
     print(f"Total: {len(rows)}")
 
 
@@ -651,7 +808,13 @@ def get_user(uid):
 
 def user_show(args):
     r=get_user(args.id)
-    d=dict(r); d.pop("psk",None); d["state"]="enabled" if r["enabled"] else ("revoked" if r["revoked_at"] else "disabled")
+    d=dict(r); d.pop("psk",None)
+    expired=False
+    if r["expires_at"]:
+        try: expired=dt.datetime.fromisoformat(r["expires_at"].replace("Z","+00:00")) <= dt.datetime.now(dt.timezone.utc)
+        except ValueError: expired=True
+    d["state"]=("expired" if r["enabled"] and expired else ("enabled" if r["enabled"] else ("revoked" if r["revoked_at"] else "disabled")))
+    d["session_limit"]=("unlimited" if r["max_sessions"] == -1 else ("server-default" if not r["max_sessions"] else r["max_sessions"]))
     print(json.dumps(d,indent=2))
 
 
@@ -662,6 +825,47 @@ def user_state(args, mode):
         elif mode=="disable": con.execute("UPDATE users SET enabled=0,updated_at=? WHERE id=?",(ts,args.id))
         elif mode=="revoke": con.execute("UPDATE users SET enabled=0,revoked_at=?,updated_at=? WHERE id=?",(ts,ts,args.id))
     con.close(); render_runtime(reload_auth=True); print(f"{mode}: {args.id}")
+
+
+def user_limit(args):
+    require_root(); get_user(args.id)
+    value=-1 if args.unlimited else args.max_sessions
+    if value != -1 and (value is None or value < 1 or value > 10000): die("limit must be 1..10000 or --unlimited")
+    con=db_connect(); ts=now()
+    with con: con.execute("UPDATE users SET max_sessions=?,updated_at=? WHERE id=?",(value,ts,args.id))
+    con.close(); render_runtime(reload_auth=True)
+    print(f"sessions limit: {args.id} = {'unlimited' if value==-1 else value}")
+
+
+def user_expiry(args):
+    require_root(); get_user(args.id)
+    if args.clear:
+        value=None
+    elif args.days is not None:
+        if args.days <= 0: die("--days must be > 0")
+        value=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(days=args.days)).replace(microsecond=0).isoformat()
+    elif args.at:
+        value=normalize_expiry(args.at)
+    else:
+        die("specify --days N, --at RFC3339 or --clear")
+    con=db_connect(); ts=now()
+    with con: con.execute("UPDATE users SET expires_at=?,updated_at=? WHERE id=?",(value,ts,args.id))
+    con.close(); render_runtime(reload_auth=True)
+    print(f"expiry: {args.id} = {value or 'never'}")
+
+
+def user_renew(args):
+    require_root(); get_user(args.id)
+    if args.days <= 0: die("days must be > 0")
+    con=db_connect(); row=con.execute("SELECT expires_at FROM users WHERE id=?",(args.id,)).fetchone(); nowdt=dt.datetime.now(dt.timezone.utc); base=nowdt
+    if row["expires_at"]:
+        try:
+            old=dt.datetime.fromisoformat(row["expires_at"].replace("Z","+00:00"))
+            if old > base: base=old
+        except ValueError: pass
+    value=(base+dt.timedelta(days=args.days)).replace(microsecond=0).isoformat(); ts=now()
+    with con: con.execute("UPDATE users SET enabled=1,revoked_at=NULL,expires_at=?,updated_at=? WHERE id=?",(value,ts,args.id))
+    con.close(); render_runtime(reload_auth=True); print(f"renewed: {args.id} until {value}")
 
 
 def user_rotate(args):
@@ -719,12 +923,24 @@ def build_link(uid, name=None):
     return "mbox://"+base64.urlsafe_b64encode(raw).decode().rstrip("=")+"#"+uid
 
 
+def build_app_link(uid,name=None):
+    cp=load_conf(); public=urlparse(cp["server"]["public_url"])
+    if public.scheme != "https" or not public.hostname: die("Verified Android App Links require HTTPS public_url")
+    nested=build_link(uid,name); host=public.hostname
+    if public.port and public.port != 443: host=f"{host}:{public.port}"
+    return f"https://{host}/mbox/provision?profile={quote(nested,safe='')}"
+
+
 def user_link(args):
     print(build_link(args.id,args.name))
 
 
+def user_app_link(args):
+    print(build_app_link(args.id,args.name))
+
+
 def user_qr(args):
-    link=build_link(args.id,args.name)
+    link=build_app_link(args.id,args.name) if args.app_link else build_link(args.id,args.name)
     if shutil.which("qrencode"):
         run(["qrencode","-t","ANSIUTF8",link])
     else:
@@ -795,12 +1011,22 @@ def backup_verify(args):
     p=Path(args.path)
     if not p.exists(): die(f"backup not found: {p}")
     try:
-        with tarfile.open(p,"r:gz") as tf:
-            names=tf.getnames()
-            if not any(n.startswith("etc-mbox") for n in names): die("backup does not contain etc-mbox")
-        print("OK")
-    except tarfile.TarError as e:
-        die(f"invalid backup: {e}")
+        with tempfile.TemporaryDirectory(prefix="mbox-restore-check-") as td:
+            root=Path(td)
+            with tarfile.open(p,"r:gz") as tf:
+                names=tf.getnames()
+                if "users.db" not in names: die("backup does not contain users.db")
+                if not any(n.startswith("etc-mbox/") for n in names): die("backup does not contain etc-mbox")
+                tf.extractall(root,filter="data")
+            db=root/"users.db"; con=sqlite3.connect(db); integrity=con.execute("PRAGMA integrity_check").fetchone()[0]; users=con.execute("SELECT count(*) FROM users").fetchone()[0]; con.close()
+            if integrity != "ok": die(f"restored SQLite integrity check failed: {integrity}")
+            etc=root/"etc-mbox"; conf=etc/"mbox.conf"; runtime=etc/"server.json"
+            if not conf.is_file() or not runtime.is_file(): die("restored backup misses mbox.conf/server.json")
+            cp=configparser.ConfigParser(interpolation=None); cp.read(conf)
+            if "server" not in cp or "camouflage" not in cp: die("restored mbox.conf is incomplete")
+            json.loads(runtime.read_text()); print(f"OK: test restore succeeded; sqlite={integrity}; users={users}")
+    except (tarfile.TarError,OSError,sqlite3.Error,json.JSONDecodeError) as e: die(f"invalid backup: {e}")
+
 
 def link_inspect(args):
     text=Path(args.path).read_text().strip() if args.path != "-" else sys.stdin.read().strip()
@@ -922,11 +1148,31 @@ def generate_relay_files():
         "slot_lock_prefix":cp["relay"]["slot_lock_prefix"],
     }
     (REGRU/"relay.json").write_text(json.dumps(obj,indent=2)+"\n"); os.chmod(REGRU/"relay.json",0o600)
-    instructions=f"""MBox REG.RU deployment bundle\n\nAuthoritative generated files on RU server:\n  {REGRU}/relay.fcgi\n  {REGRU}/relay.json\n\nUpload both files into the web root used by the frontend.\nThe existing FastCGI routing/.htaccess is deployment-specific and is not overwritten automatically.\nPublic endpoint: {cp['server']['public_url']}\nOrigin target: {cp['server']['origin_url']}\nBase path: {base}\n"""
+    site=REGRU/"site"
+    if site.exists(): shutil.rmtree(site)
+    if SITE_TEMPLATE.is_dir(): shutil.copytree(SITE_TEMPLATE,site)
+    instructions=f"""MBox REG.RU/shared-hosting deployment bundle
+
+Authoritative generated files on the MBox admin/origin host:
+  {REGRU}/relay.fcgi
+  {REGRU}/relay.json
+  {REGRU}/site/index.html
+  {REGRU}/site/404.html
+
+Upload relay.fcgi + relay.json into the shared-hosting web root.
+The decoy site files are optional and are deployed only with relay deploy --site.
+They belong on the shared-hosting frontend, not on the MBox origin VPS.
+The existing FastCGI routing/.htaccess is deployment-specific and is not overwritten automatically.
+Public endpoint: {cp['server']['public_url']}
+Origin target: {cp['server']['origin_url']}
+Base path: {base}
+"""
     (REGRU/"DEPLOY.txt").write_text(instructions)
     hashes=[]
-    for n in ["relay.fcgi","relay.json"]:
-        b=(REGRU/n).read_bytes(); hashes.append(f"{hashlib.sha256(b).hexdigest()}  {n}")
+    for rel in [Path("relay.fcgi"),Path("relay.json"),Path("site/index.html"),Path("site/404.html")]:
+        path=REGRU/rel
+        if path.is_file():
+            b=path.read_bytes(); hashes.append(f"{hashlib.sha256(b).hexdigest()}  {rel.as_posix()}")
     (REGRU/"SHA256SUMS").write_text("\n".join(hashes)+"\n")
     return REGRU
 
@@ -940,7 +1186,7 @@ def generate_origin_files():
     text=f"""# Generated by mboxctl. Review before merging into an existing Caddyfile.
 {host} {{
     @mbox_health path {base}/health
-    respond @mbox_health "ok" 200
+    reverse_proxy @mbox_health {listen}
 
     @mbox path {base}/api/v1/*
     reverse_proxy @mbox {listen}
@@ -1051,6 +1297,8 @@ def ftp_cwd_smart(ftp, remote_dir, ftp_user):
 
 def relay_deploy(args):
     require_root(); d=generate_relay_files(); files=[d/"relay.fcgi",d/"relay.json",d/"DEPLOY.txt",d/"SHA256SUMS"]
+    site_files=[]
+    if args.site and (d/"site").is_dir(): site_files=[d/"site"/"index.html",d/"site"/"404.html"]
     if args.ssh:
         if not args.remote_dir: die("--remote-dir is required with --ssh")
         remote=args.remote_dir.rstrip("/")
@@ -1058,6 +1306,13 @@ def relay_deploy(args):
         stage=f"{remote}/.mbox-stage-{ts}"
         run(["ssh",args.ssh,"mkdir -p "+shlex.quote(stage)])
         run(["scp",str(d/"relay.fcgi"),str(d/"relay.json"),f"{args.ssh}:{stage}/"] )
+        if site_files: run(["scp",*(str(x) for x in site_files),f"{args.ssh}:{stage}/"])
+        site_script=""
+        if site_files:
+            site_script=(f"[ ! -f index.html ] || cp -p index.html index.html.rollback-{ts}; "
+                         f"[ ! -f 404.html ] || cp -p 404.html 404.html.rollback-{ts}; "
+                         f"cp {shlex.quote(stage)}/index.html index.html.new; mv -f index.html.new index.html; "
+                         f"cp {shlex.quote(stage)}/404.html 404.html.new; mv -f 404.html.new 404.html; ")
         script=(
             f"set -e; cd {shlex.quote(remote)}; "
             f"[ ! -f relay.fcgi ] || cp -p relay.fcgi relay.fcgi.rollback-{ts}; "
@@ -1065,6 +1320,7 @@ def relay_deploy(args):
             f"cp {shlex.quote(stage)}/relay.fcgi relay.fcgi.new; chmod 755 relay.fcgi.new; "
             f"cp {shlex.quote(stage)}/relay.json relay.json.new; chmod 600 relay.json.new; "
             f"mv -f relay.fcgi.new relay.fcgi; mv -f relay.json.new relay.json; "
+            + site_script +
             f"rm -rf {shlex.quote(stage)}"
         )
         run(["ssh",args.ssh,script])
@@ -1096,6 +1352,20 @@ def relay_deploy(args):
                 try: ftp.sendcmd("SITE CHMOD 755 relay.fcgi")
                 except ftplib.all_errors: pass
             print(f"uploaded {name}")
+        if site_files:
+            for p in site_files:
+                name=p.name
+                if name in existing:
+                    try: ftp.rename(name,f"{name}.rollback-{ts}")
+                    except ftplib.all_errors: pass
+                temp=name+".new"
+                with p.open("rb") as f: ftp.storbinary(f"STOR {temp}",f)
+                try: ftp.rename(temp,name)
+                except ftplib.all_errors:
+                    try: ftp.delete(name)
+                    except ftplib.all_errors: pass
+                    ftp.rename(temp,name)
+                print(f"uploaded {name}")
         ftp.quit(); return
     die("choose --ssh USER@HOST or --ftp-host HOST")
 
@@ -1113,6 +1383,10 @@ def doctor(args):
     print(f"sqlite: {ok}; enabled_users={n}")
     for p in [cp["server"]["server_private_key"],cp["server"]["server_public_key"],str(RUNTIME),str(RELAY_TEMPLATE)]:
         print(f"{p}: {'OK' if Path(p).exists() else 'MISSING'}")
+    host,port=cp["server"]["upstream"].rsplit(":",1)
+    try:
+        with socket.create_connection((host,int(port)),timeout=2): print(f"upstream: OK ({cp['server']['upstream']})")
+    except OSError as e: print(f"upstream: FAILED ({cp['server']['upstream']}): {e}")
     print(f"service: {'active' if service_active() else 'inactive'}")
     print(f"REG.RU files: {REGRU}")
 
@@ -1126,7 +1400,89 @@ def backup_create(args):
         with tarfile.open(out,"w:gz") as tf:
             if ETC.exists(): tf.add(ETC,arcname="etc-mbox")
             tf.add(dbcopy,arcname="users.db")
-    os.chmod(out,0o600); print(out)
+    os.chmod(out,0o600)
+    # A tarball is not a backup until it can be restored and parsed. Run the
+    # same isolated extraction/SQLite/config checks as `backup verify`.
+    class VerifyArgs: path=str(out)
+    backup_verify(VerifyArgs())
+    print(out)
+
+
+def backup_files(directory=Path("/root")):
+    files=[]
+    for pattern in ("mbox-backup-*.tar.gz","mbox-preinstall-*.tar.gz","mbox-pre-reinit-*.tar.gz"):
+        files.extend(directory.glob(pattern))
+    return sorted({p.resolve() for p in files if p.is_file()}, key=lambda p:p.stat().st_mtime, reverse=True)
+
+
+def backup_list(args):
+    for p in backup_files(Path(args.directory)):
+        st=p.stat(); stamp=dt.datetime.fromtimestamp(st.st_mtime).astimezone().isoformat(timespec="seconds")
+        print(f"{st.st_size:>12}  {stamp}  {p}")
+
+
+def backup_prune(args):
+    require_root()
+    if args.keep < 1: die("--keep must be >= 1")
+    files=backup_files(Path(args.directory))
+    doomed=files[args.keep:]
+    if not doomed:
+        print("Nothing to prune.")
+        return
+    for p in doomed:
+        print(f"remove {p}")
+        if not args.dry_run: p.unlink()
+    print(f"{'Would remove' if args.dry_run else 'Removed'} {len(doomed)} old backup(s); kept {min(args.keep,len(files))} newest.")
+
+
+def android_assetlinks(args):
+    raw=re.sub(r"[^0-9A-Fa-f]","",args.sha256_cert)
+    if len(raw)!=64: die("--sha256-cert must be a SHA-256 signing-certificate fingerprint")
+    fp=":".join(raw[i:i+2].upper() for i in range(0,64,2))
+    body=[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"io.mbox.android","sha256_cert_fingerprints":[fp]}}]
+    text=json.dumps(body,indent=2)+"\n"
+    if args.output:
+        out=Path(args.output);out.parent.mkdir(parents=True,exist_ok=True);out.write_text(text);print(out)
+    else: print(text,end="")
+
+
+def resources_cmd(args):
+    cp=load_conf(); validate_config(cp)
+    pid=0
+    try:
+        out=run(["systemctl","show","-p","MainPID","--value",SERVICE],capture=True,check=False).stdout.strip()
+        pid=int(out or 0)
+    except Exception: pid=0
+    print("Configured transport limits:")
+    for k in DEFAULT_LIMITS:
+        v=int(cp["limits"][k])
+        if k.endswith("_bytes"): print(f"  {k}={v} ({v/1024/1024:.1f} MiB)")
+        else: print(f"  {k}={v}")
+    if pid>0 and Path(f"/proc/{pid}/status").exists():
+        status={}
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if ":" in line:
+                k,v=line.split(":",1); status[k]=v.strip()
+        try: fds=len(list(Path(f"/proc/{pid}/fd").iterdir()))
+        except OSError: fds=-1
+        print(f"Process: pid={pid} rss={status.get('VmRSS','?')} peak={status.get('VmHWM','?')} threads={status.get('Threads','?')} fds={fds}")
+        try:
+            current=run(["systemctl","show","-p","MemoryCurrent","--value",SERVICE],capture=True,check=False).stdout.strip()
+            peak=run(["systemctl","show","-p","MemoryPeak","--value",SERVICE],capture=True,check=False).stdout.strip()
+            if current and current != "[not set]":
+                cur=int(current); peak_i=int(peak) if peak.isdigit() else 0
+                text=f"Cgroup memory: current={cur/1024/1024:.1f} MiB"
+                if peak_i: text+=f" peak={peak_i/1024/1024:.1f} MiB"
+                print(text)
+        except Exception:
+            pass
+    else:
+        print("Process: not running or /proc unavailable")
+    rs=read_runtime_status()
+    if rs:
+        print(f"Runtime: sessions={rs.get('active_sessions','?')} streams={rs.get('active_streams','?')} queued_bytes={rs.get('queued_bytes','?')}")
+    con=db_connect(); total=con.execute("SELECT count(*) FROM users").fetchone()[0]; enabled=con.execute("SELECT count(*) FROM users WHERE enabled=1").fetchone()[0]; unlimited=con.execute("SELECT count(*) FROM users WHERE enabled=1 AND max_sessions=-1").fetchone()[0]; con.close()
+    print(f"Users: total={total} enabled={enabled} unlimited={unlimited}")
 
 
 def status(args):
@@ -1141,7 +1497,7 @@ def make_parser():
     q=sp.add_parser("init"); q.add_argument("--force",action="store_true",help="destructive reinitialize: backup old MBox state, then create fresh config/keys/users"); q.add_argument("--public-url"); q.add_argument("--origin-url"); q.add_argument("--base-path"); q.add_argument("--first-user"); q.add_argument("--listen",default="127.0.0.1:18449"); q.add_argument("--upstream",default="127.0.0.1:2080"); q.add_argument("--max-slots",type=int,default=4); q.add_argument("--max-body-bytes",type=int,default=2097152); q.add_argument("--slot-lock-prefix",default="/tmp/mbox-relay"); q.set_defaults(func=init_cmd)
     m=sp.add_parser("migrate"); ms=m.add_subparsers(dest="sub",required=True); q=ms.add_parser("legacy"); q.add_argument("--server-json",default="/etc/mbox/server.json"); q.add_argument("--public-url"); q.add_argument("--origin-url"); q.set_defaults(func=migrate_legacy)
     u=sp.add_parser("user"); us=u.add_subparsers(dest="sub",required=True)
-    q=us.add_parser("add"); q.add_argument("ids",nargs="*"); q.add_argument("--count",type=int); q.add_argument("--prefix",default="user-"); q.add_argument("--width",type=int); q.add_argument("--note"); q.set_defaults(func=user_add)
+    q=us.add_parser("add"); q.add_argument("ids",nargs="*"); q.add_argument("--count",type=int); q.add_argument("--prefix",default="user-"); q.add_argument("--width",type=int); q.add_argument("--note"); q.add_argument("--max-sessions","--max-devices",dest="max_sessions",type=int); q.add_argument("--unlimited",action="store_true"); q.add_argument("--days",type=int); q.add_argument("--expires-at"); q.set_defaults(func=user_add)
     q=us.add_parser("import"); q.add_argument("csv_file"); q.set_defaults(func=user_import)
     q=us.add_parser("list"); q.add_argument("--enabled",action="store_true"); q.add_argument("--revoked",action="store_true"); q.set_defaults(func=user_list)
     q=us.add_parser("show"); q.add_argument("id"); q.set_defaults(func=user_show)
@@ -1150,9 +1506,14 @@ def make_parser():
     for name in ["enable","disable","revoke"]:
         q=us.add_parser(name); q.add_argument("id"); q.set_defaults(func=lambda a,n=name:user_state(a,n))
     q=us.add_parser("rotate"); q.add_argument("id"); q.add_argument("--print-link",action="store_true"); q.add_argument("--name"); q.set_defaults(func=user_rotate)
+    q=us.add_parser("limit"); q.add_argument("id"); q.add_argument("max_sessions",type=int,nargs="?"); q.add_argument("--unlimited",action="store_true"); q.set_defaults(func=user_limit)
+    q=us.add_parser("devices"); q.add_argument("id"); q.add_argument("max_sessions",type=int,nargs="?"); q.add_argument("--unlimited",action="store_true"); q.set_defaults(func=user_limit)
+    q=us.add_parser("expiry"); q.add_argument("id"); q.add_argument("--days",type=int); q.add_argument("--at"); q.add_argument("--clear",action="store_true"); q.set_defaults(func=user_expiry)
+    q=us.add_parser("renew"); q.add_argument("id"); q.add_argument("days",type=int); q.set_defaults(func=user_renew)
     q=us.add_parser("delete"); q.add_argument("ids",nargs="+"); q.add_argument("-y","--yes",action="store_true",help="delete without interactive confirmation"); q.add_argument("--purge",action="store_true",help=argparse.SUPPRESS); q.set_defaults(func=user_delete)
     q=us.add_parser("link"); q.add_argument("id"); q.add_argument("--name"); q.set_defaults(func=user_link)
-    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.set_defaults(func=user_qr)
+    q=us.add_parser("app-link"); q.add_argument("id"); q.add_argument("--name"); q.set_defaults(func=user_app_link)
+    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--app-link",action="store_true"); q.set_defaults(func=user_qr)
     q=us.add_parser("export"); q.add_argument("ids",nargs="*"); q.add_argument("--all-enabled",action="store_true"); q.add_argument("--output",required=True); q.add_argument("--no-qr",action="store_true"); q.set_defaults(func=user_export)
     c=sp.add_parser("config"); cs=c.add_subparsers(dest="sub",required=True)
     q=cs.add_parser("show"); q.set_defaults(func=config_show)
@@ -1172,7 +1533,7 @@ def make_parser():
     r=sp.add_parser("relay"); rs=r.add_subparsers(dest="sub",required=True)
     q=rs.add_parser("bundle"); q.add_argument("--output"); q.set_defaults(func=relay_bundle)
     q=rs.add_parser("paths"); q.set_defaults(func=relay_paths)
-    q=rs.add_parser("deploy"); q.add_argument("--ssh"); q.add_argument("--ftp-host"); q.add_argument("--ftp-user"); q.add_argument("--ftp-plain",action="store_true"); q.add_argument("--remote-dir"); q.set_defaults(func=relay_deploy)
+    q=rs.add_parser("deploy"); q.add_argument("--ssh"); q.add_argument("--ftp-host"); q.add_argument("--ftp-user"); q.add_argument("--ftp-plain",action="store_true"); q.add_argument("--remote-dir"); q.add_argument("--site",action="store_true",help="also deploy decoy index.html and 404.html to the shared-hosting web root"); q.set_defaults(func=relay_deploy)
     q=rs.add_parser("test"); q.set_defaults(func=relay_test)
     s=sp.add_parser("server"); ss=s.add_subparsers(dest="sub",required=True)
     for name in ["start","stop","restart","status"]:
@@ -1180,11 +1541,17 @@ def make_parser():
     q=sp.add_parser("sync"); q.add_argument("--restart",action="store_true"); q.set_defaults(func=lambda a: render_runtime(reload_auth=not a.restart,restart=a.restart))
     q=sp.add_parser("doctor"); q.set_defaults(func=doctor)
     q=sp.add_parser("status"); q.set_defaults(func=status)
+    q=sp.add_parser("resources"); q.set_defaults(func=resources_cmd)
     q=sp.add_parser("logs"); q.add_argument("-f","--follow",action="store_true"); q.add_argument("-n","--lines",type=int,default=100); q.set_defaults(func=logs_cmd)
     d=sp.add_parser("db"); ds=d.add_subparsers(dest="sub",required=True); q=ds.add_parser("check"); q.set_defaults(func=db_check); q=ds.add_parser("vacuum"); q.set_defaults(func=db_vacuum)
     l=sp.add_parser("link"); ls=l.add_subparsers(dest="sub",required=True); q=ls.add_parser("inspect"); q.add_argument("path"); q.add_argument("--redact",action="store_true"); q.set_defaults(func=link_inspect)
-    b=sp.add_parser("backup"); bs=b.add_subparsers(dest="sub",required=True); q=bs.add_parser("create"); q.add_argument("--output"); q.set_defaults(func=backup_create); q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.1"))
+    a=sp.add_parser("android"); aas=a.add_subparsers(dest="sub",required=True); q=aas.add_parser("assetlinks"); q.add_argument("--sha256-cert",required=True); q.add_argument("--output"); q.set_defaults(func=android_assetlinks)
+    b=sp.add_parser("backup"); bs=b.add_subparsers(dest="sub",required=True)
+    q=bs.add_parser("create"); q.add_argument("--output"); q.set_defaults(func=backup_create)
+    q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
+    q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
+    q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2"))
     return p
 
 

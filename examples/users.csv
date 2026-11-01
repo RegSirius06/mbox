@@ -1,4 +1,4 @@
-id,label,note
-alice-phone,Alice phone,primary
-alice-tablet,Alice tablet,
-bob-phone,Bob phone,work
+id,label,note,max_sessions,expires_at
+alice-phone,Alice,personal phone,2,
+family,Family,family subscription,5,2026-12-31T23:59:59+00:00
+lab,Lab,unlimited test profile,unlimited,

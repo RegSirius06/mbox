@@ -5,13 +5,16 @@ plugins {
 android {
     namespace 'io.mbox.android'
     compileSdk 36
+    buildToolsVersion '36.0.0'
 
     defaultConfig {
         applicationId 'io.mbox.android'
         minSdk 29
-        targetSdk 33
+        targetSdk 36
         versionCode 3
-        versionName '1.0.0-beta.1'
+        versionName '1.0.0-beta.2'
+
+        manifestPlaceholders = [mboxProvisioningHost: providers.gradleProperty('mboxProvisioningHost').orElse('provision.invalid').get()]
 
         // The MBox Go core is currently built only for Android arm64.
         ndk {

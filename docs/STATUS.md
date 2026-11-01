@@ -1,29 +1,47 @@
 # MBox release status
 
-## 1.0.0-beta.1
+## 1.0.0-beta.2
 
-Release gates completed:
+beta.2 is the first Noise-only MBox generation. Client and server are wire-incompatible with beta.1/hardened and must be upgraded together.
 
-- clean initialization: PASS
-- duplicate initialization refusal: PASS
-- destructive `init --force` with backup/reinitialize: PASS
-- configuration validation: PASS
-- SQLite user control plane: PASS
-- server start/restart/reload: PASS
-- SIGHUP authentication reload: PASS
-- generated REG.RU relay deployment: PASS
-- public relay probe: PASS
-- cover traffic public route: PASS
-- cover suppression during real sessions: PASS
-- Android VPN connection through production frontend: PASS
-- automatic Android reconnect: PASS
-- secret/release tree review: PASS
+Automated/repository gates in the release tree include:
 
-Known beta limitations:
+- independent `Noise_NKpsk0_25519_AESGCM_SHA256` vector reproduction;
+- Noise-only OPEN interoperability and explicit legacy-OPEN rejection;
+- multi-message Noise transport roundtrip and authenticated-header tamper rejection;
+- configuration upgrade/default backfill;
+- SQLite user/policy control plane;
+- reliable DOWN replay/ACK/order regression tests;
+- bounded UP/flow-control regression tests;
+- `go test -race` for Noise/server/client/relay;
+- parser fuzz smoke;
+- 3 GiB bounded-UP scheduler regression;
+- slow-stream/full-duplex isolation regression;
+- Android Go-core cross-build;
+- generated REG.RU relay/site bundle;
+- sing-box example JSON validation;
+- secret/release-tree review.
+
+Deployment behavior includes:
+
+- Noise-only NKpsk0 handshake and Noise transport AEAD; no legacy downgrade;
+- stochastic padding/batching/Noise-message boundaries/poll timing;
+- unprivileged `mbox` systemd service;
+- configurable low-memory limits and `mboxctl resources`;
+- concurrent-session limits/unlimited mode;
+- expiry + renewal without deleting credentials;
+- active session revocation on policy changes;
+- transactional Android profile replacement/fingerprint confirmation;
+- optional Verified App Link provisioning;
+- optional shared-hosting decoy-site deployment;
+- explicit sing-box `127.0.0.1:2080` routing handoff.
+
+Known beta limitations/gates:
 
 - TCP transport only; native UDP/QUIC tunneling is not supported.
-- Cryptographic design has not received an independent security audit.
-- Static server X25519 authentication does not provide strong post-compromise forward secrecy.
-- Cover traffic changes the shared frontend activity profile; it does not conceal client last-mile traffic.
-- Graceful CLOSE is best-effort; idle expiry remains the authoritative cleanup mechanism.
-- Long-duration soak, fuzzing and heavy multi-device load testing remain future work.
+- Native Go TLS/HTTP fingerprint remains observable; browser-stack impersonation is not yet implemented.
+- Per-user "device" limiting currently means concurrent authenticated sessions, not immutable hardware identity.
+- 24-hour/7-day soak, network-transition chaos and 10/50/100 real-client qualification are still required before production status.
+- Long-running fuzz campaigns remain part of ongoing hardening.
+- Verified App Links require deployment-specific release signing + `assetlinks.json`.
+- Noise substantially improves the protocol construction but the complete MBox system has not received an independent external security audit.

@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	frameOpen  = 1
-	frameData  = 2
-	frameClose = 3
-	frameError = 4
-	framePing  = 5
+	frameOpen   = 1
+	frameData   = 2
+	frameClose  = 3
+	frameError  = 4
+	framePing   = 5
+	frameWindow = 6
 )
 
 var (
@@ -36,16 +37,24 @@ var (
 )
 
 type localStream struct {
-	conn   net.Conn
-	closed atomic.Bool
+	conn          net.Conn
+	writeQ        *byteQueue
+	closed        atomic.Bool
+	creditMu      sync.Mutex
+	sendCredit    int
+	recvAllowance int
+	creditWake    chan struct{}
 }
 
 type timingConfig struct {
-	IdleMinMS     int `json:"idle_min_ms"`
-	IdleMaxMS     int `json:"idle_max_ms"`
-	WakeMinMS     int `json:"wake_min_ms"`
-	WakeMaxMS     int `json:"wake_max_ms"`
-	ActiveJitterP int `json:"active_jitter_percent"`
+	IdleMinMS       int `json:"idle_min_ms"`
+	IdleMaxMS       int `json:"idle_max_ms"`
+	WakeMinMS       int `json:"wake_min_ms"`
+	WakeMaxMS       int `json:"wake_max_ms"`
+	ActiveJitterP   int `json:"active_jitter_percent"`
+	ActiveMinMS     int `json:"active_min_ms"`
+	ActiveMaxMS     int `json:"active_max_ms"`
+	ActiveBackoffMS int `json:"active_backoff_max_ms"`
 }
 
 type recoveryConfig struct {
@@ -65,17 +74,25 @@ type camouflageConfig struct {
 	RequestHeaders           map[string]string `json:"request_headers"`
 	ResponseHeaders          map[string]string `json:"response_headers"`
 	DownMaxBytes             int               `json:"down_max_bytes"`
+	UpMaxBytes               int               `json:"up_max_bytes"`
 	PaddingClasses           []int             `json:"padding_classes"`
 	PaddingExtraClassPercent int               `json:"padding_extra_class_percent"`
+	PaddingRandomMaxBytes    int               `json:"padding_random_max_bytes"`
+	BatchMinBytes            int               `json:"batch_min_bytes"`
+	NoiseChunkMinBytes       int               `json:"noise_chunk_min_bytes"`
+	NoiseChunkMaxBytes       int               `json:"noise_chunk_max_bytes"`
 }
 
 var camouflage = camouflageConfig{
 	Timing: timingConfig{
-		IdleMinMS:     45000,
-		IdleMaxMS:     90000,
-		WakeMinMS:     100,
-		WakeMaxMS:     220,
-		ActiveJitterP: 20,
+		IdleMinMS:       45000,
+		IdleMaxMS:       90000,
+		WakeMinMS:       100,
+		WakeMaxMS:       220,
+		ActiveJitterP:   35,
+		ActiveMinMS:     120,
+		ActiveMaxMS:     420,
+		ActiveBackoffMS: 2200,
 	},
 	Recovery: recoveryConfig{
 		FailureTimeoutMS: 30000,
@@ -94,11 +111,16 @@ var camouflage = camouflageConfig{
 		"Cache-Control": "no-store",
 	},
 	DownMaxBytes: 262144,
+	UpMaxBytes:   262144,
 	PaddingClasses: []int{
 		512, 1024, 2048, 4096, 8192, 16384,
 		32768, 65536, 131072, 262144, 524288,
 	},
-	PaddingExtraClassPercent: 20,
+	PaddingExtraClassPercent: 0,
+	PaddingRandomMaxBytes:    16384,
+	BatchMinBytes:            73728,
+	NoiseChunkMinBytes:       16384,
+	NoiseChunkMaxBytes:       61440,
 }
 
 type tunnel struct {
@@ -109,16 +131,23 @@ type tunnel struct {
 	streams   map[uint32]*localStream
 	nextID    atomic.Uint32
 
-	upMu  sync.Mutex
-	upBuf bytes.Buffer
+	upMu        sync.Mutex
+	upQueues    map[uint32][][]byte
+	upOrder     []uint32
+	upBytes     int
+	upPerStream map[uint32]int
+	upSpace     chan struct{}
 
-	wake     chan struct{}
-	downWake chan struct{}
-	done     chan struct{}
+	wake        chan struct{}
+	downWake    chan struct{}
+	downDeliver chan []byte
+	done        chan struct{}
 
-	downMu      sync.Mutex
-	nextDown    uint64
-	downPending map[uint64][]byte
+	nextDown         uint64
+	downPending      map[uint64][]byte
+	downPendingBytes int
+	downAck          atomic.Uint64
+	downReqSeq       atomic.Uint64
 
 	http *http.Client
 
@@ -266,13 +295,7 @@ func (t *tunnel) request(method, url string, body []byte) ([]byte, int, error) {
 
 func newTunnel() (*tunnel, error) {
 	t := &tunnel{
-		streams:     make(map[uint32]*localStream),
-		wake:        make(chan struct{}, 1),
-		downWake:    make(chan struct{}, 1),
-		done:        make(chan struct{}),
-		downPending: make(map[uint64][]byte),
-		nextDown:    1,
-		fatalErr:    make(chan error, 1),
+		streams: make(map[uint32]*localStream), upQueues: make(map[uint32][][]byte), upPerStream: make(map[uint32]int), upSpace: make(chan struct{}, 1), wake: make(chan struct{}, 1), downWake: make(chan struct{}, 1), downDeliver: make(chan []byte, 64), done: make(chan struct{}), downPending: make(map[uint64][]byte), nextDown: 1, fatalErr: make(chan error, 1),
 	}
 
 	httpTransport := &http.Transport{
@@ -314,7 +337,7 @@ func newTunnel() (*tunnel, error) {
 		Timeout:   15 * time.Second,
 	}
 
-	openBody, ephPriv, clientPub, err := buildOpenRequest()
+	openBody, noiseHS, err := buildOpenRequest()
 	if err != nil {
 		return nil, err
 	}
@@ -328,31 +351,14 @@ func newTunnel() (*tunnel, error) {
 		return nil, fmt.Errorf("open HTTP %d: %s", status, data)
 	}
 
-	reply := strings.TrimSpace(string(data))
-
-	if len(reply) != 64 {
-		return nil, fmt.Errorf("invalid open reply %q", reply)
-	}
-
-	t.sid = reply[:32]
-	confirm := reply[32:]
-
-	t.crypto, err = finishClientHandshake(
-		ephPriv,
-		clientPub,
-		t.sid,
-		confirm,
-	)
+	t.crypto, t.sid, err = finishClientHandshake(noiseHS, data)
 	if err != nil {
-		return nil, fmt.Errorf("crypto handshake: %w", err)
+		return nil, fmt.Errorf("Noise handshake: %w", err)
 	}
 
-	handshake := "v1"
-	if clientID != "" {
-		handshake = "v2"
-	}
-	log.Printf("SESSION %s handshake=%s record=v%d", t.sid, handshake, cryptoRecordVersion)
+	log.Printf("SESSION %s handshake=Noise_NKpsk0_25519_AESGCM_SHA256 record=v%d", t.sid, cryptoRecordVersion)
 
+	go t.downDeliveryLoop()
 	go t.uploader()
 	go t.downloader()
 
@@ -369,38 +375,115 @@ func (t *tunnel) fail(err error) {
 	})
 }
 
-func (t *tunnel) queue(streamID uint32, typ byte, payload []byte) {
-	f := frame(streamID, typ, payload)
-
-	t.upMu.Lock()
-	t.upBuf.Write(f)
-	t.upMu.Unlock()
-
-	select {
-	case t.wake <- struct{}{}:
-	default:
+func (t *tunnel) queue(streamID uint32, typ byte, payload []byte) error {
+	if len(payload) > maxFramePayload {
+		return fmt.Errorf("frame payload too large: %d", len(payload))
 	}
-
-	// Исходящий OPEN/DATA означает, что скоро ожидается ответ.
-	// Не позволяем downloader спать на старом backoff.
-	select {
-	case t.downWake <- struct{}{}:
-	default:
+	f := frame(streamID, typ, payload)
+	if len(f) > camouflage.UpMaxBytes {
+		return fmt.Errorf("frame exceeds UP record limit")
+	}
+	for {
+		t.upMu.Lock()
+		per := t.upPerStream[streamID]
+		if t.upBytes+len(f) <= maxUpQueueBytes && per+len(f) <= maxUpPerStreamQueueBytes {
+			if len(t.upQueues[streamID]) == 0 {
+				t.upOrder = append(t.upOrder, streamID)
+			}
+			t.upQueues[streamID] = append(t.upQueues[streamID], f)
+			t.upBytes += len(f)
+			t.upPerStream[streamID] = per + len(f)
+			t.upMu.Unlock()
+			select {
+			case t.wake <- struct{}{}:
+			default:
+			}
+			select {
+			case t.downWake <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+		t.upMu.Unlock()
+		select {
+		case <-t.done:
+			return fmt.Errorf("tunnel stopped")
+		case <-t.upSpace:
+		}
 	}
 }
-
-func (t *tunnel) takeUpload() []byte {
+func (t *tunnel) takeUpload(limit int) []byte {
+	if limit <= 0 {
+		limit = camouflage.UpMaxBytes
+	}
 	t.upMu.Lock()
 	defer t.upMu.Unlock()
-
-	if t.upBuf.Len() == 0 {
+	if t.upBytes == 0 || len(t.upOrder) == 0 {
 		return nil
 	}
-
-	data := append([]byte(nil), t.upBuf.Bytes()...)
-	t.upBuf.Reset()
-
+	data := make([]byte, 0, limit)
+	skipped, removed := 0, 0
+	for len(t.upOrder) > 0 {
+		sid := t.upOrder[0]
+		t.upOrder = t.upOrder[1:]
+		q := t.upQueues[sid]
+		if len(q) == 0 {
+			delete(t.upQueues, sid)
+			delete(t.upPerStream, sid)
+			continue
+		}
+		f := q[0]
+		if len(data) > 0 && len(data)+len(f) > limit {
+			t.upOrder = append(t.upOrder, sid)
+			skipped++
+			if skipped >= len(t.upOrder) {
+				break
+			}
+			continue
+		}
+		if len(f) > limit {
+			break
+		}
+		q[0] = nil
+		q = q[1:]
+		data = append(data, f...)
+		t.upBytes -= len(f)
+		t.upPerStream[sid] -= len(f)
+		removed += len(f)
+		skipped = 0
+		if len(q) == 0 {
+			delete(t.upQueues, sid)
+			delete(t.upPerStream, sid)
+		} else {
+			t.upQueues[sid] = q
+			t.upOrder = append(t.upOrder, sid)
+		}
+		if len(data) >= limit {
+			break
+		}
+	}
+	if removed > 0 {
+		select {
+		case t.upSpace <- struct{}{}:
+		default:
+		}
+	}
 	return data
+}
+func (t *tunnel) newDownRequestURL(raw string, includeMax bool) (string, uint64, error) {
+	seq := t.downReqSeq.Add(1)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", 0, err
+	}
+	q := u.Query()
+	q.Set("seq", fmt.Sprintf("%d", seq))
+	q.Set("ack", fmt.Sprintf("%d", t.downAck.Load()))
+	if includeMax {
+		q.Set("max", fmt.Sprintf("%d", randomBatchLimit(camouflage.DownMaxBytes)))
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), seq, nil
 }
 
 func (t *tunnel) uploader() {
@@ -411,7 +494,7 @@ func (t *tunnel) uploader() {
 		case <-t.wake:
 		}
 		for {
-			plain := t.takeUpload()
+			plain := t.takeUpload(randomBatchLimit(camouflage.UpMaxBytes))
 			if len(plain) == 0 {
 				break
 			}
@@ -420,78 +503,57 @@ func (t *tunnel) uploader() {
 				t.fail(fmt.Errorf("pad upload: %w", err))
 				return
 			}
-
 			record, err := t.crypto.sealUp(t.sid, padded)
 			if err != nil {
 				t.fail(fmt.Errorf("encrypt upload: %w", err))
 				return
 			}
-
-			log.Printf(
-				"PAD UP plain=%d padded=%d record=%d",
-				len(plain),
-				len(padded),
-				len(record),
-			)
-
-			// The encrypted record is immutable until acknowledged. Retries therefore
-			// preserve the exact ciphertext/counter while only changing their timing.
+			upURL, _, err := t.newDownRequestURL(base+camouflage.UpPath+t.sid, false)
+			if err != nil {
+				t.fail(err)
+				return
+			}
 			var failureSince time.Time
-			retryDelay := time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
-
+			retry := time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
 			for {
-				started := time.Now()
-				resp, status, reqErr := t.request("POST", base+camouflage.UpPath+t.sid, record)
-				log.Printf("UP HTTP=%d plain=%d wire=%d recv=%d time=%v", status, len(plain), len(record), len(resp), time.Since(started))
-
+				resp, status, reqErr := t.request("POST", upURL, record)
 				if reqErr == nil && (status == http.StatusOK || status == http.StatusNoContent) {
-					failureSince = time.Time{}
-					retryDelay = time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
-
 					if status == http.StatusOK && len(resp) > 0 {
-						if err := t.acceptDownRecord(resp); err != nil {
-							t.fail(fmt.Errorf("piggyback down record: %w", err))
+						if err := t.submitDownRecord(resp); err != nil {
+							t.fail(err)
 							return
 						}
 					}
 					break
 				}
-
 				if reqErr == nil && (status == http.StatusNotFound || status == http.StatusGone) {
 					t.fail(fmt.Errorf("session lost: upload HTTP %d", status))
 					return
 				}
-
 				if failureSince.IsZero() {
 					failureSince = time.Now()
 				}
-
 				var failure error
 				if reqErr != nil {
 					failure = reqErr
-					log.Printf("UPLOAD retry same record in %v: %v", retryDelay, reqErr)
 				} else {
 					failure = fmt.Errorf("HTTP %d", status)
-					log.Printf("UPLOAD HTTP %d; retry same record in %v", status, retryDelay)
 				}
-
 				if time.Since(failureSince) >= time.Duration(camouflage.Recovery.FailureTimeoutMS)*time.Millisecond {
-					t.fail(fmt.Errorf("upload transport unavailable for %v: %w", time.Since(failureSince).Round(time.Millisecond), failure))
+					t.fail(fmt.Errorf("upload unavailable: %w", failure))
 					return
 				}
-
-				timer := time.NewTimer(retryDelay)
+				timer := time.NewTimer(retry)
 				select {
 				case <-t.done:
 					timer.Stop()
 					return
 				case <-timer.C:
 				}
-
-				retryDelay *= 2
-				maxDelay := time.Duration(camouflage.Recovery.RetryMaxMS) * time.Millisecond
-				if retryDelay > maxDelay {
-					retryDelay = maxDelay
+				retry *= 2
+				max := time.Duration(camouflage.Recovery.RetryMaxMS) * time.Millisecond
+				if retry > max {
+					retry = max
 				}
 			}
 		}
@@ -504,46 +566,66 @@ func (t *tunnel) activeStreams() int {
 	return len(t.streams)
 }
 
-func (t *tunnel) acceptDownRecord(record []byte) error {
-	counter, paddedPlain, err := t.crypto.openDown(t.sid, record)
-	if err != nil {
-		return err
-	}
-
-	plain, err := unpadTransportPlaintext(paddedPlain)
-	if err != nil {
-		return err
-	}
-
-	t.downMu.Lock()
-	if counter < t.nextDown {
-		t.downMu.Unlock()
+func (t *tunnel) submitDownRecord(record []byte) error {
+	c := append([]byte(nil), record...)
+	select {
+	case <-t.done:
+		return fmt.Errorf("tunnel stopped")
+	case t.downDeliver <- c:
 		return nil
 	}
-	if counter-t.nextDown > 256 {
-		t.downMu.Unlock()
-		return fmt.Errorf("down reorder window exceeded: got=%d want=%d", counter, t.nextDown)
-	}
-	if _, ok := t.downPending[counter]; !ok {
-		t.downPending[counter] = plain
-	}
-	var ready [][]byte
+}
+func (t *tunnel) downDeliveryLoop() {
 	for {
-		p, ok := t.downPending[t.nextDown]
-		if !ok {
-			break
+		select {
+		case <-t.done:
+			return
+		case record := <-t.downDeliver:
+			counter, padded, err := t.crypto.openDown(t.sid, record)
+			if err != nil {
+				t.fail(fmt.Errorf("down authentication: %w", err))
+				return
+			}
+			plain, err := unpadTransportPlaintext(padded)
+			if err != nil {
+				t.fail(fmt.Errorf("down padding: %w", err))
+				return
+			}
+			if counter < t.nextDown {
+				continue
+			}
+			if counter-t.nextDown > 256 {
+				t.fail(fmt.Errorf("down reorder window exceeded: got=%d want=%d", counter, t.nextDown))
+				return
+			}
+			if _, exists := t.downPending[counter]; !exists {
+				if t.downPendingBytes+len(plain) > maxDownPendingBytes {
+					t.fail(fmt.Errorf("down pending memory budget exceeded"))
+					return
+				}
+				t.downPending[counter] = plain
+				t.downPendingBytes += len(plain)
+			}
+			for {
+				p, ok := t.downPending[t.nextDown]
+				if !ok {
+					break
+				}
+				delete(t.downPending, t.nextDown)
+				t.downPendingBytes -= len(p)
+				if err := t.handleFrames(p); err != nil {
+					t.fail(fmt.Errorf("down frame delivery: %w", err))
+					return
+				}
+				t.downAck.Store(t.nextDown)
+				t.nextDown++
+				select {
+				case t.downWake <- struct{}{}:
+				default:
+				}
+			}
 		}
-		delete(t.downPending, t.nextDown)
-		ready = append(ready, p)
-		t.nextDown++
 	}
-	t.downMu.Unlock()
-	for _, p := range ready {
-		if err := t.handleFrames(p); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func randomDuration(minMS, maxMS int) time.Duration {
@@ -596,28 +678,15 @@ func jitterDuration(base time.Duration, percent int) time.Duration {
 }
 
 func (t *tunnel) downloader() {
-	activeDelay := 250 * time.Millisecond
+	activeDelay := randomDuration(camouflage.Timing.ActiveMinMS, camouflage.Timing.ActiveMaxMS)
 	var failureSince time.Time
-	errorDelay := time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
-
 	for {
-		// Once a transport failure has been observed, keep probing on the
-		// recovery backoff even if applications close all their streams.
-		// Otherwise the normal 45-90 s idle camouflage delay could postpone
-		// fail-fast far beyond failure_timeout_ms.
 		if t.activeStreams() == 0 && failureSince.IsZero() {
-			delay := randomDuration(
-				camouflage.Timing.IdleMinMS,
-				camouflage.Timing.IdleMaxMS,
-			)
-
-			timer := time.NewTimer(delay)
-
+			timer := time.NewTimer(randomDuration(camouflage.Timing.IdleMinMS, camouflage.Timing.IdleMaxMS))
 			select {
 			case <-t.done:
 				timer.Stop()
 				return
-
 			case <-t.downWake:
 				if !timer.Stop() {
 					select {
@@ -625,28 +694,15 @@ func (t *tunnel) downloader() {
 					default:
 					}
 				}
-
-				time.Sleep(randomDuration(
-					camouflage.Timing.WakeMinMS,
-					camouflage.Timing.WakeMaxMS,
-				))
-
+				time.Sleep(randomDuration(camouflage.Timing.WakeMinMS, camouflage.Timing.WakeMaxMS))
 			case <-timer.C:
 			}
-
 		} else {
-			delay := jitterDuration(
-				activeDelay,
-				camouflage.Timing.ActiveJitterP,
-			)
-
-			timer := time.NewTimer(delay)
-
+			timer := time.NewTimer(jitterDuration(activeDelay, camouflage.Timing.ActiveJitterP))
 			select {
 			case <-t.done:
 				timer.Stop()
 				return
-
 			case <-t.downWake:
 				if !timer.Stop() {
 					select {
@@ -654,199 +710,242 @@ func (t *tunnel) downloader() {
 					default:
 					}
 				}
-
-				time.Sleep(randomDuration(
-					camouflage.Timing.WakeMinMS,
-					camouflage.Timing.WakeMaxMS,
-				))
-
 			case <-timer.C:
 			}
 		}
-
-		data, status, err := t.request(
-			"GET",
-			base+camouflage.DownPath+t.sid,
-			nil,
-		)
-
+		requestURL, _, err := t.newDownRequestURL(base+camouflage.DownPath+t.sid, true)
 		if err != nil {
-			if failureSince.IsZero() {
-				failureSince = time.Now()
-			}
-
-			log.Printf("DOWNLOAD retry in %v: %v", errorDelay, err)
-
-			if time.Since(failureSince) >= time.Duration(camouflage.Recovery.FailureTimeoutMS)*time.Millisecond {
-				t.fail(fmt.Errorf("download transport unavailable for %v: %w", time.Since(failureSince).Round(time.Millisecond), err))
-				return
-			}
-
-			activeDelay = errorDelay
-			errorDelay *= 2
-			maxDelay := time.Duration(camouflage.Recovery.RetryMaxMS) * time.Millisecond
-			if errorDelay > maxDelay {
-				errorDelay = maxDelay
-			}
-			continue
-		}
-
-		if status == http.StatusOK || status == http.StatusNoContent {
-			failureSince = time.Time{}
-			errorDelay = time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
-		}
-
-		switch status {
-		case http.StatusOK:
-			if err := t.acceptDownRecord(data); err != nil {
-				t.fail(fmt.Errorf("download record: %w", err))
-				return
-			}
-
-			activeDelay = 250 * time.Millisecond
-
-		case http.StatusNoContent:
-			if t.activeStreams() > 0 {
-				activeDelay *= 2
-
-				if activeDelay > 2*time.Second {
-					activeDelay = 2 * time.Second
-				}
-			} else {
-				activeDelay = 250 * time.Millisecond
-			}
-
-		case http.StatusGone, http.StatusNotFound:
-			t.fail(fmt.Errorf("session lost: download HTTP %d", status))
+			t.fail(err)
 			return
-
-		default:
+		}
+		retry := time.Duration(camouflage.Recovery.RetryMinMS) * time.Millisecond
+		for {
+			data, status, reqErr := t.request("GET", requestURL, nil)
+			if reqErr == nil && (status == http.StatusOK || status == http.StatusNoContent) {
+				failureSince = time.Time{}
+				if status == http.StatusOK {
+					if err := t.submitDownRecord(data); err != nil {
+						t.fail(err)
+						return
+					}
+					activeDelay = randomDuration(camouflage.Timing.ActiveMinMS, camouflage.Timing.ActiveMaxMS)
+				} else if t.activeStreams() > 0 {
+					baseMS := int(activeDelay / time.Millisecond)
+					nextMin := baseMS + baseMS/3
+					nextMax := baseMS*2 + baseMS/3
+					if nextMax > camouflage.Timing.ActiveBackoffMS {
+						nextMax = camouflage.Timing.ActiveBackoffMS
+					}
+					if nextMin > nextMax {
+						nextMin = nextMax
+					}
+					activeDelay = randomDuration(nextMin, nextMax)
+				} else {
+					activeDelay = randomDuration(camouflage.Timing.ActiveMinMS, camouflage.Timing.ActiveMaxMS)
+				}
+				break
+			}
+			if reqErr == nil && (status == http.StatusGone || status == http.StatusNotFound) {
+				t.fail(fmt.Errorf("session lost: download HTTP %d", status))
+				return
+			}
+			if reqErr == nil && status >= 400 && status < 500 {
+				t.fail(fmt.Errorf("download protocol HTTP %d", status))
+				return
+			}
 			if failureSince.IsZero() {
 				failureSince = time.Now()
 			}
-
-			log.Printf("DOWNLOAD HTTP %d; retry in %v", status, errorDelay)
-
+			var failure error
+			if reqErr != nil {
+				failure = reqErr
+			} else {
+				failure = fmt.Errorf("HTTP %d", status)
+			}
 			if time.Since(failureSince) >= time.Duration(camouflage.Recovery.FailureTimeoutMS)*time.Millisecond {
-				t.fail(fmt.Errorf("download transport unavailable for %v: HTTP %d", time.Since(failureSince).Round(time.Millisecond), status))
+				t.fail(fmt.Errorf("download unavailable: %w", failure))
 				return
 			}
-
-			activeDelay = errorDelay
-			errorDelay *= 2
-			maxDelay := time.Duration(camouflage.Recovery.RetryMaxMS) * time.Millisecond
-			if errorDelay > maxDelay {
-				errorDelay = maxDelay
+			timer := time.NewTimer(retry)
+			select {
+			case <-t.done:
+				timer.Stop()
+				return
+			case <-t.downWake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+			case <-timer.C:
+			}
+			retry *= 2
+			max := time.Duration(camouflage.Recovery.RetryMaxMS) * time.Millisecond
+			if retry > max {
+				retry = max
 			}
 		}
 	}
 }
 
+func (t *tunnel) grantPeerCredit(id uint32, st *localStream, n int) error {
+	if err := st.grantPeerAllowance(n); err != nil {
+		return err
+	}
+	if err := t.queue(id, frameWindow, encodeWindowCredit(n)); err != nil {
+		st.rollbackPeerAllowance(n)
+		return err
+	}
+	return nil
+}
+func (t *tunnel) localWriter(id uint32, st *localStream) {
+	for {
+		payload, ok := st.writeQ.pop(t.done)
+		if !ok {
+			return
+		}
+		_ = st.conn.SetWriteDeadline(time.Now().Add(localWriteTimeout))
+		written := 0
+		var err error
+		for written < len(payload) {
+			var n int
+			n, err = st.conn.Write(payload[written:])
+			written += n
+			if err != nil || n == 0 {
+				if err == nil {
+					err = io.ErrUnexpectedEOF
+				}
+				break
+			}
+		}
+		if err != nil {
+			t.closeLocal(id, true)
+			return
+		}
+		if err := t.grantPeerCredit(id, st, len(payload)); err != nil {
+			t.closeLocal(id, false)
+			return
+		}
+	}
+}
 func (t *tunnel) handleFrames(data []byte) error {
 	for len(data) > 0 {
 		if len(data) < 9 {
 			return fmt.Errorf("short header")
 		}
-
-		streamID := binary.BigEndian.Uint32(data[0:4])
+		id := binary.BigEndian.Uint32(data[:4])
 		typ := data[4]
 		n := binary.BigEndian.Uint32(data[5:9])
-
 		data = data[9:]
-
 		if uint64(n) > uint64(len(data)) {
 			return fmt.Errorf("short payload")
 		}
-
+		if n > maxFramePayload {
+			return fmt.Errorf("frame payload too large: %d", n)
+		}
 		payload := data[:n]
 		data = data[n:]
-
 		t.streamsMu.Lock()
-		st := t.streams[streamID]
+		st := t.streams[id]
 		t.streamsMu.Unlock()
-
 		switch typ {
 		case frameData:
-			if st != nil && !st.closed.Load() {
-				if _, err := st.conn.Write(payload); err != nil {
-					t.closeLocal(streamID, false)
-				}
+			if st == nil || st.closed.Load() {
+				continue
 			}
-
+			if err := st.consumePeerAllowance(len(payload)); err != nil {
+				return err
+			}
+			if !st.writeQ.tryPush(payload) {
+				return fmt.Errorf("local stream write queue overflow")
+			}
+		case frameWindow:
+			if st == nil || st.closed.Load() {
+				continue
+			}
+			credit, err := decodeWindowCredit(payload)
+			if err != nil {
+				return err
+			}
+			if err := st.addSendCredit(credit); err != nil {
+				return err
+			}
 		case frameClose:
-			t.closeLocal(streamID, false)
-
+			if len(payload) != 0 {
+				return fmt.Errorf("CLOSE payload must be empty")
+			}
+			t.closeLocal(id, false)
 		case frameError:
-			log.Printf(
-				"STREAM %d server error: %s",
-				streamID,
-				string(payload),
-			)
-			t.closeLocal(streamID, false)
-
+			log.Printf("STREAM %d server error: %s", id, string(payload))
+			t.closeLocal(id, false)
 		case framePing:
-			// reserved
+		case frameOpen:
+			return fmt.Errorf("server-initiated OPEN is not supported")
+		default:
+			return fmt.Errorf("unknown frame type %d", typ)
 		}
 	}
-
 	return nil
 }
-
 func (t *tunnel) closeLocal(id uint32, notify bool) {
 	t.streamsMu.Lock()
-
 	st := t.streams[id]
-
 	if st != nil {
 		delete(t.streams, id)
 	}
-
 	t.streamsMu.Unlock()
-
 	if st == nil {
 		return
 	}
-
+	st.writeQ.closeAndDrain()
+	st.wakeCreditWaiters()
 	if st.closed.CompareAndSwap(false, true) {
 		_ = st.conn.Close()
 	}
-
 	if notify {
-		t.queue(id, frameClose, nil)
+		_ = t.queue(id, frameClose, nil)
 	}
 }
-
 func (t *tunnel) handleLocal(conn net.Conn) {
-	id := t.nextID.Add(1)
-
-	st := &localStream{conn: conn}
-
 	t.streamsMu.Lock()
+	if len(t.streams) >= maxClientStreams {
+		t.streamsMu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	id := t.nextID.Add(1)
+	st := &localStream{conn: conn, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 	t.streams[id] = st
 	t.streamsMu.Unlock()
-
-	log.Printf("STREAM %d OPEN", id)
-
-	// OPEN и первые DATA могут попасть в один HTTP batch.
-	t.queue(id, frameOpen, nil)
-
-	buf := make([]byte, 64*1024)
-
+	go t.localWriter(id, st)
+	if err := t.queue(id, frameOpen, nil); err != nil {
+		t.closeLocal(id, false)
+		return
+	}
+	if err := t.grantPeerCredit(id, st, streamInitialWindow); err != nil {
+		t.closeLocal(id, true)
+		return
+	}
+	buf := make([]byte, maxFramePayload)
 	for {
-		n, err := conn.Read(buf)
-
+		grant, ok := st.reserveSendCredit(len(buf), t.done)
+		if !ok {
+			return
+		}
+		n, err := conn.Read(buf[:grant])
+		if n < grant {
+			st.refundSendCredit(grant - n)
+		}
 		if n > 0 {
 			payload := append([]byte(nil), buf[:n]...)
-			t.queue(id, frameData, payload)
-		}
-
-		if err != nil {
-			if err != io.EOF && !st.closed.Load() {
-				log.Printf("STREAM %d local read: %v", id, err)
+			if qerr := t.queue(id, frameData, payload); qerr != nil {
+				t.closeLocal(id, false)
+				return
 			}
-
+		}
+		if err != nil {
 			t.closeLocal(id, true)
-			log.Printf("STREAM %d CLOSE", id)
 			return
 		}
 	}
@@ -854,35 +953,47 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 
 func paddedPlaintextSize(real int) (int, error) {
 	needed := real + 4
+	if camouflage.PaddingRandomMaxBytes > 0 {
+		extra, err := randomIntInclusive(0, camouflage.PaddingRandomMaxBytes)
+		if err != nil {
+			return 0, err
+		}
+		return needed + extra, nil
+	}
 
+	// Compatibility mode for explicitly configured legacy padding classes.
 	for i, class := range camouflage.PaddingClasses {
 		if class < needed {
 			continue
 		}
-
 		target := class
-
-		if camouflage.PaddingExtraClassPercent > 0 &&
-			i+1 < len(camouflage.PaddingClasses) {
-
+		if camouflage.PaddingExtraClassPercent > 0 && i+1 < len(camouflage.PaddingClasses) {
 			var b [1]byte
 			if _, err := rand.Read(b[:]); err != nil {
 				return 0, err
 			}
-
-			if int(b[0])*100/256 <
-				camouflage.PaddingExtraClassPercent {
+			if int(b[0])*100/256 < camouflage.PaddingExtraClassPercent {
 				target = camouflage.PaddingClasses[i+1]
 			}
 		}
-
 		return target, nil
 	}
+	return 0, fmt.Errorf("plaintext too large for padding policy: %d", real)
+}
 
-	return 0, fmt.Errorf(
-		"plaintext too large for padding classes: %d",
-		real,
-	)
+func randomBatchLimit(max int) int {
+	min := camouflage.BatchMinBytes
+	if min < maxFramePayload+9 {
+		min = maxFramePayload + 9
+	}
+	if min <= 0 || min >= max {
+		return max
+	}
+	n, err := randomIntInclusive(min, max)
+	if err != nil {
+		return max
+	}
+	return n
 }
 
 func padTransportPlaintext(plain []byte) ([]byte, error) {
@@ -954,6 +1065,17 @@ func loadCamouflageConfig(path string) error {
 	}
 	if _, ok := raw.Camouflage["timing"]; ok {
 		camouflage.Timing = cfg.Camouflage.Timing
+		// Old beta profiles predate the stochastic active-poll fields.  They
+		// remain valid; missing fields inherit beta.2 defaults.
+		if camouflage.Timing.ActiveMinMS == 0 {
+			camouflage.Timing.ActiveMinMS = 120
+		}
+		if camouflage.Timing.ActiveMaxMS == 0 {
+			camouflage.Timing.ActiveMaxMS = 420
+		}
+		if camouflage.Timing.ActiveBackoffMS == 0 {
+			camouflage.Timing.ActiveBackoffMS = 2200
+		}
 	}
 	if _, ok := raw.Camouflage["recovery"]; ok {
 		camouflage.Recovery = cfg.Camouflage.Recovery
@@ -983,11 +1105,26 @@ func loadCamouflageConfig(path string) error {
 	if cfg.Camouflage.DownMaxBytes > 0 {
 		camouflage.DownMaxBytes = cfg.Camouflage.DownMaxBytes
 	}
+	if cfg.Camouflage.UpMaxBytes > 0 {
+		camouflage.UpMaxBytes = cfg.Camouflage.UpMaxBytes
+	}
 	if len(cfg.Camouflage.PaddingClasses) > 0 {
 		camouflage.PaddingClasses = cfg.Camouflage.PaddingClasses
 	}
 	if _, ok := raw.Camouflage["padding_extra_class_percent"]; ok {
 		camouflage.PaddingExtraClassPercent = cfg.Camouflage.PaddingExtraClassPercent
+	}
+	if _, ok := raw.Camouflage["padding_random_max_bytes"]; ok {
+		camouflage.PaddingRandomMaxBytes = cfg.Camouflage.PaddingRandomMaxBytes
+	}
+	if cfg.Camouflage.BatchMinBytes > 0 {
+		camouflage.BatchMinBytes = cfg.Camouflage.BatchMinBytes
+	}
+	if cfg.Camouflage.NoiseChunkMinBytes > 0 {
+		camouflage.NoiseChunkMinBytes = cfg.Camouflage.NoiseChunkMinBytes
+	}
+	if cfg.Camouflage.NoiseChunkMaxBytes > 0 {
+		camouflage.NoiseChunkMaxBytes = cfg.Camouflage.NoiseChunkMaxBytes
 	}
 
 	paths := []string{
@@ -1015,6 +1152,9 @@ func loadCamouflageConfig(path string) error {
 	if camouflage.DownMaxBytes < 1024 || camouflage.DownMaxBytes > 4*1024*1024 {
 		return fmt.Errorf("down_max_bytes out of range: %d", camouflage.DownMaxBytes)
 	}
+	if camouflage.UpMaxBytes < maxFramePayload+9 || camouflage.UpMaxBytes > 1024*1024 {
+		return fmt.Errorf("up_max_bytes out of range: %d", camouflage.UpMaxBytes)
+	}
 
 	if len(camouflage.PaddingClasses) == 0 {
 		return fmt.Errorf("padding_classes must not be empty")
@@ -1031,12 +1171,35 @@ func loadCamouflageConfig(path string) error {
 		prev = n
 	}
 
+	if camouflage.PaddingRandomMaxBytes == 0 && camouflage.UpMaxBytes+4 > camouflage.PaddingClasses[len(camouflage.PaddingClasses)-1] {
+		return fmt.Errorf("up_max_bytes exceeds largest padding class")
+	}
+
+	if camouflage.Timing.ActiveMinMS < 20 || camouflage.Timing.ActiveMinMS > camouflage.Timing.ActiveMaxMS || camouflage.Timing.ActiveMaxMS > 5000 {
+		return fmt.Errorf("invalid active polling range")
+	}
+	if camouflage.Timing.ActiveBackoffMS < camouflage.Timing.ActiveMaxMS || camouflage.Timing.ActiveBackoffMS > 30000 {
+		return fmt.Errorf("invalid active_backoff_max_ms")
+	}
+
 	if camouflage.PaddingExtraClassPercent < 0 ||
 		camouflage.PaddingExtraClassPercent > 100 {
 		return fmt.Errorf(
 			"padding_extra_class_percent out of range: %d",
 			camouflage.PaddingExtraClassPercent,
 		)
+	}
+	if camouflage.PaddingRandomMaxBytes < 0 || camouflage.PaddingRandomMaxBytes > 256*1024 {
+		return fmt.Errorf("padding_random_max_bytes out of range: %d", camouflage.PaddingRandomMaxBytes)
+	}
+	if camouflage.BatchMinBytes < maxFramePayload+9 || camouflage.BatchMinBytes > camouflage.UpMaxBytes || camouflage.BatchMinBytes > camouflage.DownMaxBytes {
+		return fmt.Errorf("batch_min_bytes out of range: %d", camouflage.BatchMinBytes)
+	}
+	if camouflage.NoiseChunkMinBytes < 1024 || camouflage.NoiseChunkMinBytes > camouflage.NoiseChunkMaxBytes {
+		return fmt.Errorf("noise_chunk_min_bytes out of range: %d", camouflage.NoiseChunkMinBytes)
+	}
+	if camouflage.NoiseChunkMaxBytes > 65519 {
+		return fmt.Errorf("noise_chunk_max_bytes exceeds Noise transport limit: %d", camouflage.NoiseChunkMaxBytes)
 	}
 
 	if camouflage.Timing.IdleMinMS < 1000 ||

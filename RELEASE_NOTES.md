@@ -1,40 +1,63 @@
-# MBox 1.0.0-beta.1
+# MBox 1.0.0-beta.2
 
-First beta release of MBox.
+beta.2 combines the reliability/resource-control hardening with the first Noise-only wire generation and observable-flow diversification. Client and server must be upgraded together.
 
-MBox is a self-hosted encrypted multiplexed transport designed to operate through non-streaming HTTP intermediaries.
+## Noise-only cryptography
 
-## Highlights
+- The previous custom handshake/KDF/record crypto path is removed.
+- Every session uses `Noise_NKpsk0_25519_AESGCM_SHA256`.
+- Existing client ID + 32-byte PSK + server X25519 public key provisioning is reused.
+- The client ID is bound into the Noise prologue and the session ID is authenticated inside handshake message 2.
+- Fresh responder and initiator ephemeral X25519 keys provide an `ee` contribution and forward secrecy after ephemeral key destruction.
+- Transport payloads use the Noise `Split` cipher states directly; there is no second home-grown transport-key derivation.
+- One HTTP logical record can carry multiple <=65535-byte Noise messages while retaining MBox's logical record counter/ACK/replay behavior.
+- Old beta.1/hardened clients are intentionally rejected; there is no legacy fallback/downgrade.
 
-- encrypted multiplexed TCP transport
-- per-device authentication and provisioning
-- retry, deduplication, buffering and frame reordering
-- Android VpnService client with automatic reconnect
-- SOCKS integration and downstream proxy routing
-- SQLite-backed user management with `mboxctl`
-- REG.RU FastCGI relay generation and deployment tooling
-- optional server-originated cover traffic
-- installer, migration, backup and recovery tooling
+The minimal vendored Noise implementation is restricted to this one suite and is tested byte-for-byte against an independent NKpsk0/AES-GCM/SHA-256 vector.
+
+## Reliability
+
+- A committed DOWN batch is retained as the exact encrypted record until the client acknowledges its contiguous logical counter.
+- Retrying the same DOWN request sequence after a lost HTTP response replays byte-identical ciphertext.
+- GET polling and POST piggyback use one serialized DOWN commit path.
+- Client counter acceptance/reorder/frame delivery run through one delivery goroutine.
+- UP is bounded/chunked and scheduled fairly across streams.
+- Per-stream WINDOW credits and bounded writer queues provide backpressure and slow-stream isolation.
+
+## External flow diversification
+
+- Random padding range is the default instead of power-of-two padding classes.
+- HTTP batch limits vary within a configurable range.
+- Noise transport messages use random chunk boundaries within a logical HTTP record.
+- Active polling/backoff uses configurable ranges and jitter.
+- Randomness is chosen before record commit; an HTTP retry always reuses the exact committed ciphertext and therefore cannot cause nonce reuse.
+
+This reduces deterministic size/timing fingerprints but does not hide Go's TLS/HTTP fingerprint. Browser/Chromium networking remains a later task.
+
+## Subscription controls and small VPS operation
+
+Profiles support fixed/server-default/unlimited concurrent-session limits, explicit expiry and renewal without recreating credentials. Defaults target low-cost 1-vCPU/1-GiB servers with a bounded 64-MiB global queued-byte budget and `mboxctl resources` visibility.
+
+## REG.RU / sing-box
+
+The supplied `Private Rooms` HTML is an optional decoy-site example on the shared-host frontend, not the origin VPS. Administrators may replace it and configure their own transport API paths.
+
+`127.0.0.1:2080` is the documented local sing-box `mixed` handoff; sing-box decides whether traffic exits directly or chains to another server/protocol.
 
 ## Android
 
-The attached APK is a debug-signed beta build:
+Profile replacement is transactional, displays the server public-key SHA-256 fingerprint and persists desired VPN running/stopped state. The beta.2 APK embeds the Noise-only Go core and therefore must be rebuilt/installed together with the server update.
 
-`MBox-1.0.0-beta.1-debug.apk`
+## Known network compatibility issue
 
-It is intended for testing and is not yet a production-signed Android release.
+Field test on **2026-11-02**:
 
-## Known limitations
+- unrestricted Wi-Fi was used only as a baseline and worked; white-list mode was not active on that Wi-Fi network;
+- MTS mobile data worked while white-list restrictions were active in that test;
+- MegaFon mobile data did not provide a usable MBox connection while white-list restrictions were active in that test.
 
-- TCP tunnelling only; native UDP/QUIC tunnelling is not supported.
-- Cryptographic design has not received an independent security audit.
-- Static server X25519 authentication does not provide strong post-compromise forward secrecy.
-- Graceful session CLOSE is best-effort; idle expiry remains the authoritative cleanup mechanism.
-- Cover traffic affects the shared frontend activity profile but does not conceal client last-mile traffic.
-- Extended soak, fuzz and heavy multi-device testing are still pending.
+This is a single field observation, not a universal carrier claim. Filtering may differ by region, APN, subscriber profile and time. See `docs/NETWORK_COMPATIBILITY.md`.
 
-## License
+## Release gates still outstanding
 
-MBox is licensed under `AGPL-3.0-or-later`.
-
-Third-party components retain their respective licenses.
+beta.2 is not declared production/security-audited. Real 24-hour/7-day soak, Wi-Fi↔LTE chaos, 10/50/100-client load qualification and an external security review remain required before a production claim.

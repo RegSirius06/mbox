@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 type runtimeTransportConfig struct {
@@ -17,13 +18,43 @@ type runtimeTransportConfig struct {
 }
 
 type runtimeClientConfig struct {
-	PSKFile string `json:"psk_file,omitempty"`
-	PSK     string `json:"psk,omitempty"`
+	PSKFile     string `json:"psk_file,omitempty"`
+	PSK         string `json:"psk,omitempty"`
+	MaxSessions int    `json:"max_sessions,omitempty"` // 0 = use server default, -1 = unlimited
+	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339; empty = no expiry
+}
+
+type clientPolicy struct {
+	PSK         []byte
+	MaxSessions int
+	ExpiresAt   time.Time
+}
+
+type resourceLimitsConfig struct {
+	MaxSessionsGlobal           int `json:"max_sessions_global"`
+	DefaultMaxSessionsPerClient int `json:"default_max_sessions_per_client"`
+	MaxStreamsPerSession        int `json:"max_streams_per_session"`
+	MaxTotalStreams             int `json:"max_total_streams"`
+	MaxStreamOpensPerSecond     int `json:"max_stream_opens_per_second"`
+	MaxSessionOpensPerMinute    int `json:"max_session_opens_per_minute"`
+	MaxDownQueueBytes           int `json:"max_down_queue_bytes"`
+	MaxDownReplayBytes          int `json:"max_down_replay_bytes"`
+	GlobalQueuedBytes           int `json:"global_queued_bytes"`
+}
+
+var runtimeLimits = resourceLimitsConfig{
+	MaxSessionsGlobal:           128,
+	DefaultMaxSessionsPerClient: 4,
+	MaxStreamsPerSession:        64,
+	MaxTotalStreams:             1024,
+	MaxStreamOpensPerSecond:     32,
+	MaxSessionOpensPerMinute:    180,
+	MaxDownQueueBytes:           4 * 1024 * 1024,
+	MaxDownReplayBytes:          8 * 1024 * 1024,
+	GlobalQueuedBytes:           64 * 1024 * 1024,
 }
 
 type runtimeCryptoConfig struct {
-	// PSKFile is the optional legacy v1 PSK. Leave it empty to disable v1 OPEN.
-	PSKFile              string                         `json:"psk_file"`
 	ServerPrivateKeyFile string                         `json:"server_private_key_file"`
 	Clients              map[string]runtimeClientConfig `json:"clients"`
 }
@@ -31,14 +62,15 @@ type runtimeCryptoConfig struct {
 type runtimeConfig struct {
 	Transport runtimeTransportConfig `json:"transport"`
 	Crypto    runtimeCryptoConfig    `json:"crypto"`
+	Limits    resourceLimitsConfig   `json:"limits"`
 	Cover     coverConfig            `json:"cover"`
 }
 
 var (
-	basePath     string
-	clientAuthMu sync.RWMutex
-	clientPSKs   = map[string][]byte{}
-	coverCfg     coverConfig
+	basePath       string
+	clientAuthMu   sync.RWMutex
+	clientPolicies = map[string]clientPolicy{}
+	coverCfg       coverConfig
 )
 
 func runtimeConfigPath(defaultPath string) string {
@@ -51,31 +83,89 @@ func runtimeConfigPath(defaultPath string) string {
 	return defaultPath
 }
 
+func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
+	out := runtimeLimits
+	if in.MaxSessionsGlobal > 0 {
+		out.MaxSessionsGlobal = in.MaxSessionsGlobal
+	}
+	if in.DefaultMaxSessionsPerClient != 0 {
+		out.DefaultMaxSessionsPerClient = in.DefaultMaxSessionsPerClient
+	}
+	if in.MaxStreamsPerSession > 0 {
+		out.MaxStreamsPerSession = in.MaxStreamsPerSession
+	}
+	if in.MaxTotalStreams > 0 {
+		out.MaxTotalStreams = in.MaxTotalStreams
+	}
+	if in.MaxStreamOpensPerSecond > 0 {
+		out.MaxStreamOpensPerSecond = in.MaxStreamOpensPerSecond
+	}
+	if in.MaxSessionOpensPerMinute > 0 {
+		out.MaxSessionOpensPerMinute = in.MaxSessionOpensPerMinute
+	}
+	if in.MaxDownQueueBytes > 0 {
+		out.MaxDownQueueBytes = in.MaxDownQueueBytes
+	}
+	if in.MaxDownReplayBytes > 0 {
+		out.MaxDownReplayBytes = in.MaxDownReplayBytes
+	}
+	if in.GlobalQueuedBytes > 0 {
+		out.GlobalQueuedBytes = in.GlobalQueuedBytes
+	}
+	if out.MaxSessionsGlobal < 1 || out.MaxSessionsGlobal > 100000 {
+		return out, fmt.Errorf("limits.max_sessions_global out of range")
+	}
+	if out.DefaultMaxSessionsPerClient != -1 && (out.DefaultMaxSessionsPerClient < 1 || out.DefaultMaxSessionsPerClient > 10000) {
+		return out, fmt.Errorf("limits.default_max_sessions_per_client must be -1 or 1..10000")
+	}
+	if out.DefaultMaxSessionsPerClient > 0 && out.DefaultMaxSessionsPerClient > out.MaxSessionsGlobal {
+		return out, fmt.Errorf("limits.default_max_sessions_per_client must be <= max_sessions_global")
+	}
+	if out.MaxStreamsPerSession < 1 || out.MaxStreamsPerSession > 4096 {
+		return out, fmt.Errorf("limits.max_streams_per_session out of range")
+	}
+	if out.MaxTotalStreams < out.MaxStreamsPerSession || out.MaxTotalStreams > 200000 {
+		return out, fmt.Errorf("limits.max_total_streams out of range")
+	}
+	if out.MaxStreamOpensPerSecond < 1 || out.MaxStreamOpensPerSecond > 10000 {
+		return out, fmt.Errorf("limits.max_stream_opens_per_second out of range")
+	}
+	if out.MaxSessionOpensPerMinute < 1 || out.MaxSessionOpensPerMinute > 100000 {
+		return out, fmt.Errorf("limits.max_session_opens_per_minute out of range")
+	}
+	if out.MaxDownQueueBytes < 256*1024 || out.MaxDownQueueBytes > 256*1024*1024 {
+		return out, fmt.Errorf("limits.max_down_queue_bytes out of range")
+	}
+	if out.MaxDownReplayBytes < 256*1024 || out.MaxDownReplayBytes > 256*1024*1024 {
+		return out, fmt.Errorf("limits.max_down_replay_bytes out of range")
+	}
+	if out.GlobalQueuedBytes < 8*1024*1024 || out.GlobalQueuedBytes > 2*1024*1024*1024 {
+		return out, fmt.Errorf("limits.global_queued_bytes out of range")
+	}
+	return out, nil
+}
+
 func loadRuntimeConfig(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-
 	var cfg runtimeConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-
 	if cfg.Transport.Listen == "" {
 		return fmt.Errorf("transport.listen is required")
 	}
 	if _, _, err := net.SplitHostPort(cfg.Transport.Listen); err != nil {
 		return fmt.Errorf("invalid transport.listen %q: %w", cfg.Transport.Listen, err)
 	}
-
 	if cfg.Transport.Upstream == "" {
 		return fmt.Errorf("transport.upstream is required")
 	}
 	if _, _, err := net.SplitHostPort(cfg.Transport.Upstream); err != nil {
 		return fmt.Errorf("invalid transport.upstream %q: %w", cfg.Transport.Upstream, err)
 	}
-
 	if cfg.Transport.BasePath == "" || cfg.Transport.BasePath[0] != '/' {
 		return fmt.Errorf("transport.base_path must begin with /")
 	}
@@ -85,11 +175,14 @@ func loadRuntimeConfig(path string) error {
 	if strings.ContainsAny(cfg.Transport.BasePath, "?#") {
 		return fmt.Errorf("invalid transport.base_path %q", cfg.Transport.BasePath)
 	}
-
 	if cfg.Crypto.ServerPrivateKeyFile == "" {
 		return fmt.Errorf("crypto.server_private_key_file is required")
 	}
-	clients, err := decodeClientAuth(cfg.Crypto.Clients)
+	policies, err := decodeClientAuth(cfg.Crypto.Clients)
+	if err != nil {
+		return err
+	}
+	limits, err := normalizeLimits(cfg.Limits)
 	if err != nil {
 		return err
 	}
@@ -97,45 +190,66 @@ func loadRuntimeConfig(path string) error {
 	if err != nil {
 		return err
 	}
-
 	listen = cfg.Transport.Listen
 	socksAddr = cfg.Transport.Upstream
 	basePath = cfg.Transport.BasePath
-	pskFile = cfg.Crypto.PSKFile
 	serverPrivFile = cfg.Crypto.ServerPrivateKeyFile
 	coverCfg = cov
+	runtimeLimits = limits
 	clientAuthMu.Lock()
-	clientPSKs = clients
+	clientPolicies = policies
 	clientAuthMu.Unlock()
-
 	return loadCamouflageConfig(path)
 }
 
-func decodeClientAuth(in map[string]runtimeClientConfig) (map[string][]byte, error) {
-	out := make(map[string][]byte, len(in))
-	for id, client := range in {
+func decodeClientAuth(in map[string]runtimeClientConfig) (map[string]clientPolicy, error) {
+	out := make(map[string]clientPolicy, len(in))
+	for id, c := range in {
 		if !validClientID(id) {
 			return nil, fmt.Errorf("invalid crypto.clients entry %q", id)
 		}
-		if (client.PSKFile == "") == (client.PSK == "") {
+		if (c.PSKFile == "") == (c.PSK == "") {
 			return nil, fmt.Errorf("crypto.clients[%q] must set exactly one of psk or psk_file", id)
 		}
 		var raw []byte
 		var err error
-		if client.PSK != "" {
-			raw, err = hex.DecodeString(strings.TrimSpace(client.PSK))
+		if c.PSK != "" {
+			raw, err = hex.DecodeString(strings.TrimSpace(c.PSK))
 			if err != nil || len(raw) != 32 {
 				return nil, fmt.Errorf("crypto.clients[%q].psk must be 32-byte hex", id)
 			}
 		} else {
-			raw, err = readHex32(client.PSKFile)
+			raw, err = readHex32(c.PSKFile)
 			if err != nil {
 				return nil, fmt.Errorf("crypto.clients[%q]: %w", id, err)
 			}
 		}
-		out[id] = append([]byte(nil), raw...)
+		p := clientPolicy{PSK: append([]byte(nil), raw...), MaxSessions: c.MaxSessions}
+		if c.ExpiresAt != "" {
+			t, err := time.Parse(time.RFC3339, c.ExpiresAt)
+			if err != nil {
+				return nil, fmt.Errorf("crypto.clients[%q].expires_at: %w", id, err)
+			}
+			p.ExpiresAt = t
+		}
+		out[id] = p
 	}
 	return out, nil
+}
+
+func getClientPolicy(id string) (clientPolicy, bool) {
+	clientAuthMu.RLock()
+	defer clientAuthMu.RUnlock()
+	p, ok := clientPolicies[id]
+	if !ok {
+		return clientPolicy{}, false
+	}
+	p.PSK = append([]byte(nil), p.PSK...)
+	return p, true
+}
+
+func clientPolicyActive(p clientPolicy) bool {
+	return p.ExpiresAt.IsZero() || time.Now().Before(p.ExpiresAt)
 }
 
 func reloadClientAuth(path string) error {
@@ -147,12 +261,13 @@ func reloadClientAuth(path string) error {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
-	clients, err := decodeClientAuth(cfg.Crypto.Clients)
+	policies, err := decodeClientAuth(cfg.Crypto.Clients)
 	if err != nil {
 		return err
 	}
 	clientAuthMu.Lock()
-	clientPSKs = clients
+	clientPolicies = policies
 	clientAuthMu.Unlock()
+	revokeUnauthorizedSessions(policies)
 	return nil
 }

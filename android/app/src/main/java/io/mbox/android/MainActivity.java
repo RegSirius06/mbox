@@ -2,6 +2,7 @@ package io.mbox.android;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -158,20 +159,21 @@ public class MainActivity extends Activity {
             return;
         }
         Uri data = intent.getData();
-        if ("mbox".equalsIgnoreCase(data.getScheme())) {
+        if ("mbox".equalsIgnoreCase(data.getScheme()) || "https".equalsIgnoreCase(data.getScheme())) {
             importLink(data.toString());
         }
     }
 
     private void importLink(String value) {
         try {
-            String name = ProfileStore.importLink(this, value);
-            link.setText("");
-            uiMessage = "Imported: " + name;
-        } catch (Exception error) {
-            uiMessage = "Import error: " + error.getMessage();
-        }
-        refreshUi();
+            ProfileStore.Candidate candidate = ProfileStore.parseLink(value);
+            String message = "Profile: " + candidate.name + "\nClient: " + candidate.clientId + "\nEndpoint: " + candidate.endpoint + "\n\nServer key SHA-256:\n" + candidate.serverFingerprint + "\n\nVerify this fingerprint over a trusted channel before replacing the active profile.";
+            new AlertDialog.Builder(this).setTitle("Confirm MBox profile").setMessage(message).setNegativeButton("Cancel", null).setPositiveButton("Replace profile", (dialog, which) -> {
+                try { String name = ProfileStore.commitCandidate(this, candidate); link.setText(""); uiMessage = "Imported: " + name; }
+                catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); }
+                refreshUi();
+            }).show();
+        } catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); refreshUi(); }
     }
 
     private void requestVpn() {

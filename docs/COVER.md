@@ -4,7 +4,7 @@ MBox includes an optional server-originated cover traffic engine.
 
 ## Goal
 
-Keep the public shared-host frontend from having a simple history of “almost completely idle until a real VPN client appears”. The RU server generates irregular HTTPS activity through the public frontend only while no real MBox session is active.
+Keep the public shared-host frontend from having a simple history of “almost completely idle until a real VPN client appears”. The MBox origin/server generates irregular HTTPS activity through the public frontend only while no real MBox session is active.
 
 ## Path
 

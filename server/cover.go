@@ -71,7 +71,7 @@ func normalizeCoverConfig(c coverConfig) (coverConfig, error) {
 		return c, fmt.Errorf("cover.path must begin and end with / and contain no ? or #")
 	}
 	if c.StatusFile == "" {
-		c.StatusFile = "/run/mbox-cover-status.json"
+		c.StatusFile = "/run/mbox/cover-status.json"
 	}
 	if c.IdleAfterMS == 0 {
 		c.IdleAfterMS = 120000

@@ -1,0 +1,48 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mbox-router-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "foreign-egress",
+      "server": "203.0.113.20",
+      "server_port": 443,
+      "password": "CHANGE_ME",
+      "tls": {
+        "enabled": true,
+        "server_name": "vpn.example.net"
+      }
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          ".ru",
+          ".su"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "final": "foreign-egress",
+    "auto_detect_interface": true
+  }
+}

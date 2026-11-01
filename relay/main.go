@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -129,6 +130,7 @@ func main() {
 		MaxConnsPerHost:       cfg.MaxSlots,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
 		ExpectContinueTimeout: time.Second,
 		DisableCompression:    true,
 	}
@@ -179,8 +181,9 @@ func main() {
 			return
 		}
 		defer releaseSlot(slot)
-
-		proxy.ServeHTTP(w, r)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		proxy.ServeHTTP(w, r.WithContext(ctx))
 	})
 
 	if err := fcgi.Serve(nil, handler); err != nil {
