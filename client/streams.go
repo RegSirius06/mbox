@@ -1,0 +1,195 @@
+package main
+
+import (
+	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"time"
+)
+
+func frame(streamID uint32, typ byte, payload []byte) []byte {
+	b := make([]byte, 9+len(payload))
+
+	binary.BigEndian.PutUint32(b[0:4], streamID)
+	b[4] = typ
+	binary.BigEndian.PutUint32(b[5:9], uint32(len(payload)))
+
+	copy(b[9:], payload)
+	return b
+}
+
+func (t *tunnel) grantPeerCredit(id uint32, st *localStream, n int) error {
+	if err := st.grantPeerAllowance(n); err != nil {
+		return err
+	}
+	if err := t.queue(id, frameWindow, encodeWindowCredit(n)); err != nil {
+		st.rollbackPeerAllowance(n)
+		return err
+	}
+	return nil
+}
+
+func (t *tunnel) startLocalWriter(id uint32, st *localStream) {
+	t.streamWG.Add(1)
+	go func() {
+		defer t.streamWG.Done()
+		t.localWriter(id, st)
+	}()
+}
+
+func (t *tunnel) localWriter(id uint32, st *localStream) {
+	for {
+		payload, ok := st.writeQ.pop(t.done)
+		if !ok {
+			return
+		}
+		_ = st.conn.SetWriteDeadline(time.Now().Add(localWriteTimeout))
+		written := 0
+		var err error
+		for written < len(payload) {
+			var n int
+			n, err = st.conn.Write(payload[written:])
+			written += n
+			if err != nil || n == 0 {
+				if err == nil {
+					err = io.ErrUnexpectedEOF
+				}
+				break
+			}
+		}
+		if err != nil {
+			t.closeLocal(id, true)
+			return
+		}
+		if err := t.grantPeerCredit(id, st, len(payload)); err != nil {
+			t.closeLocal(id, false)
+			return
+		}
+	}
+}
+
+func (t *tunnel) handleFrames(data []byte) error {
+	for len(data) > 0 {
+		if len(data) < 9 {
+			return fmt.Errorf("short header")
+		}
+		id := binary.BigEndian.Uint32(data[:4])
+		typ := data[4]
+		n := binary.BigEndian.Uint32(data[5:9])
+		data = data[9:]
+		if uint64(n) > uint64(len(data)) {
+			return fmt.Errorf("short payload")
+		}
+		if n > maxFramePayload {
+			return fmt.Errorf("frame payload too large: %d", n)
+		}
+		payload := data[:n]
+		data = data[n:]
+		t.streamsMu.Lock()
+		st := t.streams[id]
+		t.streamsMu.Unlock()
+		switch typ {
+		case frameData:
+			if st == nil || st.closed.Load() {
+				continue
+			}
+			if err := st.consumePeerAllowance(len(payload)); err != nil {
+				return err
+			}
+			if !st.writeQ.tryPush(payload) {
+				return fmt.Errorf("local stream write queue overflow")
+			}
+		case frameWindow:
+			if st == nil || st.closed.Load() {
+				continue
+			}
+			credit, err := decodeWindowCredit(payload)
+			if err != nil {
+				return err
+			}
+			if err := st.addSendCredit(credit); err != nil {
+				return err
+			}
+		case frameClose:
+			if len(payload) != 0 {
+				return fmt.Errorf("CLOSE payload must be empty")
+			}
+			t.closeLocal(id, false)
+		case frameError:
+			log.Printf("STREAM %d server error: %s", id, string(payload))
+			t.closeLocal(id, false)
+		case framePing:
+		case frameOpen:
+			return fmt.Errorf("server-initiated OPEN is not supported")
+		default:
+			return fmt.Errorf("unknown frame type %d", typ)
+		}
+	}
+	return nil
+}
+
+func (t *tunnel) closeLocal(id uint32, notify bool) {
+	t.streamsMu.Lock()
+	st := t.streams[id]
+	if st != nil {
+		delete(t.streams, id)
+	}
+	t.streamsMu.Unlock()
+	if st == nil {
+		return
+	}
+	st.writeQ.closeAndDrain()
+	st.wakeCreditWaiters()
+	if st.closed.CompareAndSwap(false, true) {
+		_ = st.conn.Close()
+	}
+	if notify {
+		_ = t.queue(id, frameClose, nil)
+	}
+}
+
+func (t *tunnel) handleLocal(conn net.Conn) {
+	t.streamsMu.Lock()
+	if len(t.streams) >= maxClientStreams {
+		t.streamsMu.Unlock()
+		_ = conn.Close()
+		return
+	}
+	id := t.nextID.Add(1)
+	st := &localStream{conn: conn, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	t.streams[id] = st
+	t.streamsMu.Unlock()
+	t.startLocalWriter(id, st)
+	if err := t.queue(id, frameOpen, nil); err != nil {
+		t.closeLocal(id, false)
+		return
+	}
+	if err := t.grantPeerCredit(id, st, streamInitialWindow); err != nil {
+		t.closeLocal(id, true)
+		return
+	}
+	buf := make([]byte, maxFramePayload)
+	for {
+		grant, ok := st.reserveSendCredit(len(buf), t.done)
+		if !ok {
+			return
+		}
+		n, err := conn.Read(buf[:grant])
+		if n < grant {
+			st.refundSendCredit(grant - n)
+		}
+		if n > 0 {
+			payload := append([]byte(nil), buf[:n]...)
+			if qerr := t.queue(id, frameData, payload); qerr != nil {
+				t.closeLocal(id, false)
+				return
+			}
+		}
+		if err != nil {
+			t.closeLocal(id, true)
+			return
+		}
+	}
+}

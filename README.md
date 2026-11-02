@@ -1,6 +1,8 @@
 # MBox
 
-> **1.0.0-beta.2:** Noise-only security + reliability/resource-control beta. The custom handshake is removed; DOWN delivery is acknowledged/replayable, stream flow control is bounded, subscriptions support limits/expiry, and observable HTTP flow sizes/timing are deliberately less deterministic.
+[Русская версия](README.ru.md) | English
+
+> **Current version: 1.0.0-beta.2.1.** This is a beta.2-compatible hardening release: it keeps the beta.2 Noise wire/credentials and adds P0/P1 network diagnostics, dual-stack resilience, bundled Chromium Cronet for Android public HTTPS, real-device handover recovery, per-device session supersession and a modularized code layout. `v1.0.0-beta.2` remains the previous tagged baseline. beta.2.1 has **not yet been re-qualified under mobile white-list restrictions**.
 
 MBox is an experimental encrypted multiplexed TCP transport designed to work through HTTP intermediaries that buffer complete requests/responses and therefore cannot carry an ordinary long-lived streaming tunnel.
 
@@ -36,7 +38,9 @@ The current implementation includes:
 - optional server-side bursty cover traffic through the public frontend while no real MBox session is active;
 - exponential transport recovery and fail-fast;
 - Android `VpnService` + HEV TUN-to-SOCKS integration;
-- Android physical-network DNS resolution before the VPN tunnel is established;
+- Android bundled Chromium Cronet outer HTTPS stack with HTTP/2 enabled and QUIC disabled for the first rollout;
+- Android underlying-network monitor restricted to non-VPN Internet networks, dual-stack TUN routing and wait-for-network handover recovery;
+- stable per-installation `device_id` authenticated inside Noise OPEN so a reconnect can supersede only stale sessions from the same device;
 - Android automatic reconnect supervisor with persisted desired VPN state;
 - confirmed transactional Android profile replacement with server-key fingerprint display;
 - `mbox://` provisioning links plus deployment-specific Verified App Links/QR support;
@@ -44,14 +48,16 @@ The current implementation includes:
 - bulk user creation/import/export;
 - generated REG.RU relay configuration and deployment over SSH/SCP or FTP/FTPS;
 - optional deployment of a normal decoy `index.html`/`404.html` on the shared-hosting frontend;
-- `mboxctl resources` for low-memory VPS monitoring.
+- `mboxctl resources` for low-memory VPS monitoring;
+- stage-by-stage network diagnostics (`DNS -> TCP -> TLS -> ALPN -> HTTP -> MBox OPEN -> Noise -> tunnel`) and a credential-free operator probe;
+- coherent Cronet-vs-Go A/B mode for fingerprint/operator testing.
 
 ## What is *not* implemented
 
 Be precise about these limitations when reviewing the project:
 
 - MBox currently transports TCP through its SOCKS endpoint; it is not a general UDP tunnel.
-- Browser TLS impersonation is not yet enabled in this release: the Go client still has a Go TLS ClientHello. The planned mode is a coherent sticky Firefox/Chrome persona rather than per-request random fingerprints. See `docs/STEALTH.md`.
+- Android defaults to a bundled Cronet HTTPS stack, so the public TLS/ALPN/HTTP implementation is Chromium-derived instead of Go. This substantially reduces the obvious `Go crypto/tls + net/http` implementation fingerprint, but it is **not** a claim of exact Chrome browser impersonation or DPI bypass on every operator; see `docs/FINGERPRINT_BASELINE.md`.
 - Server-side cover traffic is optional and disabled by default. It changes the traffic history seen by the shared frontend, but it does **not** hide the absence of traffic on a particular client ISP/mobile link.
 - Noise adds an ephemeral-ephemeral DH and forward secrecy after ephemeral key destruction, but the complete MBox integration has not received an independent security audit. See `docs/SECURITY.md`.
 - The project has not been independently audited.
@@ -72,6 +78,11 @@ Be precise about these limitations when reviewing the project:
 - [Small-VPS resource profile](docs/RESOURCES.md)
 - [Stealth/camouflage status](docs/STEALTH.md)
 - [Network compatibility / known carrier issues](docs/NETWORK_COMPATIBILITY.md)
+- [Stage-by-stage network diagnostics](docs/NETWORK_DIAGNOSTICS.md)
+- [Controlled `.fun` vs `.ru` carrier test](docs/OPERATOR_TEST.md)
+- [TLS/HTTP fingerprint baseline and Android Cronet transport](docs/FINGERPRINT_BASELINE.md)
+- [REG.RU shared-hosting frontend guide](docs/REG_RU_SHARED_HOSTING.md)
+- [Russian documentation index](docs/ru/README.md)
 - [Database schema](docs/SCHEMA.sql)
 
 ---
@@ -133,6 +144,7 @@ mbox/
 ├── tools/
 │   ├── mbox-key/               # X25519 key generation/derivation
 │   ├── mbox-link/              # low-level mbox:// link tool
+│   ├── mbox-netprobe/          # DNS/TCP/TLS/HTTP carrier-layer probe
 │   └── mboxctl/                # administrator CLI
 ├── android/                    # Android VpnService/HEV wrapper
 │   └── tools/build-core.sh     # builds ../client, not a second protocol copy
@@ -143,6 +155,8 @@ mbox/
 │   ├── ARCHITECTURE.md
 │   ├── SECURITY.md
 │   ├── TESTING.md
+│   ├── REG_RU_SHARED_HOSTING.md
+│   ├── ru/                      # Russian guide set
 │   └── SCHEMA.sql
 └── .github/workflows/
 ```
@@ -669,7 +683,11 @@ This avoids both per-packet DB overhead and hundreds of authoritative PSK files.
 
 ---
 
-# 10. REG.RU relay generation
+# 10. REG.RU shared-hosting frontend and relay
+
+The deployment tested by this project uses **virtual/shared hosting at REG.RU** as the public web frontend. For a new deployment, use a normal shared-hosting plan with enough CPU/I/O for FastCGI work; the speed-class plans are preferred over the smallest static-page-only economy plan. Current REG.RU materials advertise unlimited traffic on shared-hosting plans, but provider fair-use/load rules still apply. Review the provider's current acceptable-use terms before deployment; this repository does not override hosting policy.
+
+For the full Russian-oriented setup, domain/verification notes and the `.fun` vs `.ru` MegaFon test hypothesis, read [`docs/REG_RU_SHARED_HOSTING.md`](docs/REG_RU_SHARED_HOSTING.md).
 
 Generate/refresh files:
 
@@ -894,7 +912,11 @@ Padding bytes are random.
 
 ## TLS/browser fingerprint status
 
-The public frontend uses real HTTPS, but beta.2 still uses Go's native TLS ClientHello. It does **not** yet claim Firefox/Chrome impersonation. A future browser-persona mode must keep TLS/ALPN/HTTP2/header/reuse behavior coherent and use a sticky/current persona rather than randomizing browser identity every request. See `docs/STEALTH.md`.
+On Android, the default public HTTPS stack is bundled Chromium Cronet. Noise/MUX/reliability remain in Go, while an authenticated loopback bridge delegates external HTTPS transactions to Cronet. Real-device validation on 2026-11-02 confirmed `stack=cronet`, negotiated HTTP/2 (`alpn=h2`), successful Noise establishment and working application traffic.
+
+This means the public connection no longer exposes the straightforward Go `crypto/tls` / `net/http` network implementation used by the released beta.2 Android path. For an external provider/DPI this is a much more browser-like Chromium-derived networking persona. It is still **not** a promise that the traffic is byte-for-byte Chrome, that JA4/HTTP2 settings equal Chrome in every build, or that a carrier cannot classify the flow using other signals.
+
+For A/B troubleshooting, provisioning can select `--android-http-stack go`; the Go stack remains available because it exposes explicit per-IP connection attempts. Use `--deterministic-transport` for timing/size-comparable captures. QUIC is intentionally disabled in the first Cronet rollout so carrier testing changes one major variable at a time. See `docs/FINGERPRINT_BASELINE.md`.
 
 ## Timing camouflage
 
@@ -1016,8 +1038,10 @@ The Android wrapper provides:
 - clipboard/QR import;
 - Connect/Disconnect UI;
 - persisted desired VPN state for sticky-service recreation;
-- physical-network DNS resolution using Android's active `Network`;
-- automatic core/TUN recovery with reconnect backoff;
+- bundled Cronet outer HTTPS with DNS/address racing owned by Cronet in normal mode;
+- non-VPN underlying-network monitoring, Wi-Fi/mobile handover recovery and airplane-mode wait-for-network behavior;
+- same-device stale-session supersession after hard disconnects;
+- automatic core/TUN recovery with bounded reconnect backoff when a usable network exists;
 - protection against routing the MBox app itself back into its own VPN.
 
 The manifest includes `ACCESS_NETWORK_STATE` because endpoint resolution uses `ConnectivityManager.getActiveNetwork()`.

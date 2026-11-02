@@ -1,22 +1,14 @@
 # Traffic camouflage status and roadmap
 
-The public frontend is a real HTTPS site on shared hosting. MBox transport paths coexist with an ordinary decoy website; invalid transport probes return ordinary HTTP failures instead of a protocol banner.
+[Русская версия](ru/STEALTH.md)
 
-`deploy/regru/site/index.html` and `404.html` are packaged examples only. Administrators may replace them with any site and may configure their own `open_path`, `up_path`, `down_path` and `close_path`. The API path names are deployment flexibility, not the primary last-mile anti-DPI mechanism because an external ISP cannot read paths inside HTTPS.
+The public frontend is a real HTTPS site on shared hosting. Invalid transport probes return ordinary HTTP failures rather than an MBox banner. API paths are inside TLS and are deployment flexibility, not a last-mile DPI bypass by themselves.
 
-## beta.2 observable-flow diversification
+## Observable-flow diversification
 
-beta.2 deliberately changes characteristics an external observer can infer through encrypted traffic:
+MBox varies HTTP batch ceilings, padding length, Noise transport chunk boundaries and active polling/backoff timing. Exact retries reuse already-committed ciphertext, so diversification does not create nonce reuse.
 
-- HTTP upload/download batch ceilings vary between a configurable minimum and maximum;
-- padding uses a random byte range instead of always landing on powers-of-two classes by default;
-- a logical HTTP MBox record is split into randomly sized Noise transport messages (within Noise's 65535-byte message limit);
-- active polling starts in a configurable random range and uses stochastic backoff/jitter rather than one fixed cadence;
-- exact retries reuse the already-built ciphertext so diversification never violates nonce/replay correctness.
-
-These controls reduce a stable size/timing signature. They do not claim to make MBox indistinguishable from a browser.
-
-Default knobs are generated in the `camouflage` object/config section:
+Current generated defaults include:
 
 - `padding_random_max_bytes = 16384`
 - `batch_min_bytes = 73728`
@@ -27,18 +19,28 @@ Default knobs are generated in the `camouflage` object/config section:
 - `active_backoff_max_ms = 2200`
 - `active_jitter_percent = 35`
 
-Keep client and server camouflage limits compatible. Extreme randomness is not automatically stealthier; the objective is a broad, non-deterministic flow shape without introducing a unique pathological pattern.
+These controls reduce a stable size/timing signature; they do not make MBox indistinguishable from arbitrary browser traffic.
 
-## Remaining limitation: native Go TLS fingerprint
+## Android public HTTPS fingerprint
 
-The MBox Go client still uses Go's native TLS ClientHello and HTTP implementation. beta.2 does **not** claim Chrome/Firefox browser fingerprint impersonation.
+The current Android branch delegates public HTTPS to bundled **Chromium Cronet**. The Go process retains Noise, MUX, replay/ACK and stream flow control; an authenticated loopback bridge carries only the HTTP transaction between Go and Cronet.
 
-Copying only an uTLS ClientHello is not enough to claim browser indistinguishability. A browser identity is correlated across TLS extensions/key shares, ALPN, HTTP/2 settings/framing, connection pooling/resumption, packet sizes and timing.
+Real-device validation on 2026-11-02 confirmed Cronet was actually selected and negotiated HTTP/2 (`h2`) before a successful Noise tunnel. This removes the straightforward Go `crypto/tls` / `net/http` public implementation fingerprint used by released beta.2 and gives the outer connection a coherent Chromium-derived application networking persona.
 
-The next major stealth/client task should therefore evaluate a real browser-derived Android networking stack (for example Chromium/Cronet/HttpEngine) or another coherent transport persona rather than merely switching ClientHello strings.
+Important limits:
+
+- Cronet is not the Chrome browser UI/process model;
+- MBox does not claim byte-for-byte Chrome ClientHello/JA4/HTTP2 settings;
+- flow timing, destination history and application behavior can still be classifiers;
+- QUIC is intentionally disabled for the first rollout;
+- a controlled Chrome-vs-MBox capture remains required.
+
+Use `--android-http-stack go` only for A/B/per-IP diagnostics, and `--deterministic-transport` only for controlled captures.
+
+## Operator/white-list status
+
+The current Cronet branch has not yet been field-tested during active white-list restrictions. The existing shared-hosting relay path and beta.2 wire semantics are preserved, so no regression is currently expected on previously working networks, but this is not a fresh field result. MegaFon remains unresolved; `.ru` vs `.fun` is a planned controlled experiment, not a guaranteed workaround.
 
 ## zapret2 lessons
 
-`zapret2` demonstrates a different anti-DPI family: packet-level desynchronization using fake protocol payloads, TCP segmentation/disorder and sequence overlap. Those mechanisms operate below a normal application HTTP client (NFQUEUE/WinDivert/raw packet processing), so MBox does not copy them directly on Android in beta.2.
-
-The transferable design ideas are: avoid one immutable strategy, vary split points/flow shape, measure against real DPI behavior, and keep the low-level anti-DPI layer separable from cryptographic correctness. A router/Linux deployment may additionally use zapret2 outside MBox if appropriate.
+MBox does not implement kernel/userspace TCP desynchronization tricks comparable to zapret2. Ordinary Android app sockets do not provide the same packet-level control. The current strategy is instead a normal Chromium-derived HTTPS stack plus transport-level size/timing diversification and a shared-hosting frontend.

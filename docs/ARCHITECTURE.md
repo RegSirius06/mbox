@@ -1,5 +1,7 @@
 # Architecture
 
+[Русская версия](ru/ARCHITECTURE.md)
+
 ## Components
 
 - `server/`: MBox session/authentication/MUX HTTP server.
@@ -96,7 +98,11 @@ The default `server.upstream = 127.0.0.1:2080` is intended for a local sing-box 
 
 ## Android
 
-Android creates a VpnService TUN and feeds it to HEV, which forwards TCP through the local MBox SOCKS endpoint. Before MBox starts, Java resolves the public endpoint on Android's current physical `Network` and passes the numeric address through `MBOX_CONNECT_IP`; the Go HTTP transport dials that address while preserving URL host/TLS SNI.
+Android creates a dual-stack VpnService TUN and feeds it to HEV, which forwards TCP through the local MBox SOCKS endpoint. In the default `cronet` mode, the Go core keeps Noise/MUX/reliability but sends each public HTTPS transaction over an authenticated loopback bridge to bundled Chromium Cronet. Cronet owns DNS/address racing, TCP/TLS, ALPN, HTTP/2, pooling and resumption. The diagnostic `go` mode keeps explicit staggered A/AAAA dialing while preserving hostname/SNI/certificate verification.
+
+`UnderlyingNetworkMonitor` subscribes only to `INTERNET + NOT_VPN` networks so creation of the MBox VPN itself does not trigger a reconnect. On a real underlying loss the core is stopped and the supervisor waits (`WAIT_UNDERLYING`) without increasing retry backoff until a physical network returns. Wi-Fi/mobile changes then reconnect immediately. Android Always-on/lockdown is not advertised because the current anti-loop path excludes the MBox app UID from its own TUN.
+
+Each installation keeps a random stable `device_id`. It is carried inside the authenticated Noise OPEN payload. A new server session with the same `client_id + device_id` supersedes stale sessions from the same device, which makes hard radio loss recover without waiting for the generic session-idle timeout.
 
 Provisioning imports are staged into a new immutable generation. The app shows the server public-key SHA-256 fingerprint and requires confirmation, writes the generation's key material/config, then atomically replaces active `client.json`. Desired VPN running/stopped state is persisted for `START_STICKY` recovery.
 

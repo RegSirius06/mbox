@@ -1,5 +1,7 @@
 # Administrator notes
 
+[Русская версия](ru/ADMIN.md)
+
 The canonical command reference is `README.md` plus `mboxctl --help`.
 
 Important state locations:
@@ -76,6 +78,9 @@ means that MBox terminates its transport and sends each TCP stream into a local 
 See `docs/SINGBOX.md` and `examples/sing-box-router.json`.
 
 ## REG.RU shared-hosting site
+
+For new deployments read [`REG_RU_SHARED_HOSTING.md`](REG_RU_SHARED_HOSTING.md) first. It covers the tested shared-hosting topology, speed-plan recommendation, domain/identity notes, provider-policy caveat and the planned `.fun` vs `.ru` operator experiment.
+
 
 The decoy `index.html`/`404.html` live on the public shared-hosting web root together with the FastCGI relay. They do **not** belong on the RU/MBox origin VPS.
 

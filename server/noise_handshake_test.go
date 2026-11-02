@@ -12,8 +12,8 @@ import (
 )
 
 func TestServerNoiseOnlyHandshakeInteroperates(t *testing.T) {
-	oldPolicies, oldPriv := clientPolicies, serverPrivFile
-	defer func() { clientPolicies, serverPrivFile = oldPolicies, oldPriv }()
+	oldPolicies, oldPriv, oldStatic := clientPolicies, serverPrivFile, append([]byte(nil), serverStaticPrivate...)
+	defer func() { clientPolicies, serverPrivFile, serverStaticPrivate = oldPolicies, oldPriv, oldStatic }()
 
 	psk := bytes.Repeat([]byte{0x5a}, 32)
 	staticPriv := bytes.Repeat([]byte{0x33}, 32)
@@ -26,6 +26,7 @@ func TestServerNoiseOnlyHandshakeInteroperates(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverPrivFile = path
+	serverStaticPrivate = append([]byte(nil), staticPriv...)
 	clientPolicies = map[string]clientPolicy{"phone": {PSK: psk}}
 
 	init, err := noise.NewInitiator(psk, kp.Public, noisePrologue("phone"), bytes.NewReader(bytes.Repeat([]byte{0x44}, 32)))
@@ -76,8 +77,8 @@ func TestServerRejectsLegacyOpenFraming(t *testing.T) {
 }
 
 func TestServerNoiseHandshakeRejectsExpiredPolicy(t *testing.T) {
-	oldPolicies, oldPriv := clientPolicies, serverPrivFile
-	defer func() { clientPolicies, serverPrivFile = oldPolicies, oldPriv }()
+	oldPolicies, oldPriv, oldStatic := clientPolicies, serverPrivFile, append([]byte(nil), serverStaticPrivate...)
+	defer func() { clientPolicies, serverPrivFile, serverStaticPrivate = oldPolicies, oldPriv, oldStatic }()
 
 	psk := bytes.Repeat([]byte{0x6b}, 32)
 	staticPriv := bytes.Repeat([]byte{0x23}, 32)
@@ -90,6 +91,7 @@ func TestServerNoiseHandshakeRejectsExpiredPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverPrivFile = path
+	serverStaticPrivate = append([]byte(nil), staticPriv...)
 	clientPolicies = map[string]clientPolicy{
 		"expired": {PSK: psk, ExpiresAt: time.Now().Add(-time.Minute)},
 	}
@@ -105,5 +107,40 @@ func TestServerNoiseHandshakeRejectsExpiredPolicy(t *testing.T) {
 	body = append(body, msg1...)
 	if _, _, err := serverHandshake(body, "0123456789abcdef0123456789abcdef"); err == nil {
 		t.Fatal("expired policy unexpectedly completed Noise handshake")
+	}
+}
+
+func TestServerNoiseHandshakeAcceptsAuthenticatedDeviceID(t *testing.T) {
+	oldPolicies, oldPriv, oldStatic := clientPolicies, serverPrivFile, append([]byte(nil), serverStaticPrivate...)
+	defer func() { clientPolicies, serverPrivFile, serverStaticPrivate = oldPolicies, oldPriv, oldStatic }()
+
+	psk := bytes.Repeat([]byte{0x2a}, 32)
+	staticPriv := bytes.Repeat([]byte{0x11}, 32)
+	kp, err := noise.KeypairFromPrivate(staticPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverStaticPrivate = append([]byte(nil), staticPriv...)
+	clientPolicies = map[string]clientPolicy{"phone": {PSK: psk}}
+
+	init, err := noise.NewInitiator(psk, kp.Public, noisePrologue("phone"), bytes.NewReader(bytes.Repeat([]byte{0x22}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceRaw, _ := hex.DecodeString("00112233445566778899aabbccddeeff")
+	payload := append([]byte(nil), devicePayloadPrefix...)
+	payload = append(payload, deviceRaw...)
+	msg1, _, _, err := init.WriteMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := append([]byte{5}, []byte("phone")...)
+	body = append(body, msg1...)
+	state, _, err := serverHandshake(body, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.deviceID != "00112233445566778899aabbccddeeff" {
+		t.Fatalf("deviceID=%q", state.deviceID)
 	}
 }

@@ -1,5 +1,7 @@
 # Server cover traffic
 
+[Русская версия](ru/COVER.md)
+
 MBox includes an optional server-originated cover traffic engine.
 
 ## Goal
@@ -53,4 +55,4 @@ This cover traffic changes what the shared frontend observes. It does not create
 
 ## Graceful client disconnect
 
-A normal client shutdown sends a best-effort `POST` to the configured `close_path` before the process exits. This lets the server remove the live session immediately and begin the randomized cover start grace without waiting for `idle_after_ms`. If the client disappears because of a network loss or crash, no close request can be guaranteed; the server then falls back to the idle timeout.
+A normal client shutdown sends a best-effort `POST` to the configured `close_path` before the process exits. This lets the server remove the live session immediately and begin the randomized cover start grace without waiting for `idle_after_ms`. If the client disappears because of a network loss or crash, no close request can be guaranteed. A reconnecting beta.2.1 Android client can supersede the stale session immediately using its authenticated `device_id`; otherwise the generic idle timeout remains the fallback.

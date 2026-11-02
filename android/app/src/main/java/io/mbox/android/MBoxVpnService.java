@@ -10,18 +10,25 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
-import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import hev.htproxy.TProxyService;
 
@@ -40,17 +47,22 @@ public class MBoxVpnService extends VpnService {
 
     private static final long RECONNECT_MIN_MS = 1_000;
     private static final long RECONNECT_MAX_MS = 30_000;
+    private static final long STABLE_CONNECTION_MS = 30_000;
 
     private static volatile State state = State.STOPPED;
     private static volatile String lastError = "";
 
     private final AtomicBoolean stoppedLogged = new AtomicBoolean(true);
+    private final AtomicLong underlyingChangeGeneration = new AtomicLong();
 
     private volatile boolean desiredRunning;
     private volatile boolean cleaning;
     private Thread supervisor;
     private Process mbox;
     private ParcelFileDescriptor tun;
+    private CronetBridge cronetBridge;
+    private ConnectivityManager connectivityManager;
+    private UnderlyingNetworkMonitor networkMonitor;
 
     public static State getState() {
         return state;
@@ -68,6 +80,16 @@ public class MBoxVpnService extends VpnService {
                 CHANNEL_ID, "MBox VPN", NotificationManager.IMPORTANCE_LOW));
         desiredRunning = getSharedPreferences(STATE_PREFS, MODE_PRIVATE)
                 .getBoolean(PREF_DESIRED_RUNNING, false);
+        connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        networkMonitor = new UnderlyingNetworkMonitor(connectivityManager, (previous, current) -> {
+            if (!desiredRunning) {
+                return;
+            }
+            underlyingChangeGeneration.incrementAndGet();
+            Log.i(TAG, "NET stage=NETWORK code="
+                    + (current == null ? "UNDERLYING_LOST" : "UNDERLYING_CHANGED"));
+            restartCoreForNetworkChange();
+        });
     }
 
     @Override
@@ -112,15 +134,24 @@ public class MBoxVpnService extends VpnService {
 
         try {
             while (desiredRunning) {
+                if (!awaitUnderlyingNetworkIfNeeded()) {
+                    break;
+                }
+                long attemptNetworkGeneration = underlyingChangeGeneration.get();
+
                 updateState(firstAttempt ? State.CONNECTING : State.RECONNECTING, "");
                 updateNotification(firstAttempt ? "Connecting…" : "Reconnecting…");
 
                 try {
                     Process process = startTunnel();
                     firstAttempt = false;
-                    reconnectDelay = RECONNECT_MIN_MS;
+                    long connectedAt = SystemClock.elapsedRealtime();
 
                     int code = process.waitFor();
+                    long connectedFor = SystemClock.elapsedRealtime() - connectedAt;
+                    if (connectedFor >= STABLE_CONNECTION_MS) {
+                        reconnectDelay = RECONNECT_MIN_MS;
+                    }
                     if (!desiredRunning || process != mbox) {
                         break;
                     }
@@ -153,11 +184,25 @@ public class MBoxVpnService extends VpnService {
                     break;
                 }
 
-                updateNotification("Reconnecting in " + formatDelay(reconnectDelay) + "…");
-                Log.i(TAG, "RECONNECT retry in " + reconnectDelay + "ms");
+                boolean underlyingChanged = underlyingChangeGeneration.get() != attemptNetworkGeneration;
+                if (!underlyingChanged && networkMonitor != null && networkMonitor.currentNetwork() == null) {
+                    underlyingChanged = true;
+                }
+                if (underlyingChanged) {
+                    reconnectDelay = RECONNECT_MIN_MS;
+                    if (!awaitUnderlyingNetworkIfNeeded()) {
+                        break;
+                    }
+                    Log.i(TAG, "RECONNECT reason=underlying_network immediate=true");
+                    continue;
+                }
+
+                long actualDelay = jitteredReconnectDelay(reconnectDelay);
+                updateNotification("Reconnecting in " + formatDelay(actualDelay) + "…");
+                Log.i(TAG, "RECONNECT base=" + reconnectDelay + "ms actual=" + actualDelay + "ms");
 
                 try {
-                    Thread.sleep(reconnectDelay);
+                    Thread.sleep(actualDelay);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     break;
@@ -179,6 +224,45 @@ public class MBoxVpnService extends VpnService {
                 stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
             }
+        }
+    }
+
+
+    private boolean awaitUnderlyingNetworkIfNeeded() {
+        UnderlyingNetworkMonitor monitor = networkMonitor;
+        if (monitor == null || monitor.currentNetwork() != null) {
+            return desiredRunning;
+        }
+
+        updateState(State.RECONNECTING, "Ожидание физической сети");
+        updateNotification("Waiting for network…");
+        Log.i(TAG, "NET stage=NETWORK code=WAIT_UNDERLYING");
+
+        Network network;
+        try {
+            network = monitor.awaitUsableNetwork();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        if (!desiredRunning || network == null) {
+            return false;
+        }
+
+        Log.i(TAG, "NET stage=NETWORK code=UNDERLYING_AVAILABLE");
+        return true;
+    }
+
+    private static long jitteredReconnectDelay(long base) {
+        long low = Math.max(1, base * 80 / 100);
+        long high = Math.max(low + 1, base * 120 / 100 + 1);
+        return ThreadLocalRandom.current().nextLong(low, high);
+    }
+
+    private synchronized void restartCoreForNetworkChange() {
+        Process process = mbox;
+        if (process != null && process.isAlive()) {
+            process.destroy();
         }
     }
 
@@ -243,14 +327,42 @@ public class MBoxVpnService extends VpnService {
         Log.i(TAG, "MBox binary: " + mboxBinary);
 
         String endpointHost = ProfileStore.transportHost(this);
-        String endpointIp = resolveEndpointIp(endpointHost);
-        Log.i(TAG, "Endpoint DNS: " + endpointHost + " -> " + endpointIp);
+        String endpointUrl = ProfileStore.transportUrl(this);
+        boolean networkDebug = ProfileStore.networkDebug(this);
+        String httpStack = ProfileStore.androidHttpStack(this);
+        List<String> endpointAddresses = new ArrayList<>();
+        if ("go".equals(httpStack) || networkDebug) {
+            endpointAddresses = resolveEndpointAddresses(endpointHost);
+            logDnsResult(endpointHost, endpointAddresses, networkDebug);
+        } else {
+            // Avoid an extra resolver query in the normal Cronet persona. Cronet owns
+            // DNS/address racing; DEBUG NETWORK may deliberately pre-resolve to expose A/AAAA.
+            Log.i(TAG, "NET stage=DNS code=DNS_DELEGATED stack=cronet");
+        }
+
+        Network underlyingNetwork = networkMonitor != null
+                ? networkMonitor.currentNetwork()
+                : connectivityManager.getActiveNetwork();
+        if ("cronet".equals(httpStack)) {
+            cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
+        } else {
+            Log.i(TAG, "NET stage=HTTP code=HTTP_STACK stack=go");
+        }
 
         CountDownLatch coreReady = new CountDownLatch(1);
         ProcessBuilder processBuilder = new ProcessBuilder(
                 mboxBinary, "-config", clientConfig.getAbsolutePath())
                 .redirectErrorStream(true);
-        processBuilder.environment().put("MBOX_CONNECT_IP", endpointIp);
+        if (!endpointAddresses.isEmpty()) {
+            processBuilder.environment().put("MBOX_CONNECT_ADDRS", String.join(",", endpointAddresses));
+            // Keep the legacy single-address variable for older cores/config recovery.
+            processBuilder.environment().put("MBOX_CONNECT_IP", endpointAddresses.get(0));
+        }
+        if (cronetBridge != null) {
+            processBuilder.environment().put("MBOX_HTTP_BRIDGE_ADDR", cronetBridge.address());
+            processBuilder.environment().put("MBOX_HTTP_BRIDGE_TOKEN", cronetBridge.token());
+        }
+        processBuilder.environment().put("MBOX_DEVICE_ID", ProfileStore.installationDeviceId(this));
         Process process = processBuilder.start();
         mbox = process;
 
@@ -265,7 +377,9 @@ public class MBoxVpnService extends VpnService {
                 .setSession("MBox")
                 .setMtu(AppRuntime.MTU)
                 .addAddress(AppRuntime.TUN_IPV4, 32)
+                .addAddress(AppRuntime.TUN_IPV6, 128)
                 .addRoute("0.0.0.0", 0)
+                .addRoute("::", 0)
                 .addDnsServer(AppRuntime.MAP_DNS);
 
         builder.addDisallowedApplication(getPackageName());
@@ -291,27 +405,80 @@ public class MBoxVpnService extends VpnService {
         return process;
     }
 
-    private String resolveEndpointIp(String host) throws Exception {
-        ConnectivityManager manager =
-                (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+    private List<String> resolveEndpointAddresses(String host) throws Exception {
+        ConnectivityManager manager = connectivityManager != null
+                ? connectivityManager
+                : (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         Network network = manager.getActiveNetwork();
         if (network == null) {
-            throw new Exception("Нет активной физической сети для DNS");
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS_NO_NETWORK");
+            throw new Exception("ERR_DNS: нет активной физической сети");
         }
 
-        InetAddress[] addresses = network.getAllByName(host);
-        if (addresses.length == 0) {
-            throw new Exception("DNS не вернул адрес для " + host);
+        final InetAddress[] answers;
+        long started = System.nanoTime();
+        try {
+            answers = network.getAllByName(host);
+        } catch (Exception error) {
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS host=" + host + " error=" + safeMessage(error));
+            throw new Exception("ERR_DNS: " + safeMessage(error), error);
         }
-
-        // Prefer IPv4 because the current public MBox path is IPv4-tested.
-        // Fall back to IPv6 when a network/domain is IPv6-only.
-        for (InetAddress address : addresses) {
-            if (address instanceof Inet4Address) {
-                return address.getHostAddress();
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (InetAddress answer : answers) {
+            String ip = answer.getHostAddress();
+            int zone = ip.indexOf('%');
+            if (zone >= 0) {
+                ip = ip.substring(0, zone);
+            }
+            if (!ip.isEmpty()) {
+                unique.add(ip);
+            }
+            if (unique.size() >= 16) {
+                break;
             }
         }
-        return addresses[0].getHostAddress();
+        if (unique.isEmpty()) {
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS_EMPTY host=" + host + " time=" + elapsedMs + "ms");
+            throw new Exception("ERR_DNS: DNS не вернул адрес для " + host);
+        }
+        return new ArrayList<>(unique);
+    }
+
+    private void logDnsResult(String host, List<String> addresses, boolean debug) {
+        int v4 = 0;
+        int v6 = 0;
+        List<String> shown = new ArrayList<>();
+        for (String ip : addresses) {
+            if (ip.contains(":")) {
+                v6++;
+            } else {
+                v4++;
+            }
+            shown.add(debug ? ip : redactAddress(ip));
+        }
+        Log.i(TAG, "NET stage=DNS code=DNS_OK host=" + host
+                + " count=" + addresses.size() + " ipv4=" + v4 + " ipv6=" + v6
+                + " addresses=" + String.join(",", shown));
+    }
+
+    private static String redactAddress(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return String.format(Locale.ROOT, "ip#%02x%02x%02x%02x",
+                    digest[0] & 0xff, digest[1] & 0xff, digest[2] & 0xff, digest[3] & 0xff);
+        } catch (Exception ignored) {
+            return "ip#redacted";
+        }
+    }
+
+    private static String safeMessage(Throwable error) {
+        String value = error.getMessage();
+        if (value == null || value.isEmpty()) {
+            value = error.getClass().getSimpleName();
+        }
+        return value.length() > 180 ? value.substring(0, 180) : value;
     }
 
     private void readCoreLog(Process process, CountDownLatch ready) {
@@ -396,6 +563,16 @@ public class MBoxVpnService extends VpnService {
                     process.destroyForcibly();
                 }
             }
+
+            CronetBridge bridge = cronetBridge;
+            cronetBridge = null;
+            if (bridge != null) {
+                try {
+                    bridge.close();
+                } catch (Throwable error) {
+                    Log.w(TAG, "Cronet bridge stop failed", error);
+                }
+            }
         } finally {
             cleaning = false;
         }
@@ -420,6 +597,10 @@ public class MBoxVpnService extends VpnService {
         cleanupTransport();
         updateState(State.STOPPED, "");
         logStoppedOnce();
+        if (networkMonitor != null) {
+            networkMonitor.close();
+            networkMonitor = null;
+        }
         super.onDestroy();
     }
 

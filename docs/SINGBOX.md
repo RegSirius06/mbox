@@ -1,5 +1,7 @@
 # sing-box routing handoff
 
+[Русская версия](ru/SINGBOX.md)
+
 MBox is a transport from the client device to the MBox server. It deliberately does **not** decide where Internet traffic leaves after it reaches the server.
 
 The default server setting:

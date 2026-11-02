@@ -11,6 +11,7 @@ final class AppRuntime {
 
     // RFC 2544 benchmarking space is intentionally used for the private TUN.
     static final String TUN_IPV4 = "198.18.0.1";
+    static final String TUN_IPV6 = "fdfe:dcba:9876::1";
     static final String MAP_DNS = "198.18.0.2";
     static final String MAP_NETWORK = "100.64.0.0";
     static final String MAP_NETMASK = "255.192.0.0";
@@ -23,6 +24,7 @@ final class AppRuntime {
         return "tunnel:\n" +
                 "  mtu: " + MTU + "\n" +
                 "  ipv4: " + TUN_IPV4 + "\n" +
+                "  ipv6: '" + TUN_IPV6 + "'\n" +
                 "  icmp: 'off'\n" +
                 "\n" +
                 "socks5:\n" +

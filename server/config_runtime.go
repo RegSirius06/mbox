@@ -37,6 +37,8 @@ type resourceLimitsConfig struct {
 	MaxTotalStreams             int `json:"max_total_streams"`
 	MaxStreamOpensPerSecond     int `json:"max_stream_opens_per_second"`
 	MaxSessionOpensPerMinute    int `json:"max_session_opens_per_minute"`
+	MaxConcurrentHandshakes     int `json:"max_concurrent_handshakes"`
+	MaxHandshakeAttemptsPerSec  int `json:"max_handshake_attempts_per_second"`
 	MaxDownQueueBytes           int `json:"max_down_queue_bytes"`
 	MaxDownReplayBytes          int `json:"max_down_replay_bytes"`
 	GlobalQueuedBytes           int `json:"global_queued_bytes"`
@@ -45,10 +47,12 @@ type resourceLimitsConfig struct {
 var runtimeLimits = resourceLimitsConfig{
 	MaxSessionsGlobal:           128,
 	DefaultMaxSessionsPerClient: 4,
-	MaxStreamsPerSession:        64,
+	MaxStreamsPerSession:        128,
 	MaxTotalStreams:             1024,
 	MaxStreamOpensPerSecond:     32,
 	MaxSessionOpensPerMinute:    180,
+	MaxConcurrentHandshakes:     32,
+	MaxHandshakeAttemptsPerSec:  64,
 	MaxDownQueueBytes:           4 * 1024 * 1024,
 	MaxDownReplayBytes:          8 * 1024 * 1024,
 	GlobalQueuedBytes:           64 * 1024 * 1024,
@@ -103,6 +107,12 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	if in.MaxSessionOpensPerMinute > 0 {
 		out.MaxSessionOpensPerMinute = in.MaxSessionOpensPerMinute
 	}
+	if in.MaxConcurrentHandshakes > 0 {
+		out.MaxConcurrentHandshakes = in.MaxConcurrentHandshakes
+	}
+	if in.MaxHandshakeAttemptsPerSec > 0 {
+		out.MaxHandshakeAttemptsPerSec = in.MaxHandshakeAttemptsPerSec
+	}
 	if in.MaxDownQueueBytes > 0 {
 		out.MaxDownQueueBytes = in.MaxDownQueueBytes
 	}
@@ -133,6 +143,12 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	if out.MaxSessionOpensPerMinute < 1 || out.MaxSessionOpensPerMinute > 100000 {
 		return out, fmt.Errorf("limits.max_session_opens_per_minute out of range")
 	}
+	if out.MaxConcurrentHandshakes < 1 || out.MaxConcurrentHandshakes > 4096 {
+		return out, fmt.Errorf("limits.max_concurrent_handshakes out of range")
+	}
+	if out.MaxHandshakeAttemptsPerSec < 1 || out.MaxHandshakeAttemptsPerSec > 100000 {
+		return out, fmt.Errorf("limits.max_handshake_attempts_per_second out of range")
+	}
 	if out.MaxDownQueueBytes < 256*1024 || out.MaxDownQueueBytes > 256*1024*1024 {
 		return out, fmt.Errorf("limits.max_down_queue_bytes out of range")
 	}
@@ -143,6 +159,14 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 		return out, fmt.Errorf("limits.global_queued_bytes out of range")
 	}
 	return out, nil
+}
+
+func privateKeyModeAllowed(mode os.FileMode) bool {
+	perm := mode.Perm()
+	// mboxctl intentionally installs server.key as root:mbox 0640 so the
+	// unprivileged service can read it. Reject group write/execute and every
+	// permission for other users; group read is the only allowed group bit.
+	return perm&0o027 == 0
 }
 
 func loadRuntimeConfig(path string) error {
@@ -178,6 +202,13 @@ func loadRuntimeConfig(path string) error {
 	if cfg.Crypto.ServerPrivateKeyFile == "" {
 		return fmt.Errorf("crypto.server_private_key_file is required")
 	}
+	serverKey, err := readHex32(cfg.Crypto.ServerPrivateKeyFile)
+	if err != nil {
+		return fmt.Errorf("crypto.server_private_key_file: %w", err)
+	}
+	if info, statErr := os.Stat(cfg.Crypto.ServerPrivateKeyFile); statErr == nil && !privateKeyModeAllowed(info.Mode().Perm()) {
+		return fmt.Errorf("crypto.server_private_key_file permissions must be owner read/write with optional group read and no group-write/other access: %04o", info.Mode().Perm())
+	}
 	policies, err := decodeClientAuth(cfg.Crypto.Clients)
 	if err != nil {
 		return err
@@ -194,6 +225,7 @@ func loadRuntimeConfig(path string) error {
 	socksAddr = cfg.Transport.Upstream
 	basePath = cfg.Transport.BasePath
 	serverPrivFile = cfg.Crypto.ServerPrivateKeyFile
+	serverStaticPrivate = append(serverStaticPrivate[:0], serverKey...)
 	coverCfg = cov
 	runtimeLimits = limits
 	clientAuthMu.Lock()

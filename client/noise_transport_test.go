@@ -71,3 +71,15 @@ func FuzzNoiseTransportRecord(f *testing.F) {
 		_, _, _ = openNoiseRecord(recv, "0123456789abcdef0123456789abcdef", dirDown, record)
 	})
 }
+
+func TestNoiseUploadCounterOverflowRejected(t *testing.T) {
+	key := bytes.Repeat([]byte{0x33}, 32)
+	send, err := noise.NewCipherState(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &cryptoState{up: send, upCounter: ^uint64(0)}
+	if _, err := c.sealUp("0123456789abcdef0123456789abcdef", []byte("x")); err == nil {
+		t.Fatal("counter overflow accepted")
+	}
+}

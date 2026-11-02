@@ -1,5 +1,7 @@
 # Testing status
 
+[Русская версия](ru/TESTING.md)
+
 ## Noise beta.2 gates
 
 The beta.2 security migration adds mandatory tests for:
@@ -15,6 +17,24 @@ The beta.2 security migration adds mandatory tests for:
 - DOWN 502 retry using the exact same sequence URL.
 
 The last two are important with stochastic shaping: randomness is allowed only before commit/seal. An ambiguous HTTP retry must never redraw padding/chunk boundaries or re-encrypt a committed record.
+
+
+## Network-establishment regression tests
+
+The P0 network suite additionally covers:
+
+- first resolved IP unavailable, later IP succeeds;
+- broken IPv6 with working IPv4 and the inverse;
+- changed DNS answer order;
+- all resolved addresses unavailable;
+- HTTP/2 + ALPN `h2` with the custom pre-resolved dial path;
+- redirect refusal;
+- oversized response bodies and response headers;
+- truncated response bodies;
+- pre-auth handshake concurrency/rate limits;
+- Noise transport counter exhaustion.
+
+`tools/mbox-netprobe` is the non-credentialed layer probe used by the controlled carrier matrix in `docs/OPERATOR_TEST.md`.
 
 ## Automated correctness suite
 
@@ -61,7 +81,19 @@ CI runs normal Go/Python tests, race jobs, fuzz smoke, Android build, secret sca
 
 ## Field behavior already exercised
 
-The Android client has been exercised through a real buffering shared-hosting FastCGI frontend into the MBox origin and local SOCKS/sing-box handoff. The live hardened service has also been observed running as the unprivileged `mbox` user with very small idle RSS.
+On 2026-11-02 the beta.2.1 APK was built/installed on a real ARM64 Android device and exercised on unrestricted connectivity:
+
+- Cronet selected as the public stack;
+- HTTP/2 negotiated with `alpn=h2`;
+- MBox OPEN, Noise and tunnel established;
+- Telegram, Instagram and video traffic worked;
+- aggressive Telegram/Instagram/YouTube switching peaked at 64 concurrent streams and stream counts fell after idle;
+- Wi-Fi/mobile underlying-network changes recovered;
+- airplane mode produced `UNDERLYING_LOST -> WAIT_UNDERLYING -> UNDERLYING_AVAILABLE -> reconnect`;
+- same-device stale sessions were immediately replaced by server `SESSION SUPERSEDE`;
+- a transient DNS-not-ready race after network return recovered on the next underlying-change/retry.
+
+These are lifecycle/connectivity checks, **not white-list qualification**.
 
 ## Production qualification still required
 

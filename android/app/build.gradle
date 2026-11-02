@@ -11,8 +11,8 @@ android {
         applicationId 'io.mbox.android'
         minSdk 29
         targetSdk 36
-        versionCode 3
-        versionName '1.0.0-beta.2'
+        versionCode 4
+        versionName '1.0.0-beta.2.1'
 
         manifestPlaceholders = [mboxProvisioningHost: providers.gradleProperty('mboxProvisioningHost').orElse('provision.invalid').get()]
 
@@ -38,4 +38,7 @@ android {
 
 dependencies {
     implementation files('libs/hev-socks5-tunnel.aar')
+    // Chromium-derived HTTPS stack used by the Android outer transport.
+    // cronet-embedded is deprecated as of 500.x; bundled is the direct artifact.
+    implementation 'org.chromium.net:cronet-bundled:500.1.0'
 }

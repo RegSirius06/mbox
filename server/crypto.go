@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -22,13 +23,17 @@ const (
 	maxNoiseChunks      = 64
 )
 
-var serverPrivFile string
+var (
+	serverPrivFile      string
+	serverStaticPrivate []byte
+)
 
 type cryptoState struct {
 	up   *noise.CipherState // receive: client -> server
 	down *noise.CipherState // send: server -> client
 
 	clientID    string
+	deviceID    string
 	authPSKHash [32]byte
 
 	mu sync.Mutex
@@ -66,6 +71,18 @@ func validClientID(id string) bool {
 	return true
 }
 
+var devicePayloadPrefix = []byte{'M', 'B', 'D', '1'}
+
+func parseNoiseOpenPayload(payload []byte) (string, error) {
+	if len(payload) == 0 {
+		return "", nil
+	}
+	if len(payload) != len(devicePayloadPrefix)+16 || !bytes.Equal(payload[:len(devicePayloadPrefix)], devicePayloadPrefix) {
+		return "", errors.New("invalid Noise OPEN payload")
+	}
+	return hex.EncodeToString(payload[len(devicePayloadPrefix):]), nil
+}
+
 func noisePrologue(id string) []byte {
 	p := []byte("MBOX3-NOISE\x00")
 	p = append(p, []byte(id)...)
@@ -90,11 +107,10 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 		return nil, nil, errors.New("open authentication failed")
 	}
 
-	privRaw, err := readHex32(serverPrivFile)
-	if err != nil {
-		return nil, nil, err
+	if len(serverStaticPrivate) != 32 {
+		return nil, nil, errors.New("server static key unavailable")
 	}
-	hs, err := noise.NewResponder(policy.PSK, privRaw, noisePrologue(clientID), rand.Reader)
+	hs, err := noise.NewResponder(policy.PSK, serverStaticPrivate, noisePrologue(clientID), rand.Reader)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -102,8 +118,9 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if err != nil {
 		return nil, nil, errors.New("open authentication failed")
 	}
-	if len(payload) != 0 {
-		return nil, nil, errors.New("unexpected Noise OPEN payload")
+	deviceID, err := parseNoiseOpenPayload(payload)
+	if err != nil {
+		return nil, nil, errors.New("open authentication failed")
 	}
 	msg2, send, recv, err := hs.WriteMessage([]byte(sid))
 	if err != nil {
@@ -112,7 +129,7 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if send == nil || recv == nil {
 		return nil, nil, errors.New("Noise handshake did not split")
 	}
-	return &cryptoState{up: recv, down: send, clientID: clientID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
+	return &cryptoState{up: recv, down: send, clientID: clientID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
 }
 
 func cryptoAAD(sid string, header []byte, chunkIndex uint16, chunkLen uint16) []byte {
@@ -276,6 +293,9 @@ func (c *cryptoState) openUp(sid string, record []byte) ([]byte, error) {
 func (c *cryptoState) sealDown(sid string, plaintext []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.downCounter == ^uint64(0) {
+		return nil, errors.New("Noise record counter exhausted")
+	}
 	c.downCounter++
 	rec, next, err := sealNoiseRecord(c.down, sid, dirDown, c.downCounter, c.downNonce, plaintext)
 	if err != nil {
@@ -313,4 +333,9 @@ func noiseRecordSizeUpperBound(plain int) int {
 		chunks = maxNoiseChunks
 	}
 	return noiseRecordHeader + plain + chunks*(2+16)
+}
+
+func redactedSessionID(id string) string {
+	s := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("sid#%x", s[:4])
 }

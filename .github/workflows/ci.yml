@@ -26,8 +26,8 @@ jobs:
       - name: Format, vet, tests
         env: {GO111MODULE: 'off'}
         run: |
-          test -z "$(find common/noise client server relay tools/mbox-key tools/mbox-link -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
-          for d in common/noise server client relay tools/mbox-key tools/mbox-link; do (cd "$d" && go vet . && go test .); done
+          test -z "$(find common/noise client server relay tools/mbox-key tools/mbox-link tools/mbox-netprobe -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+          for d in common/noise server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do (cd "$d" && go vet . && go test .); done
   go-race:
     runs-on: ubuntu-24.04
     steps:
@@ -61,6 +61,7 @@ jobs:
         with: {python-version: '${{ env.PYTHON_VERSION }}'}
       - run: python -m pip install --disable-pip-version-check pytest==8.4.2
       - run: python -m pytest -q tests
+      - run: python tools/check-source-layout.py
       - run: python -m py_compile tools/mboxctl/mboxctl.py && bash -n install.sh android/tools/*.sh tools/*.sh
   android:
     runs-on: ubuntu-24.04
