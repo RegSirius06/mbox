@@ -75,10 +75,12 @@ DEFAULT_LIMITS = {
     # deliberately bounded far below total RAM; raise these only after load tests.
     "max_sessions_global": "128",
     "default_max_sessions_per_client": "4",
-    "max_streams_per_session": "64",
+    "max_streams_per_session": "128",
     "max_total_streams": "1024",
     "max_stream_opens_per_second": "32",
     "max_session_opens_per_minute": "180",
+    "max_concurrent_handshakes": "32",
+    "max_handshake_attempts_per_second": "64",
     "max_down_queue_bytes": "4194304",
     "max_down_replay_bytes": "8388608",
     "global_queued_bytes": "67108864",
@@ -433,6 +435,7 @@ def validate_config(cp):
     max_sessions=int(lm["max_sessions_global"]); default_sessions=int(lm["default_max_sessions_per_client"])
     streams_per_session=int(lm["max_streams_per_session"]); total_streams=int(lm["max_total_streams"])
     stream_rate=int(lm["max_stream_opens_per_second"]); session_rate=int(lm["max_session_opens_per_minute"])
+    handshake_conc=int(lm["max_concurrent_handshakes"]); handshake_rate=int(lm["max_handshake_attempts_per_second"])
     down_queue=int(lm["max_down_queue_bytes"]); down_replay=int(lm["max_down_replay_bytes"]); global_queue=int(lm["global_queued_bytes"])
     if not (1 <= max_sessions <= 100000): die("limits.max_sessions_global out of range")
     if default_sessions != -1 and not (1 <= default_sessions <= 10000): die("limits.default_max_sessions_per_client must be -1 or 1..10000")
@@ -441,6 +444,8 @@ def validate_config(cp):
     if not (streams_per_session <= total_streams <= 200000): die("limits.max_total_streams out of range")
     if not (1 <= stream_rate <= 10000): die("limits.max_stream_opens_per_second out of range")
     if not (1 <= session_rate <= 100000): die("limits.max_session_opens_per_minute out of range")
+    if not (1 <= handshake_conc <= 4096): die("limits.max_concurrent_handshakes out of range")
+    if not (1 <= handshake_rate <= 100000): die("limits.max_handshake_attempts_per_second out of range")
     if not (256*1024 <= down_queue <= 256*1024*1024): die("limits.max_down_queue_bytes out of range")
     if not (256*1024 <= down_replay <= 256*1024*1024): die("limits.max_down_replay_bytes out of range")
     if not (8*1024*1024 <= global_queue <= 2*1024*1024*1024): die("limits.global_queued_bytes out of range")
@@ -908,39 +913,46 @@ def user_delete(args):
     print(f"Deleted {len(ids)} user(s).")
 
 
-def build_link(uid, name=None):
+def build_link(uid, name=None, network_debug=False, android_http_stack="cronet", deterministic_transport=False):
     cp=load_conf(); r=get_user(uid)
     pub=read_hex32(cp["server"]["server_public_key"]).hex()
     payload={
         "v":1,
         "name": name or r["label"] or uid,
         "client_id":uid,
-        "transport":{"url":cp["server"]["public_url"]},
+        "transport":{"url":cp["server"]["public_url"],"android_http_stack":android_http_stack},
         "crypto":{"psk":bytes(r["psk"]).hex(),"server_public_key":pub},
         "camouflage":camo_dict(cp,include_timing=True),
     }
+    diagnostics={}
+    if network_debug:
+        diagnostics["network_debug"]=True
+    if deterministic_transport:
+        diagnostics["deterministic_transport"]=True
+    if diagnostics:
+        payload["diagnostics"]=diagnostics
     raw=json.dumps(payload,separators=(",",":"),ensure_ascii=False).encode()
     return "mbox://"+base64.urlsafe_b64encode(raw).decode().rstrip("=")+"#"+uid
 
 
-def build_app_link(uid,name=None):
+def build_app_link(uid,name=None,network_debug=False,android_http_stack="cronet",deterministic_transport=False):
     cp=load_conf(); public=urlparse(cp["server"]["public_url"])
     if public.scheme != "https" or not public.hostname: die("Verified Android App Links require HTTPS public_url")
-    nested=build_link(uid,name); host=public.hostname
+    nested=build_link(uid,name,network_debug,android_http_stack,deterministic_transport); host=public.hostname
     if public.port and public.port != 443: host=f"{host}:{public.port}"
-    return f"https://{host}/mbox/provision?profile={quote(nested,safe='')}"
+    return f"https://{host}/mbox/provision#profile={quote(nested,safe='')}"
 
 
 def user_link(args):
-    print(build_link(args.id,args.name))
+    print(build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport))
 
 
 def user_app_link(args):
-    print(build_app_link(args.id,args.name))
+    print(build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport))
 
 
 def user_qr(args):
-    link=build_app_link(args.id,args.name) if args.app_link else build_link(args.id,args.name)
+    link=build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport) if args.app_link else build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport)
     if shutil.which("qrencode"):
         run(["qrencode","-t","ANSIUTF8",link])
     else:
@@ -1511,9 +1523,9 @@ def make_parser():
     q=us.add_parser("expiry"); q.add_argument("id"); q.add_argument("--days",type=int); q.add_argument("--at"); q.add_argument("--clear",action="store_true"); q.set_defaults(func=user_expiry)
     q=us.add_parser("renew"); q.add_argument("id"); q.add_argument("days",type=int); q.set_defaults(func=user_renew)
     q=us.add_parser("delete"); q.add_argument("ids",nargs="+"); q.add_argument("-y","--yes",action="store_true",help="delete without interactive confirmation"); q.add_argument("--purge",action="store_true",help=argparse.SUPPRESS); q.set_defaults(func=user_delete)
-    q=us.add_parser("link"); q.add_argument("id"); q.add_argument("--name"); q.set_defaults(func=user_link)
-    q=us.add_parser("app-link"); q.add_argument("id"); q.add_argument("--name"); q.set_defaults(func=user_app_link)
-    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--app-link",action="store_true"); q.set_defaults(func=user_qr)
+    q=us.add_parser("link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.set_defaults(func=user_link)
+    q=us.add_parser("app-link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.set_defaults(func=user_app_link)
+    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--app-link",action="store_true"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.set_defaults(func=user_qr)
     q=us.add_parser("export"); q.add_argument("ids",nargs="*"); q.add_argument("--all-enabled",action="store_true"); q.add_argument("--output",required=True); q.add_argument("--no-qr",action="store_true"); q.set_defaults(func=user_export)
     c=sp.add_parser("config"); cs=c.add_subparsers(dest="sub",required=True)
     q=cs.add_parser("show"); q.set_defaults(func=config_show)
@@ -1551,7 +1563,7 @@ def make_parser():
     q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
     q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
     q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2"))
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2.1"))
     return p
 
 

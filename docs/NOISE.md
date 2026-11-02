@@ -1,5 +1,7 @@
 # MBox beta.2 cryptography: Noise-only
 
+[Русская версия](ru/NOISE.md)
+
 MBox 1.0.0-beta.2 removes the previous custom handshake and custom transport-key derivation. There is no legacy/downgrade path in the beta.2 client or server.
 
 ## Suite and wire generation
@@ -21,6 +23,8 @@ The client ID is carried in the HTTPS-protected OPEN envelope so the server can 
 Noise NK uses the responder static key as a pre-message. `psk0` mixes the existing 256-bit client PSK before the first ephemeral key operation. Both sides generate fresh ephemeral X25519 keys for each session; the `ee` operation in the second Noise message gives forward secrecy against later disclosure of the server static key/PSK, assuming the ephemeral private keys have been destroyed.
 
 The server returns the MBox session ID as the encrypted/authenticated payload of Noise handshake message 2. The client accepts a session only after that payload authenticates successfully.
+
+beta.2.1 Android clients may also include a stable random `device_id` in the authenticated OPEN payload. This identifier is not a cryptographic key and is not placed in the public URL. The server uses it only after successful authentication to supersede stale sessions from the same `client_id + device_id`; clients that omit it keep the legacy per-client session-cap behavior. The Noise suite and transport record format remain unchanged.
 
 ## Transport encryption
 

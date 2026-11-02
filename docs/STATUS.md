@@ -1,47 +1,56 @@
 # MBox release status
 
-## 1.0.0-beta.2
+[Русская версия](ru/STATUS.md)
 
-beta.2 is the first Noise-only MBox generation. Client and server are wire-incompatible with beta.1/hardened and must be upgraded together.
+## 1.0.0-beta.2.1 (current version)
 
-Automated/repository gates in the release tree include:
+`1.0.0-beta.2.1` is a beta.2-compatible hardening release candidate/current tree. It preserves the beta.2 Noise wire and credentials while replacing Android public HTTPS with bundled Chromium Cronet and adding the diagnostics/lifecycle/resource hardening below.
 
-- independent `Noise_NKpsk0_25519_AESGCM_SHA256` vector reproduction;
-- Noise-only OPEN interoperability and explicit legacy-OPEN rejection;
-- multi-message Noise transport roundtrip and authenticated-header tamper rejection;
-- configuration upgrade/default backfill;
-- SQLite user/policy control plane;
-- reliable DOWN replay/ACK/order regression tests;
-- bounded UP/flow-control regression tests;
-- `go test -race` for Noise/server/client/relay;
-- parser fuzz smoke;
-- 3 GiB bounded-UP scheduler regression;
-- slow-stream/full-duplex isolation regression;
-- Android Go-core cross-build;
-- generated REG.RU relay/site bundle;
-- sing-box example JSON validation;
-- secret/release-tree review.
+## 1.0.0-beta.2 (previous tagged baseline)
 
-Deployment behavior includes:
+`1.0.0-beta.2` established the Noise/replay/ACK/flow-control baseline. Its Android public HTTPS path used Go `crypto/tls` + `net/http`.
 
-- Noise-only NKpsk0 handshake and Noise transport AEAD; no legacy downgrade;
-- stochastic padding/batching/Noise-message boundaries/poll timing;
-- unprivileged `mbox` systemd service;
-- configurable low-memory limits and `mboxctl resources`;
-- concurrent-session limits/unlimited mode;
-- expiry + renewal without deleting credentials;
-- active session revocation on policy changes;
-- transactional Android profile replacement/fingerprint confirmation;
-- optional Verified App Link provisioning;
-- optional shared-hosting decoy-site deployment;
-- explicit sing-box `127.0.0.1:2080` routing handoff.
+## beta.2.1 hardening / field-test delta
 
-Known beta limitations/gates:
+The current branch keeps the beta.2 Noise wire generation and adds:
 
-- TCP transport only; native UDP/QUIC tunneling is not supported.
-- Native Go TLS/HTTP fingerprint remains observable; browser-stack impersonation is not yet implemented.
-- Per-user "device" limiting currently means concurrent authenticated sessions, not immutable hardware identity.
-- 24-hour/7-day soak, network-transition chaos and 10/50/100 real-client qualification are still required before production status.
-- Long-running fuzz campaigns remain part of ongoing hardening.
-- Verified App Links require deployment-specific release signing + `assetlinks.json`.
-- Noise substantially improves the protocol construction but the complete MBox system has not received an independent external security audit.
+- stage diagnostics: DNS -> TCP -> TLS -> ALPN -> HTTP -> OPEN -> Noise -> tunnel;
+- bounded multi-address fallback in the Go diagnostic path;
+- dual-stack Android TUN routing;
+- Chromium Cronet as the default Android public HTTPS stack, with HTTP/2 enabled and QUIC disabled;
+- authenticated loopback Go<->Cronet bridge and `cronet`/`go` A/B modes;
+- non-VPN underlying-network monitoring and Wi-Fi/mobile handover recovery;
+- airplane-mode wait-for-network behavior without blind retries;
+- stable per-installation `device_id` inside authenticated Noise OPEN and same-device stale-session supersession;
+- pre-auth OPEN rate/concurrency limits, bounded client responses and redirect denial;
+- provisioning secret moved from HTTPS query to fragment;
+- modularized client/server source layout with CI file-size guards;
+- calibrated `max_streams_per_session=128` default.
+
+### Real-device checks completed on 2026-11-02
+
+The development build was built and installed on a real ARM64 Android device. Logs confirmed:
+
+- `stack=cronet`;
+- HTTP/2 (`alpn=h2`);
+- `MBOX_OPEN_OK`;
+- `NOISE_OK`;
+- `TUNNEL_ESTABLISHED`;
+- ordinary Telegram/Instagram/video traffic;
+- Wi-Fi/mobile handover;
+- airplane-mode hard disconnect -> `WAIT_UNDERLYING` -> recovery;
+- server `SESSION SUPERSEDE` of stale sessions from the same device;
+- stream counts falling after idle, with a measured stress peak of 64 concurrent streams.
+
+### Still open before finalizing/tagging beta.2.1
+
+- field tests during active mobile white-list restrictions on MTS/T2/MegaFon;
+- controlled `.fun` vs `.ru` test on the same shared-host backend;
+- Chrome vs Cronet-MBox vs Go-MBox packet fingerprint capture;
+- provisioning authenticity/trust-anchor design;
+- true Android Always-on/lockdown support;
+- multiple independent frontend hostnames/endpoints;
+- longer soak/load/fuzz qualification;
+- independent external security review.
+
+The current branch is experimental. No claim of exact Chrome impersonation, universal DPI bypass or production/security audit is made.

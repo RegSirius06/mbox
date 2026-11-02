@@ -66,6 +66,32 @@ func validClientID(id string) bool {
 	return true
 }
 
+func validDeviceID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
+var devicePayloadPrefix = []byte{'M', 'B', 'D', '1'}
+
+func noiseDevicePayload(id string) ([]byte, error) {
+	if id == "" {
+		return nil, nil
+	}
+	if !validDeviceID(id) {
+		return nil, errors.New("invalid device_id")
+	}
+	raw, err := hex.DecodeString(id)
+	if err != nil {
+		return nil, err
+	}
+	payload := append([]byte(nil), devicePayloadPrefix...)
+	payload = append(payload, raw...)
+	return payload, nil
+}
+
 func noisePrologue(id string) []byte {
 	p := []byte("MBOX3-NOISE\x00")
 	p = append(p, []byte(id)...)
@@ -73,6 +99,14 @@ func noisePrologue(id string) []byte {
 }
 
 func buildOpenRequest() ([]byte, *noise.Handshake, error) {
+	return buildOpenRequestForDevice(deviceID)
+}
+
+func buildLegacyOpenRequest() ([]byte, *noise.Handshake, error) {
+	return buildOpenRequestForDevice("")
+}
+
+func buildOpenRequestForDevice(openDeviceID string) ([]byte, *noise.Handshake, error) {
 	if !validClientID(clientID) {
 		return nil, nil, fmt.Errorf("Noise-only MBox requires valid client_id")
 	}
@@ -88,7 +122,11 @@ func buildOpenRequest() ([]byte, *noise.Handshake, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	msg1, _, _, err := hs.WriteMessage(nil)
+	payload, err := noiseDevicePayload(openDeviceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	msg1, _, _, err := hs.WriteMessage(payload)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -156,9 +194,13 @@ func splitNoisePlaintext(plain []byte) ([][]byte, error) {
 		remain := len(plain) - off
 		size := remain
 		if remain > maxChunk {
-			n, err := randomIntInclusive(minChunk, maxChunk)
-			if err != nil {
-				return nil, err
+			n := (minChunk + maxChunk) / 2
+			if !deterministicTransport {
+				var err error
+				n, err = randomIntInclusive(minChunk, maxChunk)
+				if err != nil {
+					return nil, err
+				}
 			}
 			size = n
 			if remain-size > 0 && remain-size < minChunk {
@@ -261,6 +303,9 @@ func openNoiseRecord(c *noise.CipherState, sid string, direction byte, record []
 func (c *cryptoState) sealUp(sid string, plaintext []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.upCounter == ^uint64(0) {
+		return nil, errors.New("Noise record counter exhausted")
+	}
 	c.upCounter++
 	rec, next, err := sealNoiseRecord(c.up, sid, dirUp, c.upCounter, c.upNonce, plaintext)
 	if err != nil {

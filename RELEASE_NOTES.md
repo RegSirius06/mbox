@@ -1,3 +1,33 @@
+# MBox 1.0.0-beta.2.1
+
+[Русская версия](RELEASE_NOTES.ru.md)
+
+`1.0.0-beta.2.1` is a beta.2-compatible hardening release. It keeps the beta.2 Noise wire protocol and existing credentials while adding Cronet outer HTTPS, network diagnostics, dual-stack/handover hardening, per-device stale-session supersession and calibrated resource defaults. `v1.0.0-beta.2` remains the previous tagged baseline. See `CHANGELOG.md` for the full delta.
+
+## Why the public fingerprint is less obvious
+
+The released beta.2 Android path exposed Go `crypto/tls` + `net/http` on the public HTTPS connection. The current Android default delegates the outer HTTPS request to bundled Chromium Cronet over an authenticated loopback bridge, while the Go core still owns Noise/MUX/replay/ACK. Real-device logs confirmed HTTP/2 negotiation (`h2`) and successful Noise/tunnel establishment through this path.
+
+For a carrier, this replaces an obvious Go implementation signature with a coherent Chromium-derived application networking stack. It should be treated as a **fingerprint reduction**, not as exact Chrome impersonation or proof that any particular DPI/allow-list system will accept the traffic. QUIC remains disabled for the first rollout.
+
+## Real-device reliability checks completed
+
+- unrestricted Wi-Fi Cronet/HTTP2/Noise/tunnel baseline;
+- normal Telegram, Instagram and video traffic;
+- Wi-Fi/mobile handover;
+- airplane-mode / metro-style hard disconnect and recovery;
+- wait-for-underlying-network behavior without blind retries while the radio is unavailable;
+- same-device session supersession on the server, preventing stale sessions from filling the per-client session cap;
+- stream cleanup observed after load; default `max_streams_per_session` is now 128 after a stress run hit the previous per-session ceiling.
+
+## Mobile white-list status
+
+No fresh white-list-mode field test has yet been performed with this current branch. The relay/origin architecture and beta.2 MBox wire semantics are preserved, so networks that previously carried the setup are expected to remain compatible, but this still needs field confirmation.
+
+MegaFon is specifically **unknown** for the current build. The next controlled experiment is the same REG.RU shared-host frontend/backend with `.fun` and `.ru` hostnames, tested in Chrome and in MBox/Cronet. A `.ru` domain may receive different operator treatment, but this is only a hypothesis until measured.
+
+---
+
 # MBox 1.0.0-beta.2
 
 beta.2 combines the reliability/resource-control hardening with the first Noise-only wire generation and observable-flow diversification. Client and server must be upgraded together.

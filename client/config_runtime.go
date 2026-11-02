@@ -18,14 +18,26 @@ type runtimeCryptoConfig struct {
 	ClientID            string `json:"client_id"`
 	PSKFile             string `json:"psk_file"`
 	ServerPublicKeyFile string `json:"server_public_key_file"`
+	DeviceID            string `json:"device_id,omitempty"`
+}
+
+type runtimeDiagnosticsConfig struct {
+	NetworkDebug           bool `json:"network_debug"`
+	DeterministicTransport bool `json:"deterministic_transport"`
 }
 
 type runtimeConfig struct {
-	Transport runtimeTransportConfig `json:"transport"`
-	Crypto    runtimeCryptoConfig    `json:"crypto"`
+	Transport   runtimeTransportConfig   `json:"transport"`
+	Crypto      runtimeCryptoConfig      `json:"crypto"`
+	Diagnostics runtimeDiagnosticsConfig `json:"diagnostics"`
 }
 
-var clientID string
+var (
+	clientID               string
+	deviceID               string
+	networkDebug           bool
+	deterministicTransport bool
+)
 
 // runtimeConfigPath keeps deployment details out of the binary. Android always
 // passes -config explicitly; /etc/mbox/client.json is only the conventional CLI
@@ -85,6 +97,15 @@ func loadRuntimeConfig(path string) error {
 	listen = cfg.Transport.Listen
 	base = cfg.Transport.URL
 	clientID = cfg.Crypto.ClientID
+	deviceID = strings.ToLower(strings.TrimSpace(os.Getenv("MBOX_DEVICE_ID")))
+	if deviceID == "" {
+		deviceID = strings.ToLower(strings.TrimSpace(cfg.Crypto.DeviceID))
+	}
+	if deviceID != "" && !validDeviceID(deviceID) {
+		return fmt.Errorf("crypto.device_id must be 32 hex characters when set")
+	}
+	networkDebug = cfg.Diagnostics.NetworkDebug
+	deterministicTransport = cfg.Diagnostics.DeterministicTransport
 	pskFile = cfg.Crypto.PSKFile
 	serverPubFile = cfg.Crypto.ServerPublicKeyFile
 

@@ -44,6 +44,12 @@
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
+            <!-- Current outer transport bypasses the TUN via a per-app exclusion.
+                 Android lockdown blocks disallowed apps, so advertising Always-on
+                 support would create a reconnect loop with no usable outer network. -->
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="false" />
         </service>
 
     </application>

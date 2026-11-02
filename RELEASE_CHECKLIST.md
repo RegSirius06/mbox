@@ -1,138 +1,119 @@
-# MBox 1.0.0-beta.2 release checklist
+# MBox 1.0.0-beta.2.1 release checklist
 
-## 1. Keep production secrets out of the source tree
+[Русская версия](RELEASE_CHECKLIST.ru.md)
 
-Do **not** copy these from the live server into Git:
+This checklist is for preparing `v1.0.0-beta.2.1` from the current `audit/p0-p1-fingerprint-modular` branch. Do **not** move or overwrite the released `v1.0.0-beta.2` tag; beta.2.1 is a new compatible tag.
 
-- `/etc/mbox/`
-- `/var/lib/mbox/users.db*`
-- `*.psk`, `*.key`, provisioning links/QRs
-- generated `server.json`, `relay.json`
-- backup/rollback archives
+## 1. Keep production secrets out of Git
 
-The public source tree should contain code, examples and documentation only.
+Never stage:
 
-## 2. Optional: compare the live source tree with Arch
+- `/etc/mbox/`;
+- `/var/lib/mbox/users.db*`;
+- `*.psk`, private `*.key`;
+- real `mbox://` links/QRs;
+- generated production `server.json` / `relay.json`;
+- backup/rollback archives.
 
-The Arch tree is already beta.2, so normally no production state needs to be pulled. If you want to compare exact source files from the server, copy them into a separate directory first:
+Run the secret scan and manually review every provisioning-like hit.
 
-```bash
-mkdir -p ~/src/mbox-server-copy
-rsync -a --delete \
-  --exclude '.git/' \
-  --exclude 'mbox-1.0.0-beta.2.patch' \
-  root@YOUR_SERVER:/root/mbox-new/mbox-main/ \
-  ~/src/mbox-server-copy/
+## 2. Confirm calibrated defaults
 
-diff -qr ~/src/mbox-main ~/src/mbox-server-copy \
-  --exclude=.git --exclude=build --exclude=.gradle --exclude='*.apk' --exclude='*.so'
+The current real-device calibration uses:
+
+```text
+max_streams_per_session = 128
+max_total_streams = 1024
 ```
 
-Never rsync `/etc/mbox` or `/var/lib/mbox` into the repository.
-
-## 3. Apply the final documentation/release patch
-
-From the Arch beta.2 source tree:
+Verify both the Go server default and `mboxctl` generated default agree:
 
 ```bash
-cd ~/src/mbox-main
-git apply --check /path/to/mbox-beta2-release-docs.patch
-git apply /path/to/mbox-beta2-release-docs.patch
+grep -RInE 'MaxStreamsPerSession:.*128|max_streams_per_session.*128' \
+  server tools/mboxctl docs README.md
 ```
 
-## 4. Build/test on Arch
+## 3. Automated gate
 
 ```bash
 cd ~/src/mbox-main
 export GO111MODULE=off
 
-# Core Go checks
-for d in common/noise server client relay; do
-  (cd "$d" && go test ./...)
+for d in common/noise server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do
+  (cd "$d" && go test ./...) || exit 1
 done
+
+(cd common/noise && go test -race ./...)
+(cd server && go test -race ./...)
+(cd client && go test -race -count=20 ./...)
+
 (cd server && go vet ./...)
 (cd client && go vet ./...)
 (cd relay && go vet ./...)
+(cd tools/mbox-netprobe && go vet ./...)
 
-# Python CLI tests
-python -m pytest -q tests/test_mboxctl_helpers.py
-
-# Secret scan
+python -m pytest -q tests
+python tools/check-source-layout.py
+git diff --check
 ./tools/secret-scan.sh
-# The scanner intentionally reports literal `mbox://` references for manual review;
-# that warning is expected. It must not report real PSKs/keys/databases/backups.
+```
 
-# Android: force Java 17 for this project
-sudo pacman -S --needed jdk17-openjdk
+## 4. Android build and real-device sanity check
+
+Use Java 17:
+
+```bash
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 export PATH="$JAVA_HOME/bin:$PATH"
 hash -r
-cd android
-./gradlew --stop
-./gradlew --version
-./tools/build-debug.sh
-sha256sum app/build/outputs/apk/debug/app-debug.apk
-cd ..
+./android/tools/build-debug.sh
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Verify `./gradlew --version` reports Java 17 before the APK build.
+Confirm the live log contains:
 
-## 5. Sanity-check the live server
-
-```bash
-ssh root@YOUR_SERVER
-cd ~/mbox-new/mbox-main
-cat VERSION
-sudo mboxctl doctor
-sudo mboxctl resources
-sudo mboxctl user list
-journalctl -u mbox-server --since '30 minutes ago' --no-pager \
-  | grep 'handshake=Noise_NKpsk0_25519_AESGCM_SHA256 record=v2'
+```text
+stack=cronet
+proto=HTTP/2.0
+alpn=h2
+MBOX_OPEN_OK
+NOISE_OK
+TUNNEL_ESTABLISHED
 ```
 
-Expected source version: `1.0.0-beta.2`.
+Then exercise Wi-Fi/mobile handover and one airplane-mode cycle. A hard disconnect should show `WAIT_UNDERLYING`, and the server should show `SESSION SUPERSEDE` when the same device reconnects.
 
-## 6. Prepare Git history
+## 5. Documentation gate
+
+Before commit verify:
+
+- `CHANGELOG.md` / `CHANGELOG.ru.md`;
+- `RELEASE_NOTES.md` / `.ru.md`;
+- English and Russian README files;
+- `docs/REG_RU_SHARED_HOSTING.md` and Russian equivalent;
+- `docs/STATUS.md`, `STEALTH.md`, `SECURITY.md`, `NETWORK_COMPATIBILITY.md`, `OPERATOR_TEST.md`;
+- no documentation claims that Cronet is byte-for-byte Chrome;
+- no documentation claims MegaFon is fixed;
+- current branch is explicitly marked **not yet field-tested under active white-list restrictions**.
+
+## 6. Commit and push the development branch
 
 ```bash
-cd ~/src/mbox-main
-rm -f mbox-1.0.0-beta.2.patch
-
-git init                    # only if this tree is not already a repository
-git branch -M main
-git add .
-git status --short
+git add -A
 git diff --cached --check
+git status --short
 git diff --cached --stat
+
+git commit -m 'Harden networking, add Cronet transport and robust Android handover'
+git push -u origin audit/p0-p1-fingerprint-modular
 ```
 
-Before commit, explicitly confirm that the index contains no live database, key, PSK, runtime config or backup archive.
+Do not tag the next release yet. First perform the operator field matrix.
 
-```bash
-git commit -m 'MBox 1.0.0-beta.2: Noise-only transport and reliability hardening'
-git tag -a v1.0.0-beta.2 -m 'MBox 1.0.0-beta.2'
-```
+## 7. Outstanding field qualification before next tag
 
-## 7. Push to GitHub
-
-With GitHub CLI:
-
-```bash
-gh auth status
-gh repo create mbox --private --source=. --remote=origin --push
-git push origin v1.0.0-beta.2
-```
-
-If the repository already exists:
-
-```bash
-git remote add origin git@github.com:YOUR_USER/mbox.git   # only once
-git push -u origin main
-git push origin v1.0.0-beta.2
-```
-
-Keep it private for the first upload. Make it public only after reviewing staged/history secrets and third-party licensing.
-
-## 8. Suggested GitHub release text
-
-Use `RELEASE_NOTES.md` as the release body. The known issue must retain the precise wording: unrestricted Wi-Fi was only the baseline; MTS worked under white-list restrictions in this field test; MegaFon did not.
+- active white-list tests on MTS and T2 to confirm no regression;
+- MegaFon test;
+- controlled `.fun` vs `.ru` on the same REG.RU shared-host backend;
+- Chrome vs MBox Cronet vs MBox Go fingerprint capture;
+- longer soak/load qualification and independent security review.

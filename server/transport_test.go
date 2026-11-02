@@ -222,3 +222,15 @@ func TestUnlimitedProfileAllowsHundredConcurrentSessionsWithinGlobalCap(t *testi
 		t.Fatalf("sessions=%d want=100", got)
 	}
 }
+
+func TestNoiseDownCounterOverflowRejected(t *testing.T) {
+	key := bytes.Repeat([]byte{0x35}, 32)
+	send, err := noise.NewCipherState(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &cryptoState{down: send, downCounter: ^uint64(0)}
+	if _, err := c.sealDown("0123456789abcdef0123456789abcdef", []byte("x")); err == nil {
+		t.Fatal("counter overflow accepted")
+	}
+}

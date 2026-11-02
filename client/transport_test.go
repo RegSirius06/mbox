@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,16 +71,8 @@ func TestSlowStreamWriterDoesNotBlockOtherStreams(t *testing.T) {
 	_ = fast.grantPeerAllowance(len(p))
 	tun.streams[1] = slow
 	tun.streams[2] = fast
-	var writerWG sync.WaitGroup
-	writerWG.Add(2)
-	go func() {
-		defer writerWG.Done()
-		tun.localWriter(1, slow)
-	}()
-	go func() {
-		defer writerWG.Done()
-		tun.localWriter(2, fast)
-	}()
+	tun.startLocalWriter(1, slow)
+	tun.startLocalWriter(2, fast)
 	if err := tun.handleFrames(append(frame(1, frameData, p), frame(2, frameData, p)...)); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +86,7 @@ func TestSlowStreamWriterDoesNotBlockOtherStreams(t *testing.T) {
 	_ = sp.Close()
 	_ = fl.Close()
 	_ = fp.Close()
-	writerWG.Wait()
+	tun.streamWG.Wait()
 }
 func FuzzMuxFrameParser(f *testing.F) {
 	f.Add(frame(1, framePing, nil))
@@ -152,8 +143,12 @@ func TestDownDeliveryReordersAndDeduplicates(t *testing.T) {
 func TestFullDuplexSingleStream(t *testing.T) {
 	tun := newQueueTestTunnel()
 	app, tunnelSide := net.Pipe()
-	workerDone := make(chan struct{})
-	go func() { defer close(workerDone); tun.handleLocal(tunnelSide) }()
+	defer app.Close()
+	handleDone := make(chan struct{})
+	go func() {
+		defer close(handleDone)
+		tun.handleLocal(tunnelSide)
+	}()
 
 	deadline := time.Now().Add(time.Second)
 	var st *localStream
@@ -227,13 +222,10 @@ func TestFullDuplexSingleStream(t *testing.T) {
 	if !bytes.Equal(gotUp, upPayload) {
 		t.Fatalf("UP payload mismatch: got=%d want=%d", len(gotUp), len(upPayload))
 	}
-	_ = app.Close()
 	close(tun.done)
-	select {
-	case <-workerDone:
-	case <-time.After(time.Second):
-		t.Fatal("local stream worker did not stop")
-	}
+	_ = app.Close()
+	<-handleDone
+	tun.streamWG.Wait()
 }
 
 func TestUploader504RetriesExactNoiseRecordAndSequence(t *testing.T) {

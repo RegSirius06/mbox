@@ -1,5 +1,7 @@
 # Resource profile for small VPSes
 
+[Русская версия](ru/RESOURCES.md)
+
 MBox is intended to remain usable on inexpensive 1 vCPU / 1 GiB RAM VPSes. Idle memory is normally very small; the important case is bounded memory under concurrent traffic.
 
 The generated `[limits]` section controls server-wide resource ceilings:
@@ -8,16 +10,18 @@ The generated `[limits]` section controls server-wide resource ceilings:
 [limits]
 max_sessions_global = 128
 default_max_sessions_per_client = 4
-max_streams_per_session = 64
+max_streams_per_session = 128
 max_total_streams = 1024
 max_stream_opens_per_second = 32
 max_session_opens_per_minute = 180
+max_concurrent_handshakes = 32
+max_handshake_attempts_per_second = 64
 max_down_queue_bytes = 4194304
 max_down_replay_bytes = 8388608
 global_queued_bytes = 67108864
 ```
 
-The default global transport queue budget is 64 MiB. This is not the entire process RSS: Go stacks, HTTP buffers, crypto state and kernel socket buffers also consume memory. The systemd service additionally sets `GOMEMLIMIT=192MiB` and `MemoryHigh=256M` as soft pressure/GC guidance; it does not impose a kill-on-300-MiB policy.
+The pre-auth handshake caps bound CPU work from invalid OPEN floods before a session is created; denied probes still receive the same generic camouflage 404. The default global transport queue budget is 64 MiB. This is not the entire process RSS: Go stacks, HTTP buffers, crypto state and kernel socket buffers also consume memory. The systemd service additionally sets `GOMEMLIMIT=192MiB` and `MemoryHigh=256M` as soft pressure/GC guidance; it does not impose a kill-on-300-MiB policy.
 
 Use:
 
@@ -26,6 +30,10 @@ sudo mboxctl resources
 ```
 
 to see the configured limits plus the running process RSS, peak RSS, thread count and open FD count.
+
+## Real-device calibration
+
+On 2026-11-02 a real Android stress run switching aggressively between Telegram, Instagram and YouTube reached a peak of 64 concurrent MBox streams. After the phone was left idle the count fell progressively (for example 44 -> 35 -> 28 -> lower), so a stream-lifecycle leak was **not** observed. The default was therefore raised from 64 to 128 to leave roughly 2x headroom without weakening the global `max_total_streams=1024` ceiling.
 
 ## Scaling guidance
 

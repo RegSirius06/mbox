@@ -1,30 +1,29 @@
 # Network compatibility notes
 
-This file records field observations, not universal guarantees. Mobile-carrier filtering can vary by region, APN, subscriber profile, time and DPI policy.
+[Русская версия](ru/NETWORK_COMPATIBILITY.md)
 
-## 2026-11-02 field test
+## Historical operator observation
 
-Tested with MBox `1.0.0-beta.2` using the Noise-only wire generation.
+Before the current Cronet audit branch, the deployment's `.fun` shared-hosting frontend was observed reachable under restricted mobile Internet on MTS/T2, while on MegaFon the same `.fun` site could fail even in an ordinary browser. That is important because it places at least one MegaFon failure mode **before MBox/Noise**.
 
-- **Wi-Fi:** worked as the unrestricted baseline. White-list mode was **not** active on this Wi-Fi network.
-- **MTS mobile network:** MBox connected and carried traffic while the operator's white-list restrictions were active in this test.
-- **MegaFon mobile network:** MBox did **not** establish a usable bypass while white-list restrictions were active in this test.
+Treat this only as a historical/local observation. Carrier filtering can differ by region, APN, subscriber profile and time.
 
-Do not generalize this single field result to every MTS/MegaFon region or APN. Treat MegaFon white-list mode as a known beta.2 compatibility issue until reproduced and investigated with packet captures and transport logs.
+## Current branch status
+
+MBox `1.0.0-beta.2.1` has **not yet been re-tested during active white-list restrictions**. Its public shared-host/FastCGI topology and beta.2 MBox wire semantics are preserved, while Android public HTTPS moved from Go networking to bundled Chromium Cronet. Therefore no compatibility regression is expected on networks where the old deployment already worked, but that expectation still requires field confirmation.
+
+MegaFon remains unknown for the current build. Do not describe it as fixed or broken until a controlled test is run.
+
+## `.ru` hypothesis
+
+A useful next experiment is to point `.fun` and `.ru` hostnames at the same REG.RU shared-host frontend/backend, with the same HTTP paths and as-close-as-possible TLS/server configuration. If `.ru` works on MegaFon while `.fun` fails before MBox, that is evidence for hostname/SNI/category treatment rather than an MBox protocol failure. It is a hypothesis, not a guarantee.
 
 ## What to collect when a network fails
 
-Record the following without publishing credentials or provisioning URLs:
+Capture the establishment stages:
 
 ```text
-MBox version
-Android version/device
-carrier + region + APN
-whether white-list restrictions are actually active
-whether the session OPEN reaches the origin server
-HTTP status returned by the shared-host relay
-client reconnect/error log
-origin mbox-server log for the same timestamp
+DNS -> selected addresses -> TCP -> TLS/certificate -> ALPN -> HTTP -> MBox OPEN -> Noise -> tunnel
 ```
 
-For packet-level research, capture only what is needed and redact public IPs/identifiers before publishing. Never publish PSKs, `mbox://` links, `/etc/mbox`, `users.db`, server private keys or backup archives.
+Use `tools/mbox-netprobe`, Android `--network-debug`, and the matrix in `docs/OPERATOR_TEST.md`. Never publish PSKs, provisioning links or full secret URLs.
