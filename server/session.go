@@ -84,7 +84,7 @@ func registerSession(id string, s *session) bool {
 	effectiveGlobal := len(sessions) - len(replaceIDs)
 	if effectiveGlobal >= runtimeLimits.MaxSessionsGlobal {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%q", s.clientID)
+		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%s", redactedClientID(s.clientID))
 		return false
 	}
 	limit := runtimeLimits.DefaultMaxSessionsPerClient
@@ -103,7 +103,7 @@ func registerSession(id string, s *session) bool {
 		}
 		if count >= limit {
 			sessionsMu.Unlock()
-			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%q active=%d limit=%d", s.clientID, count, limit)
+			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%s active=%d limit=%d", redactedClientID(s.clientID), count, limit)
 			return false
 		}
 	}
@@ -126,7 +126,7 @@ func registerSession(id string, s *session) bool {
 	}
 	if r.count >= runtimeLimits.MaxSessionOpensPerMinute {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%q limit=%d", s.clientID, runtimeLimits.MaxSessionOpensPerMinute)
+		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%s limit=%d", redactedClientID(s.clientID), runtimeLimits.MaxSessionOpensPerMinute)
 		return false
 	}
 	r.count++

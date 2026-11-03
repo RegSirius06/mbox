@@ -94,6 +94,7 @@ var (
 	runtimeStatusMu       sync.Mutex
 	preAuthLimiter        *handshakeLimiter
 	lastHandshakeLimitLog atomic.Int64
+	lastAuthFailureLog    atomic.Int64
 	serverDraining        atomic.Bool
 	serverReady           atomic.Bool
 )

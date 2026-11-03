@@ -335,6 +335,11 @@ func noiseRecordSizeUpperBound(plain int) int {
 	return noiseRecordHeader + plain + chunks*(2+16)
 }
 
+func redactedClientID(id string) string {
+	s := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("client#%x", s[:6])
+}
+
 func redactedSessionID(id string) string {
 	s := sha256.Sum256([]byte(id))
 	return fmt.Sprintf("sid#%x", s[:4])

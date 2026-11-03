@@ -85,7 +85,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 	id := randomID()
 	cryptoState, noiseReply, err := serverHandshake(body, id)
 	if err != nil {
-		log.Printf("OPEN AUTH FAILED: %v", err)
+		logAuthFailure(now)
 		camouflageNotFound(w)
 		return
 	}

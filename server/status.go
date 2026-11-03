@@ -22,7 +22,7 @@ func writeRuntimeStatus() {
 	snap.ActiveSessions = len(sessions)
 	for _, s := range sessions {
 		if s.clientID != "" {
-			snap.Clients[s.clientID]++
+			snap.Clients[redactedClientID(s.clientID)]++
 		}
 	}
 	sessionsMu.Unlock()
