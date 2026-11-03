@@ -28,7 +28,7 @@ func main() {
 	startCoverEngine(coverCfg)
 
 	srv := &http.Server{
-		Addr: listen, Handler: originAuthMiddleware(mux), ReadHeaderTimeout: 5 * time.Second,
+		Addr: listen, Handler: metricsMiddleware(originAuthMiddleware(mux)), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 64 * 1024,
 	}
 	ln, err := net.Listen("tcp", listen)

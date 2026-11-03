@@ -15,6 +15,7 @@ func registerHTTPHandlers(mux *http.ServeMux) {
 	mux.HandleFunc(basePath+"/health", handleReady)
 	mux.HandleFunc(basePath+"/health/live", handleLive)
 	mux.HandleFunc(basePath+"/health/ready", handleReady)
+	mux.HandleFunc(basePath+"/metrics", handleMetrics)
 	mux.HandleFunc(basePath+camouflage.OpenPath, handleOpen)
 	mux.HandleFunc(basePath+camouflage.UpPath, handleUp)
 	mux.HandleFunc(basePath+camouflage.DownPath, handleDown)
@@ -76,6 +77,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	if preAuthLimiter == nil || !preAuthLimiter.acquire(now) {
+		metricsCounters.handshakeRateLimit.Add(1)
 		logHandshakeLimit(now)
 		camouflageNotFound(w)
 		return
@@ -85,6 +87,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 	id := randomID()
 	cryptoState, noiseReply, err := serverHandshake(body, id)
 	if err != nil {
+		metricsCounters.authFailures.Add(1)
 		logAuthFailure(now)
 		camouflageNotFound(w)
 		return
@@ -97,6 +100,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !registerSession(id, s) {
+		metricsCounters.sessionRejects.Add(1)
 		applyResponseHeaders(w)
 		w.Header().Set("Retry-After", "2")
 		w.WriteHeader(http.StatusServiceUnavailable)

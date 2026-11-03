@@ -105,6 +105,7 @@ func originAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if err := verifyOriginRequest(r, body, time.Now()); err != nil {
+			metricsCounters.originAuthFailures.Add(1)
 			camouflageNotFound(w)
 			return
 		}
