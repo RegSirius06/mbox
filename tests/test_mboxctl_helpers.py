@@ -123,3 +123,24 @@ def test_load_conf_backfills_private_relay_runtime_and_origin_hmac(tmp_path, mon
 def test_init_parser_uses_randomized_runtime_dir_by_default():
     args=m.make_parser().parse_args(['init','--public-url','https://x.example/base','--origin-url','https://o.example','--first-user','a'])
     assert args.relay_runtime_dir is None
+
+def test_status_client_key_matches_server_redaction():
+    import hashlib
+    uid='android-main'
+    assert m.status_client_key(uid) == 'client#'+hashlib.sha256(uid.encode()).digest()[:6].hex()
+
+
+def test_db_migrates_opaque_auth_handles(tmp_path, monkeypatch):
+    monkeypatch.setattr(m,'ETC',tmp_path/'etc')
+    monkeypatch.setattr(m,'STATE',tmp_path/'state')
+    monkeypatch.setattr(m,'DB',tmp_path/'state'/'users.db')
+    monkeypatch.setattr(m,'REGRU',tmp_path/'state'/'regru'/'current')
+    con=m.db_connect()
+    con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",('alice',b'x'*32,1,'','','now','now'))
+    con.commit(); con.close()
+    con=m.db_connect(); row=con.execute('SELECT auth_handle FROM users WHERE id=?',('alice',)).fetchone(); con.close()
+    assert isinstance(row['auth_handle'], bytes) and len(row['auth_handle']) == 16
+
+
+def test_default_auth_keeps_staged_legacy_compatibility():
+    assert m.DEFAULT_AUTH['accept_legacy_client_ids'] == 'true'

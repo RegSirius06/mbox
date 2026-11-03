@@ -87,6 +87,13 @@ DEFAULT_LIMITS = {
     "global_queued_bytes": "67108864",
 }
 
+DEFAULT_AUTH = {
+    # Transitional compatibility: new profiles use opaque random auth handles.
+    # Set false after all legacy profiles have migrated.
+    "accept_legacy_client_ids": "true",
+}
+
+
 DEFAULT_COVER = {
     "enabled": "false",
     "path": "/api/v1/assets/",
@@ -144,7 +151,7 @@ def load_conf(required=True):
             die(f"configuration not found: {CONF}; run 'mboxctl init'")
         return cp
     cp.read(CONF)
-    for section, defaults in (("camouflage", DEFAULT_CAMO), ("cover", DEFAULT_COVER), ("limits", DEFAULT_LIMITS)):
+    for section, defaults in (("camouflage", DEFAULT_CAMO), ("cover", DEFAULT_COVER), ("limits", DEFAULT_LIMITS), ("auth", DEFAULT_AUTH)):
         if section not in cp:
             cp[section] = defaults.copy()
         else:
@@ -197,6 +204,7 @@ def db_connect():
     con.executescript("""
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
+      auth_handle BLOB CHECK(auth_handle IS NULL OR length(auth_handle)=16),
       psk BLOB NOT NULL CHECK(length(psk)=32),
       enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
       label TEXT NOT NULL DEFAULT '',
@@ -216,6 +224,18 @@ def db_connect():
         con.execute("ALTER TABLE users ADD COLUMN max_sessions INTEGER NOT NULL DEFAULT 0")
     if "expires_at" not in cols:
         con.execute("ALTER TABLE users ADD COLUMN expires_at TEXT")
+    if "auth_handle" not in cols:
+        con.execute("ALTER TABLE users ADD COLUMN auth_handle BLOB")
+    # Opaque 128-bit wire identities prevent human-readable account names from
+    # appearing in pre-Noise OPEN metadata for newly provisioned clients.
+    rows=con.execute("SELECT id FROM users WHERE auth_handle IS NULL OR length(auth_handle) != 16").fetchall()
+    for row in rows:
+        while True:
+            candidate=secrets.token_bytes(16)
+            if con.execute("SELECT 1 FROM users WHERE auth_handle=?",(candidate,)).fetchone() is None:
+                con.execute("UPDATE users SET auth_handle=? WHERE id=?",(candidate,row["id"]))
+                break
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_handle ON users(auth_handle)")
     con.commit()
     try:
         os.chmod(DB, 0o600)
@@ -312,11 +332,19 @@ def render_runtime(reload_auth=False, restart=False):
     validate_config(cp)
     con = db_connect()
     clients = {}
-    for row in con.execute("SELECT id, psk, max_sessions, expires_at FROM users WHERE enabled=1 ORDER BY id"):
-        ent={"psk": bytes(row["psk"]).hex(), "max_sessions": int(row["max_sessions"] or 0)}
+    legacy_ids = cp.getboolean("auth", "accept_legacy_client_ids")
+    for row in con.execute("SELECT id, auth_handle, psk, max_sessions, expires_at FROM users WHERE enabled=1 ORDER BY id"):
+        ent={"psk": bytes(row["psk"]).hex(), "max_sessions": int(row["max_sessions"] or 0), "internal_id": row["id"]}
         if row["expires_at"]:
             ent["expires_at"] = row["expires_at"]
-        clients[row["id"]] = ent
+        handle=bytes(row["auth_handle"]).hex()
+        if handle in clients:
+            die("duplicate auth_handle in credential store")
+        clients[handle] = dict(ent)
+        if legacy_ids:
+            if row["id"] in clients and row["id"] != handle:
+                die(f"legacy client id collides with auth handle: {row['id']}")
+            clients[row["id"]] = dict(ent)
     obj = {
         "camouflage": camo_dict(cp, include_timing=False),
         "transport": {
@@ -406,6 +434,7 @@ def validate_config(cp):
     needed += [("camouflage", k) for k in DEFAULT_CAMO]
     needed += [("cover", k) for k in DEFAULT_COVER]
     needed += [("limits", k) for k in DEFAULT_LIMITS]
+    needed += [("auth", k) for k in DEFAULT_AUTH]
     for section, key in needed:
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
@@ -453,6 +482,10 @@ def validate_config(cp):
     weights=sum(int(cv[k]) for k in ["quiet_weight","casual_weight","active_weight","burst_weight"])
     if weights <= 0:
         die("cover profile weights sum to zero")
+    try:
+        cp.getboolean("auth","accept_legacy_client_ids")
+    except ValueError:
+        die("auth.accept_legacy_client_ids must be true or false")
     lm=cp["limits"]
     max_sessions=int(lm["max_sessions_global"]); default_sessions=int(lm["default_max_sessions_per_client"])
     streams_per_session=int(lm["max_streams_per_session"]); total_streams=int(lm["max_total_streams"])
@@ -582,6 +615,7 @@ def init_cmd(args):
     cp["camouflage"] = DEFAULT_CAMO.copy()
     cp["cover"] = DEFAULT_COVER.copy()
     cp["limits"] = DEFAULT_LIMITS.copy()
+    cp["auth"] = DEFAULT_AUTH.copy()
     try:
         save_conf(cp); ensure_keys(cp); ensure_origin_hmac_key(cp); db_connect().close()
         con = db_connect()
@@ -685,6 +719,7 @@ def migrate_legacy(args):
     cp["camouflage"] = cam
     cp["cover"] = DEFAULT_COVER.copy()
     cp["limits"] = DEFAULT_LIMITS.copy()
+    cp["auth"] = DEFAULT_AUTH.copy()
     save_conf(cp); ensure_keys(cp)
     con = db_connect()
     imported = 0
@@ -804,6 +839,10 @@ def read_runtime_status():
         return {}
 
 
+def status_client_key(uid):
+    return "client#"+hashlib.sha256(uid.encode()).digest()[:6].hex()
+
+
 def user_list(args):
     con=db_connect()
     q="SELECT id,enabled,label,created_at,rotated_at,revoked_at,max_sessions,expires_at FROM users"
@@ -824,7 +863,7 @@ def user_list(args):
         state=("expired" if r["enabled"] and expired else ("enabled" if r["enabled"] else ("revoked" if r["revoked_at"] else "disabled")))
         limit="unlimited" if r["max_sessions"] == -1 else ("default" if not r["max_sessions"] else str(r["max_sessions"]))
         expires=r["expires_at"] or "never"
-        online=int(active.get(r["id"],0) or 0)
+        online=int(active.get(status_client_key(r["id"]),0) or 0)
         print(f"{r['id']:<24} {state:<9} {online:>6} {limit:<10} {expires[:22]:<22} {r['label'][:22]}")
     print(f"Total: {len(rows)}")
 
@@ -838,6 +877,7 @@ def get_user(uid):
 def user_show(args):
     r=get_user(args.id)
     d=dict(r); d.pop("psk",None)
+    if d.get("auth_handle") is not None: d["auth_handle"]=bytes(d["auth_handle"]).hex()
     expired=False
     if r["expires_at"]:
         try: expired=dt.datetime.fromisoformat(r["expires_at"].replace("Z","+00:00")) <= dt.datetime.now(dt.timezone.utc)
@@ -943,7 +983,7 @@ def build_link(uid, name=None, network_debug=False, android_http_stack="cronet",
     payload={
         "v":1,
         "name": name or r["label"] or uid,
-        "client_id":uid,
+        "client_id":bytes(r["auth_handle"]).hex(),
         "transport":{"url":cp["server"]["public_url"],"android_http_stack":android_http_stack},
         "crypto":{"psk":bytes(r["psk"]).hex(),"server_public_key":pub},
         "camouflage":camo_dict(cp,include_timing=True),
