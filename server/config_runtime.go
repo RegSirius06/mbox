@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -62,8 +63,10 @@ var runtimeLimits = resourceLimitsConfig{
 }
 
 type runtimeCryptoConfig struct {
-	ServerPrivateKeyFile string                         `json:"server_private_key_file"`
-	Clients              map[string]runtimeClientConfig `json:"clients"`
+	ServerPrivateKeyFile   string                         `json:"server_private_key_file"`
+	CredentialDir          string                         `json:"credential_dir,omitempty"`
+	CredentialReloadSocket string                         `json:"credential_reload_socket,omitempty"`
+	Clients                map[string]runtimeClientConfig `json:"clients"`
 }
 
 type runtimeConfig struct {
@@ -226,6 +229,26 @@ func loadRuntimeConfig(path string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Crypto.CredentialDir != "" {
+		info, err := os.Stat(cfg.Crypto.CredentialDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("crypto.credential_dir must be a readable directory")
+		}
+		if info.Mode().Perm()&0o007 != 0 {
+			return fmt.Errorf("crypto.credential_dir must not be accessible to other users: %04o", info.Mode().Perm())
+		}
+		if cfg.Crypto.CredentialReloadSocket == "" || !filepath.IsAbs(cfg.Crypto.CredentialReloadSocket) {
+			return fmt.Errorf("crypto.credential_reload_socket must be absolute when credential_dir is configured")
+		}
+		dirPolicies, err := loadCredentialDir(cfg.Crypto.CredentialDir)
+		if err != nil {
+			return fmt.Errorf("crypto.credential_dir: %w", err)
+		}
+		policies, err = mergePolicies(policies, dirPolicies)
+		if err != nil {
+			return err
+		}
+	}
 	limits, err := normalizeLimits(cfg.Limits)
 	if err != nil {
 		return err
@@ -242,6 +265,8 @@ func loadRuntimeConfig(path string) error {
 	originAuthSecret = append(originAuthSecret[:0], originSecret...)
 	coverCfg = cov
 	runtimeLimits = limits
+	credentialDirPath = cfg.Crypto.CredentialDir
+	credentialReloadSock = cfg.Crypto.CredentialReloadSocket
 	clientAuthMu.Lock()
 	clientPolicies = policies
 	clientAuthMu.Unlock()
@@ -317,6 +342,16 @@ func reloadClientAuth(path string) error {
 	policies, err := decodeClientAuth(cfg.Crypto.Clients)
 	if err != nil {
 		return err
+	}
+	if cfg.Crypto.CredentialDir != "" {
+		dirPolicies, err := loadCredentialDir(cfg.Crypto.CredentialDir)
+		if err != nil {
+			return err
+		}
+		policies, err = mergePolicies(policies, dirPolicies)
+		if err != nil {
+			return err
+		}
 	}
 	clientAuthMu.Lock()
 	clientPolicies = policies

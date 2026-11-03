@@ -21,6 +21,12 @@ func main() {
 	preAuthLimiter = newHandshakeLimiter(runtimeLimits.MaxConcurrentHandshakes, runtimeLimits.MaxHandshakeAttemptsPerSec)
 	warnFileDescriptorLimit()
 	startAuthReloadLoop(configPath)
+	if credentialDirPath != "" {
+		if _, err := startCredentialAdminSocket(credentialReloadSock); err != nil {
+			log.Fatalf("CREDENTIAL ADMIN: %v", err)
+		}
+		defer stopCredentialAdminSocket()
+	}
 	mux := http.NewServeMux()
 	registerHTTPHandlers(mux)
 	startRuntimeStatusLoop()
@@ -59,6 +65,7 @@ func main() {
 	// admitted, while existing ownership/accounting is explicitly released.
 	serverDraining.Store(true)
 	serverReady.Store(false)
+	stopCredentialAdminSocket()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	_ = srv.Shutdown(ctx)
 	cancel()
