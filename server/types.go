@@ -47,6 +47,10 @@ type cachedDownResponse struct {
 	counter uint64
 	status  int
 	body    []byte
+	// reservedBytes is the exact global queue-budget reservation owned by
+	// this replay entry. Security invariant: every successful reservation has
+	// exactly one owner and is released exactly once, independent of body size.
+	reservedBytes int
 }
 
 type session struct {

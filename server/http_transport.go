@@ -109,7 +109,7 @@ func parseDownRequestMeta(r *http.Request) (uint64, uint64, error) {
 }
 
 func cloneDownResponse(r cachedDownResponse) cachedDownResponse {
-	return cachedDownResponse{counter: r.counter, status: r.status, body: append([]byte(nil), r.body...)}
+	return cachedDownResponse{counter: r.counter, status: r.status, body: append([]byte(nil), r.body...), reservedBytes: r.reservedBytes}
 }
 
 func applyDownAckLocked(s *session, ack uint64) error {
@@ -124,9 +124,9 @@ func applyDownAckLocked(s *session, ack uint64) error {
 	}
 	for seq, r := range s.downReplay {
 		if r.counter != 0 && r.counter <= ack {
-			if len(r.body) > 0 {
-				s.downReplayBytes -= len(r.body)
-				releaseGlobalQueued(len(r.body))
+			s.downReplayBytes -= len(r.body)
+			if r.reservedBytes > 0 {
+				releaseGlobalQueued(r.reservedBytes)
 			}
 			delete(s.downReplay, seq)
 		}
@@ -156,9 +156,9 @@ func rememberDownRequestLocked(s *session, seq uint64) {
 		}
 		delete(s.downReqSeen, old)
 		if r, ok := s.downReplay[old]; ok {
-			if len(r.body) > 0 {
-				s.downReplayBytes -= len(r.body)
-				releaseGlobalQueued(len(r.body))
+			s.downReplayBytes -= len(r.body)
+			if r.reservedBytes > 0 {
+				releaseGlobalQueued(r.reservedBytes)
 			}
 			delete(s.downReplay, old)
 		}
@@ -226,14 +226,34 @@ func prepareDownResponse(s *session, sid string, seq, ack uint64, limit int) (ca
 		releaseGlobalQueued(pred)
 		return cachedDownResponse{}, err
 	}
+	// Reconcile the conservative pre-seal reservation to the exact ciphertext
+	// bytes retained in downReplay. Never later infer ownership from len(body):
+	// the reservation itself is explicit state on cachedDownResponse.
+	reserved := pred
+	actual := len(record)
+	if actual < reserved {
+		releaseGlobalQueued(reserved - actual)
+		reserved = actual
+	} else if actual > reserved {
+		if !reserveGlobalQueued(actual - reserved) {
+			releaseGlobalQueued(reserved)
+			return cachedDownResponse{}, fmt.Errorf("global queue budget exhausted after DOWN seal")
+		}
+		reserved = actual
+	}
 	counter, err := cryptoRecordCounter(record, dirDown)
 	if err != nil {
-		releaseGlobalQueued(pred)
+		releaseGlobalQueued(reserved)
 		return cachedDownResponse{}, err
 	}
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		releaseGlobalQueued(reserved)
+		return cachedDownResponse{}, fmt.Errorf("session closed")
+	}
 	consumeDownBatchLocked(s, count, total)
-	r := cachedDownResponse{counter: counter, status: http.StatusOK, body: append([]byte(nil), record...)}
+	r := cachedDownResponse{counter: counter, status: http.StatusOK, body: append([]byte(nil), record...), reservedBytes: reserved}
 	s.downReplay[seq] = r
 	s.downReplayBytes += len(record)
 	s.lastDownCounter = counter

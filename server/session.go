@@ -190,7 +190,12 @@ func closeSessionState(id string, s *session) {
 	for id := range s.streams {
 		ids = append(ids, id)
 	}
-	queued := s.downBytes + s.downReplayBytes
+	queued := s.downBytes
+	// Replay accounting is ownership-based: release the exact reservation
+	// attached to each entry, not an estimate or ciphertext length.
+	for _, r := range s.downReplay {
+		queued += r.reservedBytes
+	}
 	for i := range s.downFrames {
 		s.downFrames[i] = nil
 	}

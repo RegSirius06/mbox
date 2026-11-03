@@ -234,3 +234,91 @@ func TestNoiseDownCounterOverflowRejected(t *testing.T) {
 		t.Fatal("counter overflow accepted")
 	}
 }
+
+func TestGlobalQueuedBudgetReturnsToZeroAfterDownAck(t *testing.T) {
+	globalQueuedBytes.Store(0)
+	old := camouflage.PaddingExtraClassPercent
+	camouflage.PaddingExtraClassPercent = 0
+	defer func() { camouflage.PaddingExtraClassPercent = old; globalQueuedBytes.Store(0) }()
+
+	s, _ := newTransportTestSession(t)
+	sid := "11111111111111111111111111111111"
+	if err := appendFrame(s, 1, framePing, bytes.Repeat([]byte("x"), 4093)); err != nil {
+		t.Fatal(err)
+	}
+	r, err := prepareDownResponse(s, sid, 1, 0, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.reservedBytes != len(r.body) {
+		t.Fatalf("reservation=%d body=%d", r.reservedBytes, len(r.body))
+	}
+	if got := globalQueuedBytes.Load(); got != int64(len(r.body)) {
+		t.Fatalf("queued=%d want=%d", got, len(r.body))
+	}
+	if _, err := prepareDownResponse(s, sid, 2, r.counter, 64*1024); err != nil {
+		t.Fatal(err)
+	}
+	if got := globalQueuedBytes.Load(); got != 0 {
+		t.Fatalf("globalQueuedBytes=%d after ACK, want 0", got)
+	}
+}
+
+func TestGlobalQueuedBudgetReturnsToZeroOnSessionClose(t *testing.T) {
+	globalQueuedBytes.Store(0)
+	oldSessions := sessions
+	sessions = map[string]*session{}
+	defer func() { sessions = oldSessions; globalQueuedBytes.Store(0) }()
+
+	s, _ := newTransportTestSession(t)
+	s.clientID = "budget-test"
+	s.lastSeen = time.Now()
+	sessions["sid"] = s
+	if err := appendFrame(s, 1, framePing, bytes.Repeat([]byte("z"), 7777)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareDownResponse(s, "22222222222222222222222222222222", 1, 0, 64*1024); err != nil {
+		t.Fatal(err)
+	}
+	closeSession("sid")
+	if got := globalQueuedBytes.Load(); got != 0 {
+		t.Fatalf("globalQueuedBytes=%d after close, want 0", got)
+	}
+}
+
+func TestGlobalQueuedBudgetHundredThousandDownAckCycles(t *testing.T) {
+	globalQueuedBytes.Store(0)
+	old := camouflage.PaddingExtraClassPercent
+	camouflage.PaddingExtraClassPercent = 0
+	defer func() { camouflage.PaddingExtraClassPercent = old; globalQueuedBytes.Store(0) }()
+
+	s, _ := newTransportTestSession(t)
+	sid := "33333333333333333333333333333333"
+	var ack uint64
+	for i := 0; i < 100000; i++ {
+		if err := appendFrame(s, 1, framePing, []byte{byte(i), byte(i >> 8)}); err != nil {
+			t.Fatal(err)
+		}
+		r, err := prepareDownResponse(s, sid, uint64(i+1), ack, 64*1024)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ack = r.counter
+		// ACK immediately using a distinct request sequence outside the loop's
+		// normal sequence space, then discard the no-content replay entry.
+		if err := applyDownAckForTest(s, ack); err != nil {
+			t.Fatal(err)
+		}
+		if got := globalQueuedBytes.Load(); got != 0 {
+			t.Fatalf("cycle=%d globalQueuedBytes=%d", i, got)
+		}
+	}
+}
+
+func applyDownAckForTest(s *session, ack uint64) error {
+	s.downCommitMu.Lock()
+	defer s.downCommitMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return applyDownAckLocked(s, ack)
+}
