@@ -168,11 +168,23 @@ public class MainActivity extends Activity {
         try {
             ProfileStore.Candidate candidate = ProfileStore.parseLink(value);
             String message = "Profile: " + candidate.name + "\nClient: " + candidate.clientId + "\nEndpoint: " + candidate.endpoint + "\n\nServer key SHA-256:\n" + candidate.serverFingerprint + "\n\nVerify this fingerprint over a trusted channel before replacing the active profile.";
-            new AlertDialog.Builder(this).setTitle("Confirm MBox profile").setMessage(message).setNegativeButton("Cancel", null).setPositiveButton("Replace profile", (dialog, which) -> {
+            Runnable commit = () -> {
                 try { String name = ProfileStore.commitCandidate(this, candidate); link.setText(""); uiMessage = "Imported: " + name; }
                 catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); }
                 refreshUi();
-            }).show();
+            };
+            AlertDialog.Builder confirm = new AlertDialog.Builder(this).setTitle("Confirm MBox profile").setMessage(message).setNegativeButton("Cancel", null);
+            if (candidate.requiresDangerousConsent()) {
+                confirm.setPositiveButton("Review unsafe options", (dialog, which) -> new AlertDialog.Builder(this)
+                        .setTitle("Unsafe developer options")
+                        .setMessage(candidate.securityWarningText() + "\n\nThese options can expose metadata or create a stable traffic fingerprint. Import only for an explicit diagnostic session.")
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Import unsafe profile", (d, w) -> commit.run())
+                        .show());
+            } else {
+                confirm.setPositiveButton("Replace profile", (dialog, which) -> commit.run());
+            }
+            confirm.show();
         } catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); refreshUi(); }
     }
 
