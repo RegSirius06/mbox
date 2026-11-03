@@ -56,6 +56,10 @@ func getSession(id string) (*session, bool) {
 }
 
 func registerSession(id string, s *session) bool {
+	if serverDraining.Load() {
+		log.Printf("SESSION OPEN REJECT reason=draining")
+		return false
+	}
 	type replacedSession struct {
 		id string
 		s  *session

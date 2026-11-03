@@ -12,14 +12,16 @@ import (
 
 func registerHTTPHandlers(mux *http.ServeMux) {
 	mux.HandleFunc(basePath+coverCfg.Path, coverResourceHandler)
-	mux.HandleFunc(basePath+"/health", handleHealth)
+	mux.HandleFunc(basePath+"/health", handleReady)
+	mux.HandleFunc(basePath+"/health/live", handleLive)
+	mux.HandleFunc(basePath+"/health/ready", handleReady)
 	mux.HandleFunc(basePath+camouflage.OpenPath, handleOpen)
 	mux.HandleFunc(basePath+camouflage.UpPath, handleUp)
 	mux.HandleFunc(basePath+camouflage.DownPath, handleDown)
 	mux.HandleFunc(basePath+camouflage.ClosePath, handleClose)
 }
 
-func handleHealth(w http.ResponseWriter, r *http.Request) {
+func handleLive(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -30,7 +32,32 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
+func handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	ready := serverReady.Load() && !serverDraining.Load() && len(serverStaticPrivate) == 32 && len(originAuthSecret) == 32
+	if runtimeLimits.GlobalQueuedBytes > 0 && globalQueuedBytes.Load() >= int64(runtimeLimits.GlobalQueuedBytes) {
+		ready = false
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if !ready {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("not ready\n"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ready\n"))
+}
+
 func handleOpen(w http.ResponseWriter, r *http.Request) {
+	if serverDraining.Load() {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodPost {
 		camouflageNotFound(w)
 		return
