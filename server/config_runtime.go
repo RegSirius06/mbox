@@ -300,6 +300,18 @@ func reloadClientAuth(path string) error {
 	clientAuthMu.Lock()
 	clientPolicies = policies
 	clientAuthMu.Unlock()
+	// Drop rate-limit state for identities that no longer exist. This keeps
+	// credential churn from retaining attacker/user-controlled map keys.
+	sessionsMu.Lock()
+	for id := range sessionOpenRates {
+		if id == "legacy" {
+			continue
+		}
+		if _, ok := policies[id]; !ok {
+			delete(sessionOpenRates, id)
+		}
+	}
+	sessionsMu.Unlock()
 	revokeUnauthorizedSessions(policies)
 	return nil
 }

@@ -55,6 +55,7 @@ func startSessionExpiryLoop() {
 			var expired []string
 
 			sessionsMu.Lock()
+			pruneSessionOpenRatesLocked(time.Now())
 			for id, s := range sessions {
 				s.mu.Lock()
 				last := s.lastSeen

@@ -322,3 +322,24 @@ func applyDownAckForTest(s *session, ack uint64) error {
 	defer s.mu.Unlock()
 	return applyDownAckLocked(s, ack)
 }
+
+func TestSessionOpenRateStateCapacityIsBounded(t *testing.T) {
+	oldRates := sessionOpenRates
+	oldSessions := sessions
+	oldPolicies := clientPolicies
+	sessionOpenRates = make(map[string]rateWindow, maxSessionOpenRateEntries)
+	sessions = map[string]*session{}
+	clientPolicies = map[string]clientPolicy{"new": {PSK: bytes.Repeat([]byte{9}, 32), MaxSessions: -1}}
+	defer func() { sessionOpenRates = oldRates; sessions = oldSessions; clientPolicies = oldPolicies }()
+
+	now := time.Now()
+	for i := 0; i < maxSessionOpenRateEntries; i++ {
+		sessionOpenRates[fmt.Sprintf("live-%05d", i)] = rateWindow{start: now, count: 1}
+	}
+	if registerSession("new-session", &session{clientID: "new"}) {
+		t.Fatal("new rate identity admitted after bounded map reached capacity")
+	}
+	if got := len(sessionOpenRates); got != maxSessionOpenRateEntries {
+		t.Fatalf("rate map size=%d want=%d", got, maxSessionOpenRateEntries)
+	}
+}

@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+const (
+	sessionOpenRateTTL        = 2 * time.Minute
+	maxSessionOpenRateEntries = 65536
+)
+
+// pruneSessionOpenRatesLocked bounds pre-auth identity state. Caller must hold
+// sessionsMu. Security invariant: attacker-controlled identities cannot cause
+// unbounded retention after their rate window is no longer useful.
+func pruneSessionOpenRatesLocked(now time.Time) {
+	cutoff := now.Add(-sessionOpenRateTTL)
+	for key, r := range sessionOpenRates {
+		if r.start.Before(cutoff) {
+			delete(sessionOpenRates, key)
+		}
+	}
+}
+
 func getSession(id string) (*session, bool) {
 	sessionsMu.Lock()
 	s, ok := sessions[id]
@@ -91,6 +108,14 @@ func registerSession(id string, s *session) bool {
 		key = "legacy"
 	}
 	now := time.Now()
+	if _, exists := sessionOpenRates[key]; !exists && len(sessionOpenRates) >= maxSessionOpenRateEntries {
+		pruneSessionOpenRatesLocked(now)
+		if len(sessionOpenRates) >= maxSessionOpenRateEntries {
+			sessionsMu.Unlock()
+			log.Printf("SESSION OPEN REJECT reason=rate_state_capacity")
+			return false
+		}
+	}
 	r := sessionOpenRates[key]
 	if r.start.IsZero() || now.Sub(r.start) >= time.Minute {
 		r = rateWindow{start: now}
