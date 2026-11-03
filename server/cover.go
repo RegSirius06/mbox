@@ -140,27 +140,6 @@ func activeRealSessions(idleAfter time.Duration) int {
 	return n
 }
 
-func notifyRealSessionOpen() {
-	if globalCover != nil {
-		globalCover.cancelCurrent("real_session")
-	}
-}
-
-func (e *coverEngine) cancelCurrent(reason string) {
-	e.mu.Lock()
-	cancel := e.currentCancel
-	e.currentCancel = nil
-	if reason == "real_session" {
-		e.state = "suppressed"
-		e.stateSince = time.Now()
-	}
-	e.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	e.writeStatus()
-}
-
 func seedRand() *mrand.Rand {
 	var b [8]byte
 	if _, err := crand.Read(b[:]); err != nil {
@@ -197,19 +176,14 @@ func startCoverEngine(cfg coverConfig) {
 }
 
 func (e *coverEngine) run() {
-	idleAfter := time.Duration(e.cfg.IdleAfterMS) * time.Millisecond
+	// Privacy invariant: server-side cover is frontend background activity, not
+	// a per-user signal. Its lifecycle must never depend on whether a real MBox
+	// session exists, otherwise frontend observers get a negative correlation
+	// oracle for real-session transitions.
 	for {
-		if activeRealSessions(idleAfter) > 0 {
-			e.setState("suppressed")
-			time.Sleep(time.Second)
-			continue
-		}
 		grace := e.randDuration(e.cfg.StartGraceMinMS, e.cfg.StartGraceMaxMS)
 		e.setState("grace")
-		if !e.sleepWhileIdle(grace, idleAfter) {
-			continue
-		}
-		if activeRealSessions(idleAfter) > 0 {
+		if !e.waitContext(context.Background(), grace) {
 			continue
 		}
 
@@ -219,29 +193,12 @@ func (e *coverEngine) run() {
 		e.mu.Unlock()
 		profile := e.chooseProfile()
 		e.setState(profile)
-		e.runProfile(ctx, profile, idleAfter)
+		e.runProfile(ctx, profile)
 		cancel()
 		e.mu.Lock()
 		e.currentCancel = nil
 		e.mu.Unlock()
 	}
-}
-
-func (e *coverEngine) sleepWhileIdle(d, idleAfter time.Duration) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if activeRealSessions(idleAfter) > 0 {
-			return false
-		}
-		step := time.Second
-		if rem := time.Until(deadline); rem < step {
-			step = rem
-		}
-		if step > 0 {
-			time.Sleep(step)
-		}
-	}
-	return true
 }
 
 func (e *coverEngine) chooseProfile() string {
@@ -261,38 +218,38 @@ func (e *coverEngine) chooseProfile() string {
 	return "burst"
 }
 
-func (e *coverEngine) runProfile(ctx context.Context, profile string, idleAfter time.Duration) {
+func (e *coverEngine) runProfile(ctx context.Context, profile string) {
 	switch profile {
 	case "quiet":
-		e.waitContext(ctx, e.randDuration(60_000, 20*60_000), idleAfter)
+		e.waitContext(ctx, e.randDuration(60_000, 20*60_000))
 	case "casual":
 		pages := e.randInt(1, 5)
 		for i := 0; i < pages; i++ {
-			if !e.page(ctx, e.randInt(4, 14), 120, 900, idleAfter) {
+			if !e.page(ctx, e.randInt(4, 14), 120, 900) {
 				return
 			}
-			if !e.waitContext(ctx, e.randDuration(5_000, 120_000), idleAfter) {
+			if !e.waitContext(ctx, e.randDuration(5_000, 120_000)) {
 				return
 			}
 		}
 	case "active":
 		pages := e.randInt(3, 12)
 		for i := 0; i < pages; i++ {
-			if !e.page(ctx, e.randInt(8, 30), 60, 500, idleAfter) {
+			if !e.page(ctx, e.randInt(8, 30), 60, 500) {
 				return
 			}
-			if !e.waitContext(ctx, e.randDuration(2_000, 45_000), idleAfter) {
+			if !e.waitContext(ctx, e.randDuration(2_000, 45_000)) {
 				return
 			}
 		}
 	case "burst":
-		_ = e.page(ctx, e.randInt(30, 120), 50, 350, idleAfter)
+		_ = e.page(ctx, e.randInt(30, 120), 50, 350)
 	}
 }
 
-func (e *coverEngine) page(ctx context.Context, count, minDelayMS, maxDelayMS int, idleAfter time.Duration) bool {
+func (e *coverEngine) page(ctx context.Context, count, minDelayMS, maxDelayMS int) bool {
 	for i := 0; i < count; i++ {
-		if ctx.Err() != nil || activeRealSessions(idleAfter) > 0 {
+		if ctx.Err() != nil {
 			return false
 		}
 		if !e.sendOne(ctx) {
@@ -300,7 +257,7 @@ func (e *coverEngine) page(ctx context.Context, count, minDelayMS, maxDelayMS in
 				return false
 			}
 		}
-		if !e.waitContext(ctx, e.randDuration(minDelayMS, maxDelayMS), idleAfter) {
+		if !e.waitContext(ctx, e.randDuration(minDelayMS, maxDelayMS)) {
 			return false
 		}
 	}
@@ -311,14 +268,14 @@ func (e *coverEngine) sendOne(ctx context.Context) bool {
 	if !e.allowRequest() {
 		return false
 	}
-	ext, accept := e.randomResourceType()
+	ext := e.randomResourceType()
 	var token [8]byte
 	_, _ = crand.Read(token[:])
 	method := http.MethodGet
 	var body io.Reader
 	if e.rng.Intn(100) < 10 {
 		method = http.MethodPost
-		ext, accept = "json", "application/json,*/*;q=0.8"
+		ext = "json"
 		var pad [96]byte
 		_, _ = crand.Read(pad[:])
 		payload := fmt.Sprintf(`{"event":"view","id":"%s","ts":%d,"data":"%s"}`, hex.EncodeToString(token[:]), time.Now().UnixMilli(), hex.EncodeToString(pad[:]))
@@ -333,10 +290,6 @@ func (e *coverEngine) sendOne(ctx context.Context) bool {
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("User-Agent", e.randomUserAgent())
-	req.Header.Set("Accept", accept)
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.7,en;q=0.6")
-	req.Header.Set("Cache-Control", "no-cache")
 	started := time.Now()
 	resp, err := e.client.Do(req)
 	if err != nil {
@@ -432,10 +385,10 @@ func (e *coverEngine) writeStatus() {
 	}
 }
 
-func (e *coverEngine) waitContext(ctx context.Context, d, idleAfter time.Duration) bool {
+func (e *coverEngine) waitContext(ctx context.Context, d time.Duration) bool {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		if ctx.Err() != nil || activeRealSessions(idleAfter) > 0 {
+		if ctx.Err() != nil {
 			return false
 		}
 		step := time.Second
@@ -464,26 +417,22 @@ func (e *coverEngine) randInt(a, b int) int {
 	}
 	return a + e.rng.Intn(b-a+1)
 }
-func (e *coverEngine) randomResourceType() (string, string) {
+func (e *coverEngine) randomResourceType() string {
 	x := e.rng.Intn(100)
 	switch {
 	case x < 18:
-		return "html", "text/html,application/xhtml+xml"
+		return "html"
 	case x < 35:
-		return "css", "text/css,*/*;q=0.1"
+		return "css"
 	case x < 62:
-		return "js", "*/*"
+		return "js"
 	case x < 72:
-		return "json", "application/json,*/*;q=0.8"
+		return "json"
 	case x < 84:
-		return "svg", "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8"
+		return "svg"
 	default:
-		return "webp", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+		return "webp"
 	}
-}
-func (e *coverEngine) randomUserAgent() string {
-	uas := []string{"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0"}
-	return uas[e.rng.Intn(len(uas))]
 }
 
 func coverResourceHandler(w http.ResponseWriter, r *http.Request) {

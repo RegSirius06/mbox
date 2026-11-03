@@ -102,7 +102,6 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	notifyRealSessionOpen()
 	w.Header().Set("Content-Type", camouflage.ContentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(openReply)))
