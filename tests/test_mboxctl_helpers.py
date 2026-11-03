@@ -144,3 +144,80 @@ def test_db_migrates_opaque_auth_handles(tmp_path, monkeypatch):
 
 def test_default_auth_keeps_staged_legacy_compatibility():
     assert m.DEFAULT_AUTH['accept_legacy_client_ids'] == 'true'
+
+
+def _credential_test_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(m,'ETC',tmp_path/'etc')
+    monkeypatch.setattr(m,'STATE',tmp_path/'state')
+    monkeypatch.setattr(m,'DB',tmp_path/'state'/'users.db')
+    monkeypatch.setattr(m,'REGRU',tmp_path/'state'/'regru'/'current')
+    monkeypatch.setattr(m,'CONF',tmp_path/'etc'/'mbox.conf')
+    monkeypatch.setattr(m,'CREDENTIAL_DIR',tmp_path/'etc'/'credentials.d')
+    monkeypatch.setattr(m,'CREDENTIAL_SOCKET',tmp_path/'run'/'credentials.sock')
+    (tmp_path/'etc').mkdir(parents=True,exist_ok=True)
+    cp=m.configparser.ConfigParser(interpolation=None)
+    cp['server']={
+        'listen':'127.0.0.1:18449','upstream':'127.0.0.1:2080','base_path':'/edge/test',
+        'public_url':'https://vpn.example/edge/test','origin_url':'https://origin.example',
+        'server_private_key':str(tmp_path/'etc'/'server.key'),'server_public_key':str(tmp_path/'etc'/'server.pub'),
+        'origin_hmac_secret':str(tmp_path/'etc'/'origin-hmac.key'),
+        'credential_dir':str(tmp_path/'etc'/'credentials.d'),
+        'credential_reload_socket':str(tmp_path/'run'/'credentials.sock'),
+    }
+    cp['relay']={'max_slots':'4','max_body_bytes':'2097152','runtime_dir':str(tmp_path/'relay-runtime')}
+    cp['camouflage']=m.DEFAULT_CAMO.copy(); cp['cover']=m.DEFAULT_COVER.copy(); cp['limits']=m.DEFAULT_LIMITS.copy(); cp['auth']=m.DEFAULT_AUTH.copy()
+    m.save_conf(cp)
+    return cp
+
+
+def test_credential_object_uses_opaque_handle_and_legacy_alias(tmp_path, monkeypatch):
+    cp=_credential_test_env(tmp_path,monkeypatch)
+    con=m.db_connect(); ts=m.now()
+    con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",('alice',m.allocate_auth_handle(con),b'p'*32,1,'Alice','',ts,ts)); con.commit()
+    row=con.execute('SELECT * FROM users WHERE id=?',('alice',)).fetchone(); con.close()
+    obj=m.credential_object(row,cp)
+    assert len(obj['auth_handle']) == 32
+    assert obj['auth_handle'] != 'alice'
+    assert obj['internal_id'] == 'alice'
+    assert obj['legacy_id'] == 'alice'
+    assert obj['psk'] == (b'p'*32).hex()
+
+
+def test_sync_user_credential_does_not_rewrite_monolithic_runtime(tmp_path, monkeypatch):
+    cp=_credential_test_env(tmp_path,monkeypatch)
+    monkeypatch.setattr(m,'service_active',lambda:False)
+    runtime=tmp_path/'etc'/'server.json'; runtime.write_text('sentinel\n')
+    monkeypatch.setattr(m,'RUNTIME',runtime)
+    con=m.db_connect(); ts=m.now()
+    con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",('alice',m.allocate_auth_handle(con),b'p'*32,1,'Alice','',ts,ts)); con.commit()
+    handle=bytes(con.execute('SELECT auth_handle FROM users WHERE id=?',('alice',)).fetchone()['auth_handle']).hex(); con.close()
+    m.sync_user_credential('alice')
+    assert runtime.read_text() == 'sentinel\n'
+    path=Path(cp['server']['credential_dir'])/(handle+'.json')
+    assert path.is_file()
+    obj=m.json.loads(path.read_text())
+    assert obj['auth_handle']==handle and obj['psk']==(b'p'*32).hex()
+
+
+def test_disabled_user_removes_incremental_credential(tmp_path, monkeypatch):
+    cp=_credential_test_env(tmp_path,monkeypatch)
+    monkeypatch.setattr(m,'service_active',lambda:False)
+    con=m.db_connect(); ts=m.now()
+    con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",('alice',m.allocate_auth_handle(con),b'p'*32,1,'Alice','',ts,ts)); con.commit()
+    handle=bytes(con.execute('SELECT auth_handle FROM users WHERE id=?',('alice',)).fetchone()['auth_handle']).hex(); con.close()
+    m.sync_user_credential('alice')
+    path=Path(cp['server']['credential_dir'])/(handle+'.json'); assert path.exists()
+    con=m.db_connect(); con.execute('UPDATE users SET enabled=0 WHERE id=?',('alice',)); con.commit(); con.close()
+    m.sync_user_credential('alice')
+    assert not path.exists()
+
+
+def test_validate_config_rejects_relative_credential_paths(tmp_path, monkeypatch):
+    cp=_credential_test_env(tmp_path,monkeypatch)
+    cp['server']['credential_dir']='relative/credentials'
+    try:
+        m.validate_config(cp)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError('relative credential_dir accepted')

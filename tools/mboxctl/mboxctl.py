@@ -38,6 +38,8 @@ SERVICE = "mbox-server.service"
 RUNTIME_STATUS = Path(os.environ.get("MBOX_RUNTIME_STATUS", "/run/mbox/status.json"))
 KEY_TOOL = Path(os.environ.get("MBOX_KEY_TOOL", "/usr/local/bin/mbox-key"))
 ORIGIN_HMAC_KEY = ETC / "origin-hmac.key"
+CREDENTIAL_DIR = ETC / "credentials.d"
+CREDENTIAL_SOCKET = Path(os.environ.get("MBOX_CREDENTIAL_SOCKET", "/run/mbox/credentials.sock"))
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,63}$")
 
 DEFAULT_CAMO = {
@@ -160,6 +162,10 @@ def load_conf(required=True):
                     cp[section][k] = v
     if "server" in cp and not cp["server"].get("origin_hmac_secret", "").strip():
         cp["server"]["origin_hmac_secret"] = str(ORIGIN_HMAC_KEY)
+    if "server" in cp and not cp["server"].get("credential_dir", "").strip():
+        cp["server"]["credential_dir"] = str(CREDENTIAL_DIR)
+    if "server" in cp and not cp["server"].get("credential_reload_socket", "").strip():
+        cp["server"]["credential_reload_socket"] = str(CREDENTIAL_SOCKET)
     if "relay" in cp and not cp["relay"].get("runtime_dir", "").strip():
         # Persisted configs should be upgraded with `mboxctl config upgrade`;
         # do not silently reuse the old predictable slot_lock_prefix.
@@ -242,6 +248,15 @@ def db_connect():
     except FileNotFoundError:
         pass
     return con
+
+
+def allocate_auth_handle(con):
+    """Allocate a collision-resistant opaque wire identity inside the DB transaction."""
+    for _ in range(128):
+        candidate=secrets.token_bytes(16)
+        if con.execute("SELECT 1 FROM users WHERE auth_handle=?",(candidate,)).fetchone() is None:
+            return candidate
+    die("failed to allocate a unique auth handle")
 
 
 def validate_client_id(x):
@@ -327,24 +342,110 @@ def camo_dict(cp, include_timing=True):
     return d
 
 
+
+def ensure_credential_dir(cp):
+    path=Path(cp["server"].get("credential_dir", str(CREDENTIAL_DIR)))
+    path.mkdir(parents=True,exist_ok=True)
+    try:
+        gid=grp.getgrnam("mbox").gr_gid
+        os.chown(path,0,gid)
+        os.chmod(path,0o750)
+    except KeyError:
+        os.chmod(path,0o700)
+    return path
+
+
+def credential_object(row, cp):
+    obj={
+        "auth_handle":bytes(row["auth_handle"]).hex(),
+        "internal_id":row["id"],
+        "psk":bytes(row["psk"]).hex(),
+        "max_sessions":int(row["max_sessions"] or 0),
+    }
+    if cp.getboolean("auth","accept_legacy_client_ids"):
+        obj["legacy_id"]=row["id"]
+    if row["expires_at"]:
+        obj["expires_at"]=row["expires_at"]
+    return obj
+
+
+def write_credential_row(row, cp):
+    directory=ensure_credential_dir(cp)
+    handle=bytes(row["auth_handle"]).hex()
+    path=directory/f"{handle}.json"
+    tmp=directory/f".{handle}.{os.getpid()}.tmp"
+    tmp.write_text(json.dumps(credential_object(row,cp),separators=(",",":"))+"\n")
+    os.chmod(tmp,0o600)
+    try:
+        gid=grp.getgrnam("mbox").gr_gid
+        os.chown(tmp,0,gid); os.chmod(tmp,0o640)
+    except KeyError:
+        pass
+    os.replace(tmp,path)
+    return handle,path
+
+
+def notify_credential_change(cp, op, handle):
+    if not service_active():
+        return
+    sock_path=cp["server"].get("credential_reload_socket",str(CREDENTIAL_SOCKET))
+    payload=(json.dumps({"op":op,"auth_handle":handle},separators=(",",":"))+"\n").encode()
+    try:
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as sock:
+            sock.settimeout(2.0); sock.connect(sock_path); sock.sendall(payload)
+            response=sock.recv(64)
+        if response != b"ok\n":
+            raise RuntimeError("credential admin rejected update")
+    except (OSError,RuntimeError) as exc:
+        # Safe fallback for upgrades: SIGHUP reloads the credential directory in
+        # one operation. It does not require rewriting the monolithic JSON.
+        eprint(f"warning: incremental credential reload failed ({exc}); falling back to SIGHUP")
+        service_hup()
+
+
+def sync_user_credential(uid, notify=True):
+    cp=load_conf(); con=db_connect()
+    row=con.execute("SELECT * FROM users WHERE id=?",(uid,)).fetchone(); con.close()
+    if not row:
+        die(f"user not found: {uid}")
+    handle=bytes(row["auth_handle"]).hex(); directory=ensure_credential_dir(cp)
+    path=directory/f"{handle}.json"
+    if row["enabled"]:
+        write_credential_row(row,cp)
+        if notify: notify_credential_change(cp,"reload",handle)
+    else:
+        try: path.unlink()
+        except FileNotFoundError: pass
+        if notify: notify_credential_change(cp,"delete",handle)
+    return handle
+
+
+def remove_credential_handle(handle, cp=None, notify=True):
+    cp=cp or load_conf(); directory=ensure_credential_dir(cp)
+    path=directory/f"{handle}.json"
+    try: path.unlink()
+    except FileNotFoundError: pass
+    if notify: notify_credential_change(cp,"delete",handle)
+
+
+def sync_all_credentials(cp=None):
+    cp=cp or load_conf(); directory=ensure_credential_dir(cp); con=db_connect()
+    rows=con.execute("SELECT * FROM users ORDER BY id").fetchall(); con.close()
+    expected=set()
+    for row in rows:
+        handle=bytes(row["auth_handle"]).hex()
+        if row["enabled"]:
+            expected.add(handle+".json"); write_credential_row(row,cp)
+    for path in directory.glob("*.json"):
+        if path.name not in expected:
+            path.unlink()
+
+
 def render_runtime(reload_auth=False, restart=False):
     cp = load_conf()
     validate_config(cp)
-    con = db_connect()
+    sync_all_credentials(cp)
     clients = {}
-    legacy_ids = cp.getboolean("auth", "accept_legacy_client_ids")
-    for row in con.execute("SELECT id, auth_handle, psk, max_sessions, expires_at FROM users WHERE enabled=1 ORDER BY id"):
-        ent={"psk": bytes(row["psk"]).hex(), "max_sessions": int(row["max_sessions"] or 0), "internal_id": row["id"]}
-        if row["expires_at"]:
-            ent["expires_at"] = row["expires_at"]
-        handle=bytes(row["auth_handle"]).hex()
-        if handle in clients:
-            die("duplicate auth_handle in credential store")
-        clients[handle] = dict(ent)
-        if legacy_ids:
-            if row["id"] in clients and row["id"] != handle:
-                die(f"legacy client id collides with auth handle: {row['id']}")
-            clients[row["id"]] = dict(ent)
     obj = {
         "camouflage": camo_dict(cp, include_timing=False),
         "transport": {
@@ -355,6 +456,8 @@ def render_runtime(reload_auth=False, restart=False):
         },
         "crypto": {
             "server_private_key_file": cp["server"]["server_private_key"],
+            "credential_dir": cp["server"]["credential_dir"],
+            "credential_reload_socket": cp["server"]["credential_reload_socket"],
             "clients": clients,
         },
         "limits": {k:int(cp["limits"][k]) for k in DEFAULT_LIMITS},
@@ -429,7 +532,7 @@ def service_action(action, quiet=False):
 
 
 def validate_config(cp):
-    needed = [("server", k) for k in ["listen", "upstream", "base_path", "public_url", "origin_url", "server_private_key", "server_public_key", "origin_hmac_secret"]]
+    needed = [("server", k) for k in ["listen", "upstream", "base_path", "public_url", "origin_url", "server_private_key", "server_public_key", "origin_hmac_secret", "credential_dir", "credential_reload_socket"]]
     needed += [("relay", k) for k in ["max_slots", "max_body_bytes", "runtime_dir"]]
     needed += [("camouflage", k) for k in DEFAULT_CAMO]
     needed += [("cover", k) for k in DEFAULT_COVER]
@@ -438,6 +541,18 @@ def validate_config(cp):
     for section, key in needed:
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
+    credential_dir = Path(cp["server"]["credential_dir"])
+    credential_socket = Path(cp["server"]["credential_reload_socket"])
+    if not credential_dir.is_absolute():
+        die("server.credential_dir must be an absolute path")
+    if not credential_socket.is_absolute():
+        die("server.credential_reload_socket must be an absolute path")
+    if credential_dir.exists():
+        st = credential_dir.lstat()
+        if not credential_dir.is_dir() or credential_dir.is_symlink():
+            die("server.credential_dir must be a real directory, not a symlink")
+        if st.st_mode & 0o007:
+            die("server.credential_dir must not be accessible by other users")
     base = cp["server"]["base_path"]
     if not base.startswith("/") or base.endswith("/"):
         die("server.base_path must start with / and must not end with /")
@@ -606,6 +721,8 @@ def init_cmd(args):
         "server_private_key": str(ETC / "server.key"),
         "server_public_key": str(ETC / "server.pub"),
         "origin_hmac_secret": str(ORIGIN_HMAC_KEY),
+        "credential_dir": str(CREDENTIAL_DIR),
+        "credential_reload_socket": str(CREDENTIAL_SOCKET),
     }
     cp["relay"] = {
         "max_slots": str(args.max_slots),
@@ -619,8 +736,8 @@ def init_cmd(args):
     try:
         save_conf(cp); ensure_keys(cp); ensure_origin_hmac_key(cp); db_connect().close()
         con = db_connect()
-        con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                    (first, secrets.token_bytes(32), 1, first, "initial user", now(), now()))
+        con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (first, allocate_auth_handle(con), secrets.token_bytes(32), 1, first, "initial user", now(), now()))
         con.commit(); con.close()
         render_runtime()
         generate_relay_files(); generate_origin_files()
@@ -691,16 +808,21 @@ def migrate_legacy(args):
         "server_private_key": obj["crypto"]["server_private_key_file"],
         "server_public_key": str(ETC / "server.pub"),
         "origin_hmac_secret": str(ORIGIN_HMAC_KEY),
+        "credential_dir": str(CREDENTIAL_DIR),
+        "credential_reload_socket": str(CREDENTIAL_SOCKET),
     }
     relay_obj = {}
     rp = Path("/root/mbox-production-out/relay.json")
     if rp.exists():
         try: relay_obj = json.loads(rp.read_text())
         except Exception: relay_obj = {}
+    legacy_runtime = str(relay_obj.get("runtime_dir", "")).strip()
+    if not legacy_runtime or not os.path.isabs(legacy_runtime):
+        legacy_runtime = "/tmp/mbox-relay-" + secrets.token_hex(12)
     cp["relay"] = {
         "max_slots": str(relay_obj.get("max_slots", 4)),
         "max_body_bytes": str(relay_obj.get("max_body_bytes", 2097152)),
-        "slot_lock_prefix": relay_obj.get("slot_lock_prefix", "/tmp/mbox-relay"),
+        "runtime_dir": legacy_runtime,
     }
     cam = DEFAULT_CAMO.copy()
     oldc = obj.get("camouflage", {})
@@ -732,8 +854,10 @@ def migrate_legacy(args):
                 secret = read_hex32(ent["psk_file"])
             else:
                 continue
-            con.execute("INSERT OR REPLACE INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                        (uid, secret, 1, uid, "migrated from legacy config", now(), now()))
+            existing=con.execute("SELECT auth_handle FROM users WHERE id=?",(uid,)).fetchone()
+            handle=existing["auth_handle"] if existing and existing["auth_handle"] is not None else allocate_auth_handle(con)
+            con.execute("INSERT OR REPLACE INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                        (uid, handle, secret, 1, uid, "migrated from legacy config", now(), now()))
             imported += 1
     con.close(); render_runtime(); generate_relay_files(); generate_origin_files()
     run(["systemctl", "daemon-reload"], check=False)
@@ -793,12 +917,12 @@ def user_add(args):
     try:
         with con:
             for uid in ids:
-                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (uid, secrets.token_bytes(32), 1, uid, args.note or "", ts, ts, max_sessions, expires_at))
+                con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                            (uid, allocate_auth_handle(con), secrets.token_bytes(32), 1, uid, args.note or "", ts, ts, max_sessions, expires_at))
     except sqlite3.IntegrityError as e:
         die(f"user already exists: {e}")
     finally: con.close()
-    render_runtime(reload_auth=True)
+    for uid in ids: sync_user_credential(uid)
     for uid in ids: print(uid)
     print(f"Created {len(ids)} user(s).")
 
@@ -823,11 +947,12 @@ def user_import(args):
     try:
         with con:
             for uid,label,note,max_sessions,expires_at in rows:
-                con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                            (uid,secrets.token_bytes(32),1,label,note,ts,ts,max_sessions,expires_at))
+                con.execute("INSERT INTO users(id,auth_handle,psk,enabled,label,note,created_at,updated_at,max_sessions,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                            (uid,allocate_auth_handle(con),secrets.token_bytes(32),1,label,note,ts,ts,max_sessions,expires_at))
     except sqlite3.IntegrityError as e: die(str(e))
     finally: con.close()
-    render_runtime(reload_auth=True); print(f"Imported {len(rows)} user(s).")
+    for row in rows: sync_user_credential(row[0])
+    print(f"Imported {len(rows)} user(s).")
 
 
 def read_runtime_status():
@@ -893,7 +1018,7 @@ def user_state(args, mode):
         if mode=="enable": con.execute("UPDATE users SET enabled=1,revoked_at=NULL,updated_at=? WHERE id=?",(ts,args.id))
         elif mode=="disable": con.execute("UPDATE users SET enabled=0,updated_at=? WHERE id=?",(ts,args.id))
         elif mode=="revoke": con.execute("UPDATE users SET enabled=0,revoked_at=?,updated_at=? WHERE id=?",(ts,ts,args.id))
-    con.close(); render_runtime(reload_auth=True); print(f"{mode}: {args.id}")
+    con.close(); sync_user_credential(args.id); print(f"{mode}: {args.id}")
 
 
 def user_limit(args):
@@ -902,7 +1027,7 @@ def user_limit(args):
     if value != -1 and (value is None or value < 1 or value > 10000): die("limit must be 1..10000 or --unlimited")
     con=db_connect(); ts=now()
     with con: con.execute("UPDATE users SET max_sessions=?,updated_at=? WHERE id=?",(value,ts,args.id))
-    con.close(); render_runtime(reload_auth=True)
+    con.close(); sync_user_credential(args.id)
     print(f"sessions limit: {args.id} = {'unlimited' if value==-1 else value}")
 
 
@@ -919,7 +1044,7 @@ def user_expiry(args):
         die("specify --days N, --at RFC3339 or --clear")
     con=db_connect(); ts=now()
     with con: con.execute("UPDATE users SET expires_at=?,updated_at=? WHERE id=?",(value,ts,args.id))
-    con.close(); render_runtime(reload_auth=True)
+    con.close(); sync_user_credential(args.id)
     print(f"expiry: {args.id} = {value or 'never'}")
 
 
@@ -934,7 +1059,7 @@ def user_renew(args):
         except ValueError: pass
     value=(base+dt.timedelta(days=args.days)).replace(microsecond=0).isoformat(); ts=now()
     with con: con.execute("UPDATE users SET enabled=1,revoked_at=NULL,expires_at=?,updated_at=? WHERE id=?",(value,ts,args.id))
-    con.close(); render_runtime(reload_auth=True); print(f"renewed: {args.id} until {value}")
+    con.close(); sync_user_credential(args.id); print(f"renewed: {args.id} until {value}")
 
 
 def user_rotate(args):
@@ -942,7 +1067,7 @@ def user_rotate(args):
     with con:
         con.execute("UPDATE users SET psk=?,enabled=1,rotated_at=?,revoked_at=NULL,updated_at=? WHERE id=?",
                     (secrets.token_bytes(32),ts,ts,args.id))
-    con.close(); render_runtime(reload_auth=True); print(f"Rotated: {args.id}")
+    con.close(); sync_user_credential(args.id); print(f"Rotated: {args.id}")
     if args.print_link: print(build_link(args.id, args.name))
 
 
@@ -954,6 +1079,7 @@ def user_delete(args):
     rows=[]
     for uid in ids:
         rows.append(get_user(uid))
+    handles=[bytes(r["auth_handle"]).hex() for r in rows]
     assume_yes=bool(getattr(args,"yes",False) or getattr(args,"purge",False))
     if not assume_yes:
         enabled=[r["id"] for r in rows if r["enabled"]]
@@ -971,7 +1097,8 @@ def user_delete(args):
             con.executemany("DELETE FROM users WHERE id=?",[(uid,) for uid in ids])
     finally:
         con.close()
-    render_runtime(reload_auth=True)
+    cp=load_conf()
+    for handle in handles: remove_credential_handle(handle,cp)
     for uid in ids:
         print(f"Deleted: {uid}")
     print(f"Deleted {len(ids)} user(s).")
@@ -1069,7 +1196,7 @@ def user_rename(args):
         die(f"user already exists: {args.new_id}")
     finally:
         con.close()
-    render_runtime(reload_auth=True); print(f"Renamed: {args.id} -> {args.new_id}")
+    sync_user_credential(args.new_id); print(f"Renamed: {args.id} -> {args.new_id}")
 
 def logs_cmd(args):
     cmd=["journalctl","-u",SERVICE,"--no-pager"]
