@@ -110,3 +110,20 @@ func TestNKpsk0OfficialVector(t *testing.T) {
 		t.Fatalf("transport 2 decrypt")
 	}
 }
+
+func FuzzResponderReadMessage(f *testing.F) {
+	psk := bytes.Repeat([]byte{0x11}, 32)
+	priv := bytes.Repeat([]byte{0x22}, 32)
+	f.Add([]byte("short"))
+	f.Add(make([]byte, 48))
+	f.Fuzz(func(t *testing.T, msg []byte) {
+		if len(msg) > MaxMsgLen {
+			t.Skip()
+		}
+		r, err := NewResponder(psk, priv, []byte("fuzz-prologue"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _, _ = r.ReadMessage(msg)
+	})
+}

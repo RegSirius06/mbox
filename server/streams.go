@@ -263,7 +263,9 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 	}
 }
 
-func parseFrames(s *session, data []byte) error {
+func walkFrames(data []byte, fn func(streamID uint32, typ byte, payload []byte) error) error {
+	// Parser invariant: lengths are validated before slicing and a frame can
+	// never request allocation based solely on an untrusted length field.
 	for len(data) > 0 {
 		if len(data) < 9 {
 			return fmt.Errorf("short frame header")
@@ -272,22 +274,25 @@ func parseFrames(s *session, data []byte) error {
 		streamID := binary.BigEndian.Uint32(data[0:4])
 		typ := data[4]
 		n := binary.BigEndian.Uint32(data[5:9])
-
 		data = data[9:]
 
-		if uint64(n) > uint64(len(data)) {
-			return fmt.Errorf("short frame payload")
-		}
 		if n > maxFramePayload {
 			return fmt.Errorf("frame payload too large: %d", n)
 		}
+		if uint64(n) > uint64(len(data)) {
+			return fmt.Errorf("short frame payload")
+		}
 		payload := data[:n]
 		data = data[n:]
-
-		if err := handleFrame(s, streamID, typ, payload); err != nil {
+		if err := fn(streamID, typ, payload); err != nil {
 			return err
 		}
 	}
-
 	return nil
+}
+
+func parseFrames(s *session, data []byte) error {
+	return walkFrames(data, func(streamID uint32, typ byte, payload []byte) error {
+		return handleFrame(s, streamID, typ, payload)
+	})
 }

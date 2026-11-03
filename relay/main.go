@@ -193,8 +193,11 @@ func canonicalPath(raw string) (string, error) {
 	}
 	// Reject double-encoding rather than letting a later proxy/webserver apply a
 	// second interpretation (%252f -> %2f -> '/').
-	if containsResidualEscape(decoded) {
-		return "", fmt.Errorf("double-encoded path is not allowed")
+	if containsResidualEscape(decoded) || strings.Contains(decoded, "%") {
+		// The relay API never needs a literal percent character. Reject it after
+		// one decode pass so the canonical representation is idempotent and no
+		// downstream URL layer can reinterpret it as a fresh escape sequence.
+		return "", fmt.Errorf("double-encoded or ambiguous percent path is not allowed")
 	}
 	if strings.Contains(decoded, "//") {
 		return "", fmt.Errorf("duplicate slash is not allowed")

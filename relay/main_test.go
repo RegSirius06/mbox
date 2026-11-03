@@ -57,3 +57,24 @@ func TestPrivateRuntimeDirAndLockRejectSymlink(t *testing.T) {
 		t.Fatal("symlink lock accepted")
 	}
 }
+
+func FuzzCanonicalPath(f *testing.F) {
+	for _, seed := range []string{"/api/v1/events", "/api/%2e%2e/x", "/a//b", "/a/%252f/b", "/"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		if len(raw) > 64*1024 {
+			t.Skip()
+		}
+		got, err := canonicalPath(raw)
+		if err != nil {
+			return
+		}
+		if got == "" || got[0] != '/' {
+			t.Fatalf("accepted non-absolute canonical path %q from %q", got, raw)
+		}
+		if _, err := canonicalPath(got); err != nil {
+			t.Fatalf("canonical output rejected on second pass: %q: %v", got, err)
+		}
+	})
+}
