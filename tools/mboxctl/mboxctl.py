@@ -37,6 +37,7 @@ SITE_TEMPLATE = Path(os.environ.get("MBOX_SITE_TEMPLATE", "/usr/local/share/mbox
 SERVICE = "mbox-server.service"
 RUNTIME_STATUS = Path(os.environ.get("MBOX_RUNTIME_STATUS", "/run/mbox/status.json"))
 KEY_TOOL = Path(os.environ.get("MBOX_KEY_TOOL", "/usr/local/bin/mbox-key"))
+ORIGIN_HMAC_KEY = ETC / "origin-hmac.key"
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,63}$")
 
 DEFAULT_CAMO = {
@@ -150,6 +151,12 @@ def load_conf(required=True):
             for k, v in defaults.items():
                 if k not in cp[section]:
                     cp[section][k] = v
+    if "server" in cp and not cp["server"].get("origin_hmac_secret", "").strip():
+        cp["server"]["origin_hmac_secret"] = str(ORIGIN_HMAC_KEY)
+    if "relay" in cp and not cp["relay"].get("runtime_dir", "").strip():
+        # Persisted configs should be upgraded with `mboxctl config upgrade`;
+        # do not silently reuse the old predictable slot_lock_prefix.
+        cp["relay"]["runtime_dir"] = "/tmp/mbox-relay-" + secrets.token_hex(12)
     return cp
 
 
@@ -164,7 +171,7 @@ def apply_server_read_permissions(cp=None):
         return
     paths=[RUNTIME]
     if cp is not None and "server" in cp:
-        for key in ("server_private_key",):
+        for key in ("server_private_key","origin_hmac_secret"):
             value=cp["server"].get(key,"").strip()
             if value: paths.append(Path(value))
     for path in paths:
@@ -248,6 +255,20 @@ def ensure_keys(cp):
     apply_server_read_permissions(cp)
 
 
+def ensure_origin_hmac_key(cp):
+    path=Path(cp["server"].get("origin_hmac_secret", str(ORIGIN_HMAC_KEY)))
+    path.parent.mkdir(parents=True,exist_ok=True)
+    if not path.exists():
+        path.write_text(secrets.token_hex(32)+"\n")
+    raw=path.read_text().strip()
+    try: key=bytes.fromhex(raw)
+    except ValueError: die(f"{path}: invalid origin HMAC key")
+    if len(key)!=32: die(f"{path}: origin HMAC key must be 32 bytes")
+    os.chmod(path,0o600)
+    apply_server_read_permissions(cp)
+    return path
+
+
 def camo_dict(cp, include_timing=True):
     c = cp["camouflage"]
     d = {
@@ -302,6 +323,7 @@ def render_runtime(reload_auth=False, restart=False):
             "listen": cp["server"]["listen"],
             "upstream": cp["server"]["upstream"],
             "base_path": cp["server"]["base_path"],
+            "origin_hmac_secret_file": cp["server"]["origin_hmac_secret"],
         },
         "crypto": {
             "server_private_key_file": cp["server"]["server_private_key"],
@@ -379,8 +401,8 @@ def service_action(action, quiet=False):
 
 
 def validate_config(cp):
-    needed = [("server", k) for k in ["listen", "upstream", "base_path", "public_url", "origin_url", "server_private_key", "server_public_key"]]
-    needed += [("relay", k) for k in ["max_slots", "max_body_bytes", "slot_lock_prefix"]]
+    needed = [("server", k) for k in ["listen", "upstream", "base_path", "public_url", "origin_url", "server_private_key", "server_public_key", "origin_hmac_secret"]]
+    needed += [("relay", k) for k in ["max_slots", "max_body_bytes", "runtime_dir"]]
     needed += [("camouflage", k) for k in DEFAULT_CAMO]
     needed += [("cover", k) for k in DEFAULT_COVER]
     needed += [("limits", k) for k in DEFAULT_LIMITS]
@@ -550,17 +572,18 @@ def init_cmd(args):
         "origin_url": origin.rstrip("/"),
         "server_private_key": str(ETC / "server.key"),
         "server_public_key": str(ETC / "server.pub"),
+        "origin_hmac_secret": str(ORIGIN_HMAC_KEY),
     }
     cp["relay"] = {
         "max_slots": str(args.max_slots),
         "max_body_bytes": str(args.max_body_bytes),
-        "slot_lock_prefix": args.slot_lock_prefix,
+        "runtime_dir": args.relay_runtime_dir or ("/tmp/mbox-relay-" + secrets.token_hex(12)),
     }
     cp["camouflage"] = DEFAULT_CAMO.copy()
     cp["cover"] = DEFAULT_COVER.copy()
     cp["limits"] = DEFAULT_LIMITS.copy()
     try:
-        save_conf(cp); ensure_keys(cp); db_connect().close()
+        save_conf(cp); ensure_keys(cp); ensure_origin_hmac_key(cp); db_connect().close()
         con = db_connect()
         con.execute("INSERT INTO users(id,psk,enabled,label,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
                     (first, secrets.token_bytes(32), 1, first, "initial user", now(), now()))
@@ -633,6 +656,7 @@ def migrate_legacy(args):
         "origin_url": origin.rstrip("/"),
         "server_private_key": obj["crypto"]["server_private_key_file"],
         "server_public_key": str(ETC / "server.pub"),
+        "origin_hmac_secret": str(ORIGIN_HMAC_KEY),
     }
     relay_obj = {}
     rp = Path("/root/mbox-production-out/relay.json")
@@ -1052,7 +1076,7 @@ def link_inspect(args):
     print(json.dumps(obj,indent=2,ensure_ascii=False))
 
 def config_upgrade(args):
-    require_root(); cp=load_conf(); validate_config(cp); save_conf(cp)
+    require_root(); cp=load_conf(); ensure_origin_hmac_key(cp); validate_config(cp); save_conf(cp)
     print(f"config upgraded: {CONF}")
 
 
@@ -1157,9 +1181,12 @@ def generate_relay_files():
         "allowed_prefixes":[base+"/api/v1/"],
         "max_slots":int(cp["relay"]["max_slots"]),
         "max_body_bytes":int(cp["relay"]["max_body_bytes"]),
-        "slot_lock_prefix":cp["relay"]["slot_lock_prefix"],
+        "runtime_dir":cp["relay"]["runtime_dir"],
+        "origin_hmac_secret_file":"origin-hmac.key",
     }
     (REGRU/"relay.json").write_text(json.dumps(obj,indent=2)+"\n"); os.chmod(REGRU/"relay.json",0o600)
+    secret=ensure_origin_hmac_key(cp)
+    shutil.copy2(secret,REGRU/"origin-hmac.key"); os.chmod(REGRU/"origin-hmac.key",0o600)
     site=REGRU/"site"
     if site.exists(): shutil.rmtree(site)
     if SITE_TEMPLATE.is_dir(): shutil.copytree(SITE_TEMPLATE,site)
@@ -1171,7 +1198,7 @@ Authoritative generated files on the MBox admin/origin host:
   {REGRU}/site/index.html
   {REGRU}/site/404.html
 
-Upload relay.fcgi + relay.json into the shared-hosting web root.
+Upload relay.fcgi + relay.json + origin-hmac.key into the shared-hosting web root. Keep origin-hmac.key mode 0600 and outside public static-file routing.
 The decoy site files are optional and are deployed only with relay deploy --site.
 They belong on the shared-hosting frontend, not on the MBox origin VPS.
 The existing FastCGI routing/.htaccess is deployment-specific and is not overwritten automatically.
@@ -1181,7 +1208,7 @@ Base path: {base}
 """
     (REGRU/"DEPLOY.txt").write_text(instructions)
     hashes=[]
-    for rel in [Path("relay.fcgi"),Path("relay.json"),Path("site/index.html"),Path("site/404.html")]:
+    for rel in [Path("relay.fcgi"),Path("relay.json"),Path("origin-hmac.key"),Path("site/index.html"),Path("site/404.html")]:
         path=REGRU/rel
         if path.is_file():
             b=path.read_bytes(); hashes.append(f"{hashlib.sha256(b).hexdigest()}  {rel.as_posix()}")
@@ -1506,7 +1533,7 @@ def status(args):
 def make_parser():
     p=argparse.ArgumentParser(prog="mboxctl",description="MBox administration CLI")
     sp=p.add_subparsers(dest="cmd",required=True)
-    q=sp.add_parser("init"); q.add_argument("--force",action="store_true",help="destructive reinitialize: backup old MBox state, then create fresh config/keys/users"); q.add_argument("--public-url"); q.add_argument("--origin-url"); q.add_argument("--base-path"); q.add_argument("--first-user"); q.add_argument("--listen",default="127.0.0.1:18449"); q.add_argument("--upstream",default="127.0.0.1:2080"); q.add_argument("--max-slots",type=int,default=4); q.add_argument("--max-body-bytes",type=int,default=2097152); q.add_argument("--slot-lock-prefix",default="/tmp/mbox-relay"); q.set_defaults(func=init_cmd)
+    q=sp.add_parser("init"); q.add_argument("--force",action="store_true",help="destructive reinitialize: backup old MBox state, then create fresh config/keys/users"); q.add_argument("--public-url"); q.add_argument("--origin-url"); q.add_argument("--base-path"); q.add_argument("--first-user"); q.add_argument("--listen",default="127.0.0.1:18449"); q.add_argument("--upstream",default="127.0.0.1:2080"); q.add_argument("--max-slots",type=int,default=4); q.add_argument("--max-body-bytes",type=int,default=2097152); q.add_argument("--relay-runtime-dir",help="private 0700 runtime dir on the shared host; default is randomized"); q.set_defaults(func=init_cmd)
     m=sp.add_parser("migrate"); ms=m.add_subparsers(dest="sub",required=True); q=ms.add_parser("legacy"); q.add_argument("--server-json",default="/etc/mbox/server.json"); q.add_argument("--public-url"); q.add_argument("--origin-url"); q.set_defaults(func=migrate_legacy)
     u=sp.add_parser("user"); us=u.add_subparsers(dest="sub",required=True)
     q=us.add_parser("add"); q.add_argument("ids",nargs="*"); q.add_argument("--count",type=int); q.add_argument("--prefix",default="user-"); q.add_argument("--width",type=int); q.add_argument("--note"); q.add_argument("--max-sessions","--max-devices",dest="max_sessions",type=int); q.add_argument("--unlimited",action="store_true"); q.add_argument("--days",type=int); q.add_argument("--expires-at"); q.set_defaults(func=user_add)

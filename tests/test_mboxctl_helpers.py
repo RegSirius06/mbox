@@ -110,3 +110,16 @@ def test_user_link_parser_deterministic_transport():
 
 def test_default_streams_per_session_matches_real_device_calibration():
     assert m.DEFAULT_LIMITS['max_streams_per_session'] == '128'
+
+def test_load_conf_backfills_private_relay_runtime_and_origin_hmac(tmp_path, monkeypatch):
+    conf=tmp_path/'mbox.conf'
+    conf.write_text('[server]\nlisten=127.0.0.1:1\norigin_hmac_secret=/tmp/key\n[relay]\nmax_slots=4\nmax_body_bytes=2097152\n')
+    monkeypatch.setattr(m,'CONF',conf)
+    cp=m.load_conf()
+    assert cp['relay']['runtime_dir'].startswith('/tmp/mbox-relay-')
+    assert cp['server']['origin_hmac_secret']=='/tmp/key'
+
+
+def test_init_parser_uses_randomized_runtime_dir_by_default():
+    args=m.make_parser().parse_args(['init','--public-url','https://x.example/base','--origin-url','https://o.example','--first-user','a'])
+    assert args.relay_runtime_dir is None
