@@ -37,7 +37,7 @@ public class MBoxVpnService extends VpnService {
     public static final String ACTION_START = "io.mbox.android.START";
     public static final String ACTION_STOP = "io.mbox.android.STOP";
 
-    public enum State { STOPPED, CONNECTING, RECONNECTING, RUNNING, ERROR }
+    public enum State { DISCONNECTED, CONNECTING, CONNECTED, RECOVERING, FAILED, STOPPED }
 
     private static final String TAG = "MBox";
     private static final String CHANNEL_ID = "mbox-vpn";
@@ -103,7 +103,14 @@ public class MBoxVpnService extends VpnService {
         if (ACTION_START.equals(action)) {
             setDesiredRunning(true);
         } else if (!desiredRunning) {
-            return START_NOT_STICKY;
+            // Android may recreate an Always-on VPN service with a null intent.
+            // Treat the platform Always-on state as an explicit request to keep
+            // the fail-closed TUN alive across process/service restarts.
+            if (android.os.Build.VERSION.SDK_INT >= 24 && isAlwaysOn()) {
+                setDesiredRunning(true);
+            } else {
+                return START_NOT_STICKY;
+            }
         }
         beginSupervisorIfNeeded();
         return START_STICKY;
@@ -130,22 +137,29 @@ public class MBoxVpnService extends VpnService {
 
     private void runSupervisor() {
         long reconnectDelay = RECONNECT_MIN_MS;
-        boolean firstAttempt = true;
+        boolean hasConnected = false;
 
         try {
+            // Fail-closed: install the full-route TUN before any outer connection.
+            ensureFailClosedVpnInterface();
+
             while (desiredRunning) {
                 if (!awaitUnderlyingNetworkIfNeeded()) {
                     break;
                 }
                 long attemptNetworkGeneration = underlyingChangeGeneration.get();
 
-                updateState(firstAttempt ? State.CONNECTING : State.RECONNECTING, "");
-                updateNotification(firstAttempt ? "Connecting…" : "Reconnecting…");
+                updateState(hasConnected ? State.RECOVERING : State.CONNECTING, "");
+                updateNotification(hasConnected ? "Recovering…" : "Connecting…");
 
                 try {
-                    Process process = startTunnel();
-                    firstAttempt = false;
+                    Process process = startCoreTransport();
+                    hasConnected = true;
                     long connectedAt = SystemClock.elapsedRealtime();
+
+                    updateState(State.CONNECTED, "");
+                    updateNotification("Connected: " + ProfileStore.profileName(this));
+                    Log.i(TAG, "VPN CONNECTED");
 
                     int code = process.waitFor();
                     long connectedFor = SystemClock.elapsedRealtime() - connectedAt;
@@ -162,11 +176,12 @@ public class MBoxVpnService extends VpnService {
                         Log.e(TAG, "MBox core exited unexpectedly: " + code);
                     }
 
-                    cleanupTransport();
+                    // Keep TUN+HEV installed while the outer transport is down.
+                    cleanupCoreTransport();
                     if (!desiredRunning) {
                         break;
                     }
-                    updateState(State.RECONNECTING, "MBox core завершился: " + code);
+                    updateState(State.RECOVERING, "MBox core завершился: " + code);
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     break;
@@ -175,9 +190,9 @@ public class MBoxVpnService extends VpnService {
                         break;
                     }
                     String message = error.getMessage() == null ? error.toString() : error.getMessage();
-                    Log.w(TAG, "VPN tunnel attempt failed", error);
-                    updateState(State.RECONNECTING, message);
-                    cleanupTransport();
+                    Log.w(TAG, "VPN transport attempt failed", error);
+                    updateState(State.RECOVERING, message);
+                    cleanupCoreTransport();
                 }
 
                 if (!desiredRunning) {
@@ -198,7 +213,7 @@ public class MBoxVpnService extends VpnService {
                 }
 
                 long actualDelay = jitteredReconnectDelay(reconnectDelay);
-                updateNotification("Reconnecting in " + formatDelay(actualDelay) + "…");
+                updateNotification("Recovering in " + formatDelay(actualDelay) + "…");
                 Log.i(TAG, "RECONNECT base=" + reconnectDelay + "ms actual=" + actualDelay + "ms");
 
                 try {
@@ -210,8 +225,15 @@ public class MBoxVpnService extends VpnService {
 
                 reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
             }
+        } catch (Throwable fatal) {
+            if (desiredRunning) {
+                String message = fatal.getMessage() == null ? fatal.toString() : fatal.getMessage();
+                Log.e(TAG, "Fail-closed VPN interface failed", fatal);
+                updateState(State.FAILED, message);
+                updateNotification("VPN failed closed: " + safeMessage(fatal));
+            }
         } finally {
-            cleanupTransport();
+            cleanupCoreTransport();
             synchronized (this) {
                 if (Thread.currentThread() == supervisor) {
                     supervisor = null;
@@ -219,6 +241,7 @@ public class MBoxVpnService extends VpnService {
             }
 
             if (!desiredRunning) {
+                cleanupAllTransport();
                 updateState(State.STOPPED, "");
                 logStoppedOnce();
                 stopForeground(STOP_FOREGROUND_REMOVE);
@@ -226,15 +249,13 @@ public class MBoxVpnService extends VpnService {
             }
         }
     }
-
-
     private boolean awaitUnderlyingNetworkIfNeeded() {
         UnderlyingNetworkMonitor monitor = networkMonitor;
         if (monitor == null || monitor.currentNetwork() != null) {
             return desiredRunning;
         }
 
-        updateState(State.RECONNECTING, "Ожидание физической сети");
+        updateState(State.DISCONNECTED, "Ожидание физической сети");
         updateNotification("Waiting for network…");
         Log.i(TAG, "NET stage=NETWORK code=WAIT_UNDERLYING");
 
@@ -311,8 +332,8 @@ public class MBoxVpnService extends VpnService {
         lastError = error == null ? "" : error;
     }
 
-    private synchronized Process startTunnel() throws Exception {
-        cleanupTransport();
+    private synchronized Process startCoreTransport() throws Exception {
+        cleanupCoreTransport();
 
         if (!desiredRunning) {
             throw new InterruptedException("VPN stopped");
@@ -330,24 +351,26 @@ public class MBoxVpnService extends VpnService {
         String endpointUrl = ProfileStore.transportUrl(this);
         boolean networkDebug = ProfileStore.networkDebug(this);
         String httpStack = ProfileStore.androidHttpStack(this);
+        if (!"cronet".equals(httpStack)) {
+            throw new SecurityException("Android VPN requires Cronet fail-closed transport; Go HTTP is diagnostic-only");
+        }
         List<String> endpointAddresses = new ArrayList<>();
-        if ("go".equals(httpStack) || networkDebug) {
+        if (networkDebug) {
             endpointAddresses = resolveEndpointAddresses(endpointHost);
-            logDnsResult(endpointHost, endpointAddresses, networkDebug);
+            logDnsResult(endpointHost, endpointAddresses, true);
         } else {
             // Avoid an extra resolver query in the normal Cronet persona. Cronet owns
-            // DNS/address racing; DEBUG NETWORK may deliberately pre-resolve to expose A/AAAA.
+            // DNS/address racing on the explicitly bound physical Network.
             Log.i(TAG, "NET stage=DNS code=DNS_DELEGATED stack=cronet");
         }
 
         Network underlyingNetwork = networkMonitor != null
                 ? networkMonitor.currentNetwork()
                 : connectivityManager.getActiveNetwork();
-        if ("cronet".equals(httpStack)) {
-            cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
-        } else {
-            Log.i(TAG, "NET stage=HTTP code=HTTP_STACK stack=go");
+        if (underlyingNetwork == null) {
+            throw new Exception("No physical network available for Cronet transport");
         }
+        cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
 
         CountDownLatch coreReady = new CountDownLatch(1);
         ProcessBuilder processBuilder = new ProcessBuilder(
@@ -372,36 +395,6 @@ public class MBoxVpnService extends VpnService {
         if (!desiredRunning) {
             throw new InterruptedException("VPN stopped");
         }
-
-        Builder builder = new Builder()
-                .setSession("MBox")
-                .setMtu(AppRuntime.MTU)
-                .addAddress(AppRuntime.TUN_IPV4, 32)
-                .addAddress(AppRuntime.TUN_IPV6, 128)
-                .addRoute("0.0.0.0", 0)
-                .addRoute("::", 0)
-                .addDnsServer(AppRuntime.MAP_DNS);
-
-        builder.addDisallowedApplication(getPackageName());
-
-        tun = builder.establish();
-        if (tun == null) {
-            throw new Exception("Android не создал VPN TUN");
-        }
-
-        File hevConfig = new File(getFilesDir(), "hev.yml");
-        try (FileOutputStream out = new FileOutputStream(hevConfig, false)) {
-            out.write(AppRuntime.hevConfig().getBytes(StandardCharsets.UTF_8));
-            out.getFD().sync();
-        }
-
-        if (!TProxyService.TProxyStartService(hevConfig.getAbsolutePath(), tun.getFd())) {
-            throw new Exception("HEV tun2socks не запустился");
-        }
-
-        updateState(State.RUNNING, "");
-        updateNotification("Connected: " + ProfileStore.profileName(this));
-        Log.i(TAG, "VPN STARTED");
         return process;
     }
 
@@ -409,7 +402,7 @@ public class MBoxVpnService extends VpnService {
         ConnectivityManager manager = connectivityManager != null
                 ? connectivityManager
                 : (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-        Network network = manager.getActiveNetwork();
+        Network network = networkMonitor != null ? networkMonitor.currentNetwork() : manager.getActiveNetwork();
         if (network == null) {
             Log.e(TAG, "NET stage=DNS code=ERR_DNS_NO_NETWORK");
             throw new Exception("ERR_DNS: нет активной физической сети");
@@ -524,32 +517,59 @@ public class MBoxVpnService extends VpnService {
             thread.interrupt();
         }
 
-        cleanupTransport();
+        cleanupAllTransport();
         updateState(State.STOPPED, "");
         logStoppedOnce();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
-    private synchronized void cleanupTransport() {
+    private synchronized void ensureFailClosedVpnInterface() throws Exception {
+        if (tun != null && TProxyService.TProxyIsRunning()) {
+            return;
+        }
+        if (tun == null) {
+            Builder builder = new Builder()
+                    .setSession("MBox")
+                    .setMtu(AppRuntime.MTU)
+                    .addAddress(AppRuntime.TUN_IPV4, 32)
+                    .addAddress(AppRuntime.TUN_IPV6, 128)
+                    .addRoute("0.0.0.0", 0)
+                    .addRoute("::", 0)
+                    .addDnsServer(AppRuntime.MAP_DNS);
+
+            // Do NOT exclude the application UID. Only the Cronet engine is
+            // explicitly bound to the selected underlying physical Network.
+            // An arbitrary socket created elsewhere in this app must stay in
+            // the VPN and therefore cannot silently become a bypass path.
+            tun = builder.establish();
+            if (tun == null) {
+                throw new Exception("Android не создал fail-closed VPN TUN");
+            }
+        }
+
+        File hevConfig = new File(getFilesDir(), "hev.yml");
+        try (FileOutputStream out = new FileOutputStream(hevConfig, false)) {
+            out.write(AppRuntime.hevConfig().getBytes(StandardCharsets.UTF_8));
+            out.getFD().sync();
+        }
+        if (!TProxyService.TProxyIsRunning() && !TProxyService.TProxyStartService(hevConfig.getAbsolutePath(), tun.getFd())) {
+            // Keep the TUN descriptor installed on failure. With the full-route
+            // VPN still active packets are dropped/blocked rather than falling
+            // back to the physical network.
+            throw new Exception("HEV tun2socks не запустился; TUN оставлен fail-closed");
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            Log.i(TAG, "VPN MODE always_on=" + isAlwaysOn() + " lockdown=" + isLockdownEnabled());
+        } else if (android.os.Build.VERSION.SDK_INT >= 24) {
+            Log.i(TAG, "VPN MODE always_on=" + isAlwaysOn());
+        }
+        Log.i(TAG, "VPN FAIL_CLOSED_TUN_READY");
+    }
+
+    private synchronized void cleanupCoreTransport() {
         cleaning = true;
         try {
-            try {
-                if (TProxyService.TProxyIsRunning()) {
-                    TProxyService.TProxyStopService();
-                }
-            } catch (Throwable error) {
-                Log.w(TAG, "HEV stop failed", error);
-            }
-
-            try {
-                if (tun != null) {
-                    tun.close();
-                }
-            } catch (Exception ignored) {
-            }
-            tun = null;
-
             Process process = mbox;
             mbox = null;
             if (process != null && process.isAlive()) {
@@ -578,6 +598,24 @@ public class MBoxVpnService extends VpnService {
         }
     }
 
+    private synchronized void cleanupAllTransport() {
+        cleanupCoreTransport();
+        try {
+            if (TProxyService.TProxyIsRunning()) {
+                TProxyService.TProxyStopService();
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "HEV stop failed", error);
+        }
+        try {
+            if (tun != null) {
+                tun.close();
+            }
+        } catch (Exception ignored) {
+        }
+        tun = null;
+    }
+
     private void logStoppedOnce() {
         if (stoppedLogged.compareAndSet(false, true)) {
             Log.i(TAG, "VPN STOPPED");
@@ -594,7 +632,7 @@ public class MBoxVpnService extends VpnService {
         if (thread != null) {
             thread.interrupt();
         }
-        cleanupTransport();
+        cleanupAllTransport();
         updateState(State.STOPPED, "");
         logStoppedOnce();
         if (networkMonitor != null) {

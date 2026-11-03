@@ -44,12 +44,12 @@
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-            <!-- Current outer transport bypasses the TUN via a per-app exclusion.
-                 Android lockdown blocks disallowed apps, so advertising Always-on
-                 support would create a reconnect loop with no usable outer network. -->
+            <!-- The application UID is no longer excluded from the VPN. The outer
+                 Cronet engine is bound specifically to the selected physical Network,
+                 so the service can remain installed while recovering and under Always-on. -->
             <meta-data
                 android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
-                android:value="false" />
+                android:value="true" />
         </service>
 
     </application>

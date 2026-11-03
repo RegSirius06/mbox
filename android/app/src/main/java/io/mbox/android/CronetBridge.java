@@ -69,6 +69,11 @@ final class CronetBridge implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private CronetBridge(Context context, String baseUrl, Network network, boolean debug) throws Exception {
+        if (network == null) {
+            // Fail-closed invariant: never let Cronet fall back to Android's
+            // process/default network selection while the VPN owns all routes.
+            throw new IOException("Cronet requires an explicit underlying Network");
+        }
         this.origin = validateOrigin(baseUrl);
         this.networkDebug = debug;
         this.token = randomToken();
@@ -83,9 +88,7 @@ final class CronetBridge implements Closeable {
                 .enableQuic(false)
                 .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISABLED, 0);
         this.engine = builder.build();
-        if (network != null) {
-            engine.bindToNetwork(network.getNetworkHandle());
-        }
+        engine.bindToNetwork(network.getNetworkHandle());
 
         acceptExecutor.execute(this::acceptLoop);
         Log.i(TAG, "NET stage=HTTP code=HTTP_STACK stack=cronet version=" + sanitize(engine.getVersionString()));
