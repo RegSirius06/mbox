@@ -75,7 +75,7 @@ func registerSession(id string, s *session) bool {
 	replaceIDs := make(map[string]struct{})
 	if s.deviceID != "" {
 		for existingID, existing := range sessions {
-			if existing.clientID == s.clientID && existing.deviceID == s.deviceID {
+			if existing.accountID == s.accountID && existing.deviceID == s.deviceID {
 				replaceIDs[existingID] = struct{}{}
 			}
 		}
@@ -84,7 +84,7 @@ func registerSession(id string, s *session) bool {
 	effectiveGlobal := len(sessions) - len(replaceIDs)
 	if effectiveGlobal >= runtimeLimits.MaxSessionsGlobal {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%s", redactedClientID(s.clientID))
+		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%s", redactedClientID(s.accountID))
 		return false
 	}
 	limit := runtimeLimits.DefaultMaxSessionsPerClient
@@ -97,13 +97,13 @@ func registerSession(id string, s *session) bool {
 			if _, replacing := replaceIDs[existingID]; replacing {
 				continue
 			}
-			if e.clientID == s.clientID {
+			if e.accountID == s.accountID {
 				count++
 			}
 		}
 		if count >= limit {
 			sessionsMu.Unlock()
-			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%s active=%d limit=%d", redactedClientID(s.clientID), count, limit)
+			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%s active=%d limit=%d", redactedClientID(s.accountID), count, limit)
 			return false
 		}
 	}
@@ -126,7 +126,7 @@ func registerSession(id string, s *session) bool {
 	}
 	if r.count >= runtimeLimits.MaxSessionOpensPerMinute {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%s limit=%d", redactedClientID(s.clientID), runtimeLimits.MaxSessionOpensPerMinute)
+		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%s limit=%d", redactedClientID(s.accountID), runtimeLimits.MaxSessionOpensPerMinute)
 		return false
 	}
 	r.count++
@@ -167,13 +167,18 @@ func revokeUnauthorizedSessions(policies map[string]clientPolicy) {
 		s.mu.Lock()
 		last := s.lastSeen
 		s.mu.Unlock()
-		byClient[s.clientID] = append(byClient[s.clientID], active{id, last})
+		byClient[s.accountID] = append(byClient[s.accountID], active{id, last})
 	}
-	for cid, list := range byClient {
-		p := policies[cid]
-		limit := p.MaxSessions
-		if limit == 0 {
-			limit = runtimeLimits.DefaultMaxSessionsPerClient
+	for accountID, list := range byClient {
+		limit := runtimeLimits.DefaultMaxSessionsPerClient
+		for _, sess := range sessions {
+			if sess.accountID != accountID {
+				continue
+			}
+			if p, ok := policies[sess.clientID]; ok && p.MaxSessions != 0 {
+				limit = p.MaxSessions
+			}
+			break
 		}
 		if limit < 0 || len(list) <= limit {
 			continue

@@ -59,7 +59,8 @@ type session struct {
 	downCommitMu    sync.Mutex
 	upCache         map[uint64]cachedUpResponse
 	upCacheOrder    []uint64
-	clientID        string
+	clientID        string // opaque wire auth handle (legacy clients may still send account ID)
+	accountID       string // backend-only account grouping identity
 	deviceID        string
 	streams         map[uint32]*stream
 	crypto          *cryptoState

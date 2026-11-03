@@ -90,7 +90,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s := &session{clientID: cryptoState.clientID, deviceID: cryptoState.deviceID, streams: make(map[uint32]*stream), crypto: cryptoState, upCache: make(map[uint64]cachedUpResponse), downReady: make(chan struct{}, 1), downReplay: make(map[uint64]cachedDownResponse), downReqSeen: make(map[uint64]struct{}), done: make(chan struct{}), lastSeen: time.Now()}
+	s := &session{clientID: cryptoState.clientID, accountID: cryptoState.accountID, deviceID: cryptoState.deviceID, streams: make(map[uint32]*stream), crypto: cryptoState, upCache: make(map[uint64]cachedUpResponse), downReady: make(chan struct{}, 1), downReplay: make(map[uint64]cachedDownResponse), downReqSeen: make(map[uint64]struct{}), done: make(chan struct{}), lastSeen: time.Now()}
 	openReply, err := encodeHTTPEnvelope(noiseReply)
 	if err != nil {
 		camouflageNotFound(w)

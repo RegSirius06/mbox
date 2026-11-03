@@ -33,6 +33,7 @@ type cryptoState struct {
 	down *noise.CipherState // send: server -> client
 
 	clientID    string
+	accountID   string
 	deviceID    string
 	authPSKHash [32]byte
 
@@ -129,7 +130,7 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if send == nil || recv == nil {
 		return nil, nil, errors.New("Noise handshake did not split")
 	}
-	return &cryptoState{up: recv, down: send, clientID: clientID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
+	return &cryptoState{up: recv, down: send, clientID: clientID, accountID: policy.AccountID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
 }
 
 func cryptoAAD(sid string, header []byte, chunkIndex uint16, chunkLen uint16) []byte {

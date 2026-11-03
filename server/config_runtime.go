@@ -23,12 +23,14 @@ type runtimeClientConfig struct {
 	PSK         string `json:"psk,omitempty"`
 	MaxSessions int    `json:"max_sessions,omitempty"` // 0 = use server default, -1 = unlimited
 	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339; empty = no expiry
+	InternalID  string `json:"internal_id,omitempty"`
 }
 
 type clientPolicy struct {
 	PSK         []byte
 	MaxSessions int
 	ExpiresAt   time.Time
+	AccountID   string
 }
 
 type resourceLimitsConfig struct {
@@ -268,7 +270,14 @@ func decodeClientAuth(in map[string]runtimeClientConfig) (map[string]clientPolic
 				return nil, fmt.Errorf("crypto.clients[%q]: %w", id, err)
 			}
 		}
-		p := clientPolicy{PSK: append([]byte(nil), raw...), MaxSessions: c.MaxSessions}
+		accountID := c.InternalID
+		if accountID == "" {
+			accountID = id
+		}
+		if !validClientID(accountID) {
+			return nil, fmt.Errorf("crypto.clients[%q].internal_id invalid", id)
+		}
+		p := clientPolicy{PSK: append([]byte(nil), raw...), MaxSessions: c.MaxSessions, AccountID: accountID}
 		if c.ExpiresAt != "" {
 			t, err := time.Parse(time.RFC3339, c.ExpiresAt)
 			if err != nil {
