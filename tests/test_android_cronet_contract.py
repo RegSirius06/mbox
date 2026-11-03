@@ -56,3 +56,9 @@ def test_android_passes_stable_device_id_to_core():
     assert 'installationDeviceId' in service
     assert 'PREF_DEVICE_ID' in profile
     assert 'new byte[16]' in profile
+
+
+def test_hev_udp_relay_is_fail_closed_over_tcp():
+    app_runtime = (ROOT / "android/app/src/main/java/io/mbox/android/AppRuntime.java").read_text()
+    assert "udp: 'tcp'" in app_runtime
+    assert "udp: 'udp'" not in app_runtime
