@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-func registerHTTPHandlers() {
-	http.HandleFunc(basePath+coverCfg.Path, coverResourceHandler)
-	http.HandleFunc(basePath+"/health", handleHealth)
-	http.HandleFunc(basePath+camouflage.OpenPath, handleOpen)
-	http.HandleFunc(basePath+camouflage.UpPath, handleUp)
-	http.HandleFunc(basePath+camouflage.DownPath, handleDown)
-	http.HandleFunc(basePath+camouflage.ClosePath, handleClose)
+func registerHTTPHandlers(mux *http.ServeMux) {
+	mux.HandleFunc(basePath+coverCfg.Path, coverResourceHandler)
+	mux.HandleFunc(basePath+"/health", handleHealth)
+	mux.HandleFunc(basePath+camouflage.OpenPath, handleOpen)
+	mux.HandleFunc(basePath+camouflage.UpPath, handleUp)
+	mux.HandleFunc(basePath+camouflage.DownPath, handleDown)
+	mux.HandleFunc(basePath+camouflage.ClosePath, handleClose)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

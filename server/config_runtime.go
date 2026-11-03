@@ -12,9 +12,10 @@ import (
 )
 
 type runtimeTransportConfig struct {
-	Listen   string `json:"listen"`
-	Upstream string `json:"upstream"`
-	BasePath string `json:"base_path"`
+	Listen               string `json:"listen"`
+	Upstream             string `json:"upstream"`
+	BasePath             string `json:"base_path"`
+	OriginHMACSecretFile string `json:"origin_hmac_secret_file"`
 }
 
 type runtimeClientConfig struct {
@@ -199,6 +200,16 @@ func loadRuntimeConfig(path string) error {
 	if strings.ContainsAny(cfg.Transport.BasePath, "?#") {
 		return fmt.Errorf("invalid transport.base_path %q", cfg.Transport.BasePath)
 	}
+	if cfg.Transport.OriginHMACSecretFile == "" {
+		return fmt.Errorf("transport.origin_hmac_secret_file is required")
+	}
+	originSecret, err := readHex32(cfg.Transport.OriginHMACSecretFile)
+	if err != nil {
+		return fmt.Errorf("transport.origin_hmac_secret_file: %w", err)
+	}
+	if info, statErr := os.Stat(cfg.Transport.OriginHMACSecretFile); statErr == nil && !privateKeyModeAllowed(info.Mode().Perm()) {
+		return fmt.Errorf("transport.origin_hmac_secret_file permissions too open: %04o", info.Mode().Perm())
+	}
 	if cfg.Crypto.ServerPrivateKeyFile == "" {
 		return fmt.Errorf("crypto.server_private_key_file is required")
 	}
@@ -226,6 +237,7 @@ func loadRuntimeConfig(path string) error {
 	basePath = cfg.Transport.BasePath
 	serverPrivFile = cfg.Crypto.ServerPrivateKeyFile
 	serverStaticPrivate = append(serverStaticPrivate[:0], serverKey...)
+	originAuthSecret = append(originAuthSecret[:0], originSecret...)
 	coverCfg = cov
 	runtimeLimits = limits
 	clientAuthMu.Lock()

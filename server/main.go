@@ -18,7 +18,8 @@ func main() {
 	)
 	warnFileDescriptorLimit()
 	startAuthReloadLoop(configPath)
-	registerHTTPHandlers()
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux)
 	startRuntimeStatusLoop()
 	startSessionExpiryLoop()
 	startCoverEngine(coverCfg)
@@ -26,7 +27,7 @@ func main() {
 	log.Printf("MBox server listening on %s -> %s", listen, socksAddr)
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           nil,
+		Handler:           originAuthMiddleware(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       20 * time.Second,
 		WriteTimeout:      20 * time.Second,

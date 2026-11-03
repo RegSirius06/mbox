@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -20,12 +22,13 @@ import (
 )
 
 type relayConfig struct {
-	Target          string   `json:"target"`
-	AllowedExact    []string `json:"allowed_exact"`
-	AllowedPrefixes []string `json:"allowed_prefixes"`
-	MaxSlots        int      `json:"max_slots"`
-	MaxBodyBytes    int64    `json:"max_body_bytes"`
-	RuntimeDir      string   `json:"runtime_dir"`
+	Target               string   `json:"target"`
+	AllowedExact         []string `json:"allowed_exact"`
+	AllowedPrefixes      []string `json:"allowed_prefixes"`
+	MaxSlots             int      `json:"max_slots"`
+	MaxBodyBytes         int64    `json:"max_body_bytes"`
+	RuntimeDir           string   `json:"runtime_dir"`
+	OriginHMACSecretFile string   `json:"origin_hmac_secret_file"`
 	// Deprecated and intentionally rejected. Predictable shared /tmp prefixes
 	// are not an acceptable lock ownership boundary.
 	SlotLockPrefix string `json:"slot_lock_prefix,omitempty"`
@@ -77,6 +80,9 @@ func loadConfig() (*relayConfig, error) {
 	}
 	if err := ensurePrivateRuntimeDir(cfg.RuntimeDir); err != nil {
 		return nil, fmt.Errorf("runtime_dir: %w", err)
+	}
+	if _, err := loadOriginSecret(cfg.OriginHMACSecretFile); err != nil {
+		return nil, fmt.Errorf("origin_hmac_secret_file: %w", err)
 	}
 	for _, candidate := range append(append([]string{}, cfg.AllowedExact...), cfg.AllowedPrefixes...) {
 		canonical, err := canonicalPath(candidate)
@@ -241,6 +247,10 @@ func main() {
 	}
 
 	target, _ := url.Parse(cfg.Target)
+	originSecret, err := loadOriginSecret(cfg.OriginHMACSecretFile)
+	if err != nil {
+		log.Fatalf("CONFIG: origin_hmac_secret_file: %v", err)
+	}
 	transport := &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 60 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
@@ -286,9 +296,24 @@ func main() {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		var body []byte
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, cfg.MaxBodyBytes)
+			body, err = io.ReadAll(io.LimitReader(r.Body, cfg.MaxBodyBytes+1))
+			_ = r.Body.Close()
+			if err != nil || int64(len(body)) > cfg.MaxBodyBytes {
+				http.Error(w, "Request Entity Too Large", http.StatusRequestEntityTooLarge)
+				return
+			}
 		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		ts, nonce, signature, err := signOriginRequest(originSecret, r.Method, forwardPath, r.URL.RawQuery, body, time.Now())
+		if err != nil {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		r.Header.Set(originTimestampHeader, ts)
+		r.Header.Set(originNonceHeader, nonce)
+		r.Header.Set(originSignatureHeader, signature)
 
 		slot, ok := acquireSlot(cfg)
 		if !ok {
