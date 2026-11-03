@@ -339,8 +339,7 @@ public class MBoxVpnService extends VpnService {
             throw new InterruptedException("VPN stopped");
         }
 
-        File clientConfig = ProfileStore.configFile(this);
-        if (!clientConfig.isFile()) {
+        if (!ProfileStore.configFile(this).isFile()) {
             throw new Exception("Профиль MBox не импортирован");
         }
 
@@ -373,29 +372,30 @@ public class MBoxVpnService extends VpnService {
         cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
 
         CountDownLatch coreReady = new CountDownLatch(1);
-        ProcessBuilder processBuilder = new ProcessBuilder(
-                mboxBinary, "-config", clientConfig.getAbsolutePath())
-                .redirectErrorStream(true);
-        if (!endpointAddresses.isEmpty()) {
-            processBuilder.environment().put("MBOX_CONNECT_ADDRS", String.join(",", endpointAddresses));
-            // Keep the legacy single-address variable for older cores/config recovery.
-            processBuilder.environment().put("MBOX_CONNECT_IP", endpointAddresses.get(0));
+        // Persisted PSK stays Keystore-encrypted; plaintext exists only until
+        // the core loads it. try-with-resources covers every failure path.
+        try (ProfileStore.RuntimeMaterialization runtimeProfile = ProfileStore.materializeRuntimeConfig(this)) {
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                    mboxBinary, "-config", runtimeProfile.configFile.getAbsolutePath())
+                    .redirectErrorStream(true);
+            if (!endpointAddresses.isEmpty()) {
+                processBuilder.environment().put("MBOX_CONNECT_ADDRS", String.join(",", endpointAddresses));
+                processBuilder.environment().put("MBOX_CONNECT_IP", endpointAddresses.get(0));
+            }
+            if (cronetBridge != null) {
+                processBuilder.environment().put("MBOX_HTTP_BRIDGE_ADDR", cronetBridge.address());
+                processBuilder.environment().put("MBOX_HTTP_BRIDGE_TOKEN", cronetBridge.token());
+            }
+            processBuilder.environment().put("MBOX_DEVICE_ID", ProfileStore.installationDeviceId(this));
+            Process process = processBuilder.start();
+            mbox = process;
+            new Thread(() -> readCoreLog(process, coreReady), "MBox-log").start();
+            waitForCore(process, coreReady);
+            if (!desiredRunning) {
+                throw new InterruptedException("VPN stopped");
+            }
+            return process;
         }
-        if (cronetBridge != null) {
-            processBuilder.environment().put("MBOX_HTTP_BRIDGE_ADDR", cronetBridge.address());
-            processBuilder.environment().put("MBOX_HTTP_BRIDGE_TOKEN", cronetBridge.token());
-        }
-        processBuilder.environment().put("MBOX_DEVICE_ID", ProfileStore.installationDeviceId(this));
-        Process process = processBuilder.start();
-        mbox = process;
-
-        new Thread(() -> readCoreLog(process, coreReady), "MBox-log").start();
-        waitForCore(process, coreReady);
-
-        if (!desiredRunning) {
-            throw new InterruptedException("VPN stopped");
-        }
-        return process;
     }
 
     private List<String> resolveEndpointAddresses(String host) throws Exception {
