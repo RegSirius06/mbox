@@ -220,7 +220,9 @@ func stripWrapperPath(canonical string) (string, bool) {
 	if strings.HasPrefix(canonical, "/relay.fcgi/") {
 		return canonical[len("/relay.fcgi"):], true
 	}
-	return "", false
+	// Apache may pass the original URL without the FastCGI wrapper.
+	// The caller still enforces the configured allowlist.
+	return canonical, true
 }
 
 func allowedPath(cfg *relayConfig, candidate string) bool {
