@@ -8,6 +8,14 @@ if [[ $# -ne 1 || ! -s ${1:-} ]]; then
     exit 2
 fi
 apk=$1
+# A non-debug DN is not an identity guarantee. Refuse any release unless the
+# operator pins the expected certificate SHA-256 via a trusted out-of-band path.
+expected_signer=${MBOX_RELEASE_SIGNER_SHA256:-}
+if [[ ! "$expected_signer" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo 'FAIL: MBOX_RELEASE_SIGNER_SHA256 must pin the expected 64-hex certificate digest' >&2
+    exit 1
+fi
+expected_signer=${expected_signer,,}
 
 find_tool() {
     local tool=$1 sdk dir
@@ -34,6 +42,16 @@ if ! grep -q 'certificate DN:' <<< "$signature_info"; then
     echo 'FAIL: APK signer identity was not reported' >&2
     exit 1
 fi
+if [[ $(grep -Ec 'Signer #[0-9]+ certificate DN:' <<< "$signature_info") -ne 1 ]]; then
+    echo 'FAIL: APK must have exactly one signer' >&2
+    exit 1
+fi
+signer_sha=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\1/p' <<< "$signature_info")
+signer_sha=${signer_sha,,}
+if [[ "$signer_sha" != "$expected_signer" ]]; then
+    echo 'FAIL: signer certificate SHA-256 does not match the release pin' >&2
+    exit 1
+fi
 if grep -Eiq 'Android Debug|CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signature_info"; then
     echo 'FAIL: APK is signed with the Android debug certificate' >&2
     exit 1
@@ -51,5 +69,5 @@ if grep -Eqi 'application-debuggable|debuggable[=: ]+true' <<< "$package_info"; 
     exit 1
 fi
 
-echo 'PASS: signature valid; release identity present; not a debug certificate; manifest non-debuggable'
+echo 'PASS: APK signature valid; pinned signer matched; manifest non-debuggable'
 sha256sum "$apk"
