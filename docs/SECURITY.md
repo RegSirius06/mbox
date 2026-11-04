@@ -34,6 +34,20 @@ New HTTPS App Links place the secret `mbox://` profile in the URL fragment inste
 
 This does not by itself solve provisioning authenticity: a compromised frontend able to replace the profile can still present malicious configuration unless the user verifies the server-key fingerprint through an independent trusted channel. A separate signed-profile/trust-anchor design remains open.
 
+## Android loopback-bridge resource boundary
+
+Android's Cronet bridge listens only on `127.0.0.1`, but other local apps
+can still connect without knowing its random per-launch authorization token.
+The pre-auth socket work is therefore bounded: at most 8 active workers and
+32 pending connections. Excess connections are rejected and closed; shutdown
+also closes queued sockets that never entered a worker. A host-JDK regression
+test stresses overload and shutdown cleanup.
+
+This prevents *this specific* unbounded worker-queue / socket accumulation,
+but is **not** a proof against all Android FD, CPU, or denial-of-service attacks.
+Physical-interface packet capture, Android lockdown, crash scenarios, and
+long-duration memory/FD soak tests remain mandatory before release.
+
 ## Secret material
 
 Treat as secret:

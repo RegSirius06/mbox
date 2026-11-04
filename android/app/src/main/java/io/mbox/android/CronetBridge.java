@@ -55,6 +55,8 @@ final class CronetBridge implements Closeable {
     private static final int MAX_HEADER_NAME = 128;
     private static final int MAX_HEADER_VALUE = 4096;
     private static final int REQUEST_TIMEOUT_SECONDS = 20;
+    private static final int MAX_BRIDGE_WORKERS = 8;
+    private static final int MAX_PENDING_BRIDGE_CONNECTIONS = 32;
 
     private final URI origin;
     private final boolean networkDebug;
@@ -62,7 +64,7 @@ final class CronetBridge implements Closeable {
     private final ServerSocket server;
     private final CronetEngine engine;
     private final ExecutorService acceptExecutor;
-    private final ExecutorService workerExecutor;
+    private final BridgeWorkerPool workerExecutor;
     private final ExecutorService callbackExecutor;
     private final ExecutorService metricsExecutor;
     private final java.util.Set<UrlRequest> activeRequests = ConcurrentHashMap.newKeySet();
@@ -79,7 +81,8 @@ final class CronetBridge implements Closeable {
         this.token = randomToken();
         this.server = new ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"));
         this.acceptExecutor = Executors.newSingleThreadExecutor(r -> namedThread(r, "MBox-cronet-accept"));
-        this.workerExecutor = Executors.newFixedThreadPool(8, r -> namedThread(r, "MBox-cronet-worker"));
+        this.workerExecutor = new BridgeWorkerPool(MAX_BRIDGE_WORKERS,
+                MAX_PENDING_BRIDGE_CONNECTIONS, r -> namedThread(r, "MBox-cronet-worker"));
         this.callbackExecutor = Executors.newFixedThreadPool(4, r -> namedThread(r, "MBox-cronet-callback"));
         this.metricsExecutor = Executors.newSingleThreadExecutor(r -> namedThread(r, "MBox-cronet-metrics"));
 
@@ -108,11 +111,19 @@ final class CronetBridge implements Closeable {
 
     private void acceptLoop() {
         while (!closed.get()) {
+            Socket socket = null;
             try {
-                Socket socket = server.accept();
+                socket = server.accept();
                 socket.setTcpNoDelay(true);
-                workerExecutor.execute(() -> handle(socket));
+                // Unauthenticated loopback peers must not fill an unbounded
+                // executor queue. The bounded dispatcher closes excess sockets.
+                workerExecutor.dispatch(socket, this::handle);
             } catch (IOException error) {
+                // Even if socket configuration fails after accept(), no
+                // untracked descriptor may survive the failed handoff.
+                if (socket != null) {
+                    try { socket.close(); } catch (IOException ignored) { }
+                }
                 if (!closed.get()) {
                     Log.w(TAG, "Cronet bridge accept failed: " + MBoxLogSanitizer.sanitize(error.toString()));
                 }
@@ -488,7 +499,7 @@ final class CronetBridge implements Closeable {
         }
         activeRequests.clear();
         acceptExecutor.shutdownNow();
-        workerExecutor.shutdownNow();
+        workerExecutor.close();
         callbackExecutor.shutdownNow();
         metricsExecutor.shutdownNow();
         try {
