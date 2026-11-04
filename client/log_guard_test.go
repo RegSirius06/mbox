@@ -15,6 +15,7 @@ func TestRedactedDiagnosticSuppressesProvisioningAndRelaySecrets(t *testing.T) {
 		{`Post "https://example.fun/edge/0123456789abcdef/api/v1/session": timeout`, []string{"/edge/", "0123456789abcdef", "example.fun"}},
 		{`mbox://my-secret-provisioning#profile`, []string{"my-secret", "provisioning"}},
 		{`Authorization: Bearer hunter2`, []string{"hunter2"}},
+		{`Proxy-Authorization: Basic dXNlcjpwYXNz`, []string{"dXNlcjpwYXNz"}},
 		{`psk=CAFEBABE password:abcd token=xyz private_key=qwerty`, []string{"CAFEBABE", "abcd", "xyz", "qwerty"}},
 	}
 	for _, tt := range samples {

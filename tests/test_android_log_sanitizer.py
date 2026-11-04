@@ -28,6 +28,7 @@ def test_android_java_log_sanitizer(tmp_path):
                     "Post \\\"https://example.fun/edge/private123/api/v1/session\\\": timeout",
                     "mbox://private-profile-link#name",
                     "Authorization: Bearer alpha123",
+                    "Proxy-Authorization: Basic dXNlcjpwYXNz",
                     "psk=abcdef password:sosecret token=hidden",
                     "psk=abc=def",
                     "first\\nFORGED: another line"
@@ -39,7 +40,7 @@ def test_android_java_log_sanitizer(tmp_path):
     subprocess.run(['javac', '-d', str(tmp_path), str(SOURCE), str(source)], check=True)
     result = subprocess.run(['java', '-cp', str(tmp_path), 'io.mbox.android.SanitizerSmoke'],
                             check=True, capture_output=True, text=True).stdout
-    for secret in ('private123', 'example.fun', 'private-profile', 'alpha123', 'sosecret', 'abcdef', 'hidden', 'abc=def'):
+    for secret in ('private123', 'example.fun', 'private-profile', 'alpha123', 'sosecret', 'abcdef', 'hidden', 'abc=def', 'dXNlcjpwYXNz'):
         assert secret not in result
     assert r'first\nFORGED' in result
 

@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 final class MBoxLogSanitizer {
     private static final int MAX_LINE = 4096;
     private static final Pattern URL = Pattern.compile("(?i)(?:https?|mbox)://[^\\s\\\"'<>\\\\]+", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BEARER = Pattern.compile("(?i)\\bbearer\\s+[A-Za-z0-9._~+/-]+");
+    private static final Pattern BEARER = Pattern.compile("(?i)\\b(?:bearer|basic)\\s+[A-Za-z0-9._~+/=-]+");
     private static final Pattern KEY_VALUE = Pattern.compile(
             "(?i)\\b(psk|password|token|secret|authorization|private_key)\\s*[:=]\\s*[^\\s,;]+");
 
@@ -18,7 +18,7 @@ final class MBoxLogSanitizer {
         String text = input.substring(0, Math.min(input.length(), MAX_LINE));
         text = text.replace("\r", "\\r").replace("\n", "\\n");
         text = URL.matcher(text).replaceAll("[URL_REDACTED]");
-        text = BEARER.matcher(text).replaceAll("Bearer [REDACTED]");
+        text = BEARER.matcher(text).replaceAll("[AUTH_SCHEME_REDACTED]");
         Matcher matcher = KEY_VALUE.matcher(text);
         StringBuffer redacted = new StringBuffer();
         while (matcher.find()) {

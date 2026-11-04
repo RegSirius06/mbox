@@ -15,7 +15,7 @@ var (
 	// Error values produced by net/http may re-embed them without warning.
 	sensitiveURL = regexp.MustCompile(`(?i)(?:https?|mbox)://[^\s"'<>]+`)
 	sensitiveKV  = regexp.MustCompile(`(?i)\b(psk|password|token|secret|authorization|private_key)\s*[:=]\s*[^\s,;]+`)
-	bearerToken  = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/-]+`)
+	bearerToken  = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+`)
 )
 
 // redactDiagnostic guarantees that a secret-bearing URL cannot escape through
@@ -31,7 +31,7 @@ func redactDiagnostic(p []byte) []byte {
 	message = strings.ReplaceAll(message, "\r", `\r`)
 	message = strings.ReplaceAll(message, "\n", `\n`)
 	message = sensitiveURL.ReplaceAllString(message, "[URL_REDACTED]")
-	message = bearerToken.ReplaceAllString(message, "Bearer [REDACTED]")
+	message = bearerToken.ReplaceAllString(message, "[AUTH_SCHEME_REDACTED]")
 	message = sensitiveKV.ReplaceAllStringFunc(message, func(s string) string {
 		sep := strings.IndexAny(s, ":=")
 		if sep == -1 {
