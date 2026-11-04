@@ -4,9 +4,28 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
+
+// configureRuntimeStatusPath allows independent staging instances to keep
+// lifecycle/status output separate from the production service. Invalid
+// overrides are rejected before binding any network listener.
+func configureRuntimeStatusPath() error {
+	raw := os.Getenv("MBOX_RUNTIME_STATUS")
+	if raw == "" {
+		runtimeStatusPath = defaultRuntimeStatusPath
+		return nil
+	}
+	if len(raw) > 4096 || !filepath.IsAbs(raw) || filepath.Clean(raw) != raw || !strings.HasSuffix(raw, ".json") {
+		return fmt.Errorf("MBOX_RUNTIME_STATUS must be an absolute canonical .json path")
+	}
+	runtimeStatusPath = raw
+	return nil
+}
 
 func writeRuntimeStatus() {
 	runtimeStatusMu.Lock()

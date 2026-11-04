@@ -13,6 +13,9 @@ import (
 )
 
 func main() {
+	if err := configureRuntimeStatusPath(); err != nil {
+		log.Fatalf("RUNTIME STATUS: %v", err)
+	}
 	configPath := runtimeConfigPath("/etc/mbox/server.json")
 	if err := loadRuntimeConfig(configPath); err != nil {
 		log.Fatalf("CONFIG: %v", err)

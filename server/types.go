@@ -100,7 +100,11 @@ var (
 	serverReady           atomic.Bool
 )
 
-const runtimeStatusPath = "/run/mbox/status.json"
+const defaultRuntimeStatusPath = "/run/mbox/status.json"
+
+// Production preserves its historic status path. Staging instances override it
+// explicitly, so two server processes never write the same status file.
+var runtimeStatusPath = defaultRuntimeStatusPath
 
 type runtimeStatusSnapshot struct {
 	GeneratedAt    time.Time      `json:"generated_at"`
