@@ -25,6 +25,12 @@ func pruneSessionOpenRatesLocked(now time.Time) {
 }
 
 func getSession(id string) (*session, bool) {
+	return lookupSession(id, true)
+}
+
+// Authentication must precede an activity timestamp refresh: otherwise a
+// relay knowing a session ID can keep it alive forever with forged HTTP polls.
+func lookupSession(id string, refresh bool) (*session, bool) {
 	sessionsMu.Lock()
 	s, ok := sessions[id]
 	if !ok {
@@ -50,9 +56,31 @@ func getSession(id string) (*session, bool) {
 		s.mu.Unlock()
 		return nil, false
 	}
-	s.lastSeen = time.Now()
+	if refresh {
+		s.lastSeen = time.Now()
+	}
 	s.mu.Unlock()
 	return s, true
+}
+
+// Refresh only if it is still the same registered, live session. The caller
+// must have verified the control MAC (or explicitly allowed legacy mode).
+func refreshAuthenticatedSession(id string, expected *session) bool {
+	sessionsMu.Lock()
+	current, ok := sessions[id]
+	if !ok || current != expected {
+		sessionsMu.Unlock()
+		return false
+	}
+	expected.mu.Lock()
+	sessionsMu.Unlock()
+	if expected.closed {
+		expected.mu.Unlock()
+		return false
+	}
+	expected.lastSeen = time.Now()
+	expected.mu.Unlock()
+	return true
 }
 
 func registerSession(id string, s *session) bool {
@@ -148,37 +176,46 @@ func registerSession(id string, s *session) bool {
 }
 
 func revokeUnauthorizedSessions(policies map[string]clientPolicy) {
+	revokeUnauthorizedSessionsForAccounts(policies, nil)
+}
+
+// accountFilter nil means full reload; otherwise only accounts changed by an
+// incremental credential transaction are inspected. Session revocation remains
+// synchronous with the administrative request.
+func revokeUnauthorizedSessionsForAccounts(policies map[string]clientPolicy, accountFilter map[string]struct{}) {
 	var revoke []string
 	type active struct {
-		id   string
-		last time.Time
+		id       string
+		last     time.Time
+		clientID string
 	}
 	byClient := map[string][]active{}
 	sessionsMu.Lock()
 	for id, s := range sessions {
+		if accountFilter != nil {
+			if _, affected := accountFilter[s.accountID]; !affected {
+				continue
+			}
+		}
 		if s.clientID == "" {
 			continue
 		}
 		p, ok := policies[s.clientID]
-		if !ok || !clientPolicyActive(p) || sha256.Sum256(p.PSK) != s.crypto.authPSKHash {
+		if !ok || !clientPolicyActive(p) || p.AccountID != s.accountID || sha256.Sum256(p.PSK) != s.crypto.authPSKHash {
 			revoke = append(revoke, id)
 			continue
 		}
 		s.mu.Lock()
 		last := s.lastSeen
 		s.mu.Unlock()
-		byClient[s.accountID] = append(byClient[s.accountID], active{id, last})
+		byClient[s.accountID] = append(byClient[s.accountID], active{id: id, last: last, clientID: s.clientID})
 	}
-	for accountID, list := range byClient {
+	for _, list := range byClient {
 		limit := runtimeLimits.DefaultMaxSessionsPerClient
-		for _, sess := range sessions {
-			if sess.accountID != accountID {
-				continue
-			}
-			if p, ok := policies[sess.clientID]; ok && p.MaxSessions != 0 {
-				limit = p.MaxSessions
-			}
-			break
+		// All sessions here belong to this account. The policy lookup no
+		// longer scans every session once for every active account.
+		if p, ok := policies[list[0].clientID]; ok && p.MaxSessions != 0 {
+			limit = p.MaxSessions
 		}
 		if limit < 0 || len(list) <= limit {
 			continue

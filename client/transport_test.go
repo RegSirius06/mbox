@@ -325,6 +325,7 @@ func TestDownloader502RetriesExactSequenceURL(t *testing.T) {
 
 	tun := newQueueTestTunnel()
 	tun.sid = "fedcba9876543210fedcba9876543210"
+	tun.crypto = &cryptoState{}
 	seen := make(chan string, 2)
 	var calls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

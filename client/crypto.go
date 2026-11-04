@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	controlmeta "../common/controlmeta"
 	noise "../common/noise"
 )
 
@@ -29,8 +30,9 @@ var (
 )
 
 type cryptoState struct {
-	up   *noise.CipherState
-	down *noise.CipherState
+	controlKey [32]byte
+	up         *noise.CipherState
+	down       *noise.CipherState
 
 	mu sync.Mutex
 
@@ -98,46 +100,46 @@ func noisePrologue(id string) []byte {
 	return p
 }
 
-func buildOpenRequest() ([]byte, *noise.Handshake, error) {
+func buildOpenRequest() ([]byte, *noise.Handshake, []byte, error) {
 	return buildOpenRequestForDevice(deviceID)
 }
 
-func buildLegacyOpenRequest() ([]byte, *noise.Handshake, error) {
+func buildLegacyOpenRequest() ([]byte, *noise.Handshake, []byte, error) {
 	return buildOpenRequestForDevice("")
 }
 
-func buildOpenRequestForDevice(openDeviceID string) ([]byte, *noise.Handshake, error) {
+func buildOpenRequestForDevice(openDeviceID string) ([]byte, *noise.Handshake, []byte, error) {
 	if !validClientID(clientID) {
-		return nil, nil, fmt.Errorf("Noise-only MBox requires valid client_id")
+		return nil, nil, nil, fmt.Errorf("Noise-only MBox requires valid client_id")
 	}
 	psk, err := readHex32(pskFile)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	serverPub, err := readHex32(serverPubFile)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	hs, err := noise.NewInitiator(psk, serverPub, noisePrologue(clientID), rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	payload, err := noiseDevicePayload(openDeviceID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	msg1, _, _, err := hs.WriteMessage(payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	body := make([]byte, 1+len(clientID)+len(msg1))
 	body[0] = byte(len(clientID))
 	copy(body[1:], clientID)
 	copy(body[1+len(clientID):], msg1)
-	return body, hs, nil
+	return body, hs, psk, nil
 }
 
-func finishClientHandshake(hs *noise.Handshake, response []byte) (*cryptoState, string, error) {
+func finishClientHandshake(hs *noise.Handshake, response []byte, psk []byte) (*cryptoState, string, error) {
 	payload, send, recv, err := hs.ReadMessage(response)
 	if err != nil {
 		return nil, "", fmt.Errorf("Noise NKpsk0 response: %w", err)
@@ -152,7 +154,11 @@ func finishClientHandshake(hs *noise.Handshake, response []byte) (*cryptoState, 
 	if _, err := hex.DecodeString(sid); err != nil {
 		return nil, "", errors.New("invalid authenticated session id")
 	}
-	return &cryptoState{up: send, down: recv}, sid, nil
+	key, err := controlmeta.Derive(psk, hs.ChannelBinding(), sid)
+	if err != nil {
+		return nil, "", err
+	}
+	return &cryptoState{up: send, down: recv, controlKey: key}, sid, nil
 }
 
 func cryptoAAD(sid string, header []byte, chunkIndex uint16, chunkLen uint16) []byte {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	controlmeta "../common/controlmeta"
 	noise "../common/noise"
 )
 
@@ -29,8 +30,9 @@ var (
 )
 
 type cryptoState struct {
-	up   *noise.CipherState // receive: client -> server
-	down *noise.CipherState // send: server -> client
+	controlKey [32]byte
+	up         *noise.CipherState // receive: client -> server
+	down       *noise.CipherState // send: server -> client
 
 	clientID    string
 	accountID   string
@@ -130,7 +132,11 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if send == nil || recv == nil {
 		return nil, nil, errors.New("Noise handshake did not split")
 	}
-	return &cryptoState{up: recv, down: send, clientID: clientID, accountID: policy.AccountID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
+	key, err := controlmeta.Derive(policy.PSK, hs.ChannelBinding(), sid)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &cryptoState{controlKey: key, up: recv, down: send, clientID: clientID, accountID: policy.AccountID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
 }
 
 func cryptoAAD(sid string, header []byte, chunkIndex uint16, chunkLen uint16) []byte {

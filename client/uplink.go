@@ -1,6 +1,7 @@
 package main
 
 import (
+	controlmeta "../common/controlmeta"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -105,6 +106,9 @@ func (t *tunnel) takeUpload(limit int) []byte {
 }
 
 func (t *tunnel) newDownRequestURL(raw string, includeMax bool) (string, uint64, error) {
+	if t.crypto == nil {
+		return "", 0, fmt.Errorf("no authenticated control session")
+	}
 	seq := t.downReqSeq.Add(1)
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -112,10 +116,20 @@ func (t *tunnel) newDownRequestURL(raw string, includeMax bool) (string, uint64,
 	}
 	q := u.Query()
 	q.Set("seq", fmt.Sprintf("%d", seq))
-	q.Set("ack", fmt.Sprintf("%d", t.downAck.Load()))
+	ack := t.downAck.Load()
+	q.Set("ack", fmt.Sprintf("%d", ack))
 	if includeMax {
 		q.Set("max", fmt.Sprintf("%d", randomBatchLimit(camouflage.DownMaxBytes)))
 	}
+	method := http.MethodPost
+	if includeMax {
+		method = http.MethodGet
+	}
+	purpose := "UP"
+	if includeMax {
+		purpose = "DOWN"
+	}
+	q.Set("cmac", controlmeta.Tag(t.crypto.controlKey, method, purpose, seq, ack, q.Get("max")))
 	u.RawQuery = q.Encode()
 	return u.String(), seq, nil
 }

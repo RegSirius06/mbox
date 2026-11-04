@@ -63,10 +63,11 @@ var runtimeLimits = resourceLimitsConfig{
 }
 
 type runtimeCryptoConfig struct {
-	ServerPrivateKeyFile   string                         `json:"server_private_key_file"`
-	CredentialDir          string                         `json:"credential_dir,omitempty"`
-	CredentialReloadSocket string                         `json:"credential_reload_socket,omitempty"`
-	Clients                map[string]runtimeClientConfig `json:"clients"`
+	ServerPrivateKeyFile        string                         `json:"server_private_key_file"`
+	CredentialDir               string                         `json:"credential_dir,omitempty"`
+	CredentialReloadSocket      string                         `json:"credential_reload_socket,omitempty"`
+	RequireAuthenticatedControl bool                           `json:"require_authenticated_control,omitempty"`
+	Clients                     map[string]runtimeClientConfig `json:"clients"`
 }
 
 type runtimeConfig struct {
@@ -77,10 +78,11 @@ type runtimeConfig struct {
 }
 
 var (
-	basePath       string
-	clientAuthMu   sync.RWMutex
-	clientPolicies = map[string]clientPolicy{}
-	coverCfg       coverConfig
+	basePath                    string
+	clientAuthMu                sync.RWMutex
+	clientPolicies              = map[string]clientPolicy{}
+	coverCfg                    coverConfig
+	requireAuthenticatedControl bool
 )
 
 func runtimeConfigPath(defaultPath string) string {
@@ -267,8 +269,10 @@ func loadRuntimeConfig(path string) error {
 	runtimeLimits = limits
 	credentialDirPath = cfg.Crypto.CredentialDir
 	credentialReloadSock = cfg.Crypto.CredentialReloadSocket
+	requireAuthenticatedControl = cfg.Crypto.RequireAuthenticatedControl
 	clientAuthMu.Lock()
 	clientPolicies = policies
+	policyIDsByAccount = buildPolicyAccountIndex(policies)
 	clientAuthMu.Unlock()
 	return loadCamouflageConfig(path)
 }
@@ -331,6 +335,8 @@ func clientPolicyActive(p clientPolicy) bool {
 }
 
 func reloadClientAuth(path string) error {
+	credentialUpdateMu.Lock()
+	defer credentialUpdateMu.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -355,6 +361,7 @@ func reloadClientAuth(path string) error {
 	}
 	clientAuthMu.Lock()
 	clientPolicies = policies
+	policyIDsByAccount = buildPolicyAccountIndex(policies)
 	clientAuthMu.Unlock()
 	// Drop rate-limit state for identities that no longer exist. This keeps
 	// credential churn from retaining attacker/user-controlled map keys.

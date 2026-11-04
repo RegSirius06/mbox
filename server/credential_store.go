@@ -42,6 +42,10 @@ var (
 	credentialReloadSock  string
 	credentialAdminMu     sync.Mutex
 	credentialAdminListen net.Listener
+	// Serialize an entire credential mutation, including session revocation.
+	// A newer reload must not race an older reload's post-commit cleanup.
+	credentialUpdateMu sync.Mutex
+	policyIDsByAccount map[string]map[string]struct{}
 )
 
 func validOpaqueAuthHandle(handle string) bool {
@@ -189,13 +193,20 @@ func mergePolicies(base, extra map[string]clientPolicy) (map[string]clientPolicy
 	return out, nil
 }
 
-func clonePoliciesLocked() map[string]clientPolicy {
-	out := make(map[string]clientPolicy, len(clientPolicies))
-	for id, p := range clientPolicies {
-		p.PSK = append([]byte(nil), p.PSK...)
-		out[id] = p
+// buildPolicyAccountIndex is called for a full configuration reload. Incremental
+// changes maintain the index in place, so updating one account does not copy
+// or traverse every unrelated user's PSK. Caller holds clientAuthMu.
+func buildPolicyAccountIndex(policies map[string]clientPolicy) map[string]map[string]struct{} {
+	index := make(map[string]map[string]struct{})
+	for id, policy := range policies {
+		ids := index[policy.AccountID]
+		if ids == nil {
+			ids = make(map[string]struct{})
+			index[policy.AccountID] = ids
+		}
+		ids[id] = struct{}{}
 	}
-	return out
+	return index
 }
 
 func cleanupRateStateForPolicies(policies map[string]clientPolicy) {
@@ -211,46 +222,89 @@ func cleanupRateStateForPolicies(policies map[string]clientPolicy) {
 	sessionsMu.Unlock()
 }
 
+// applyCredentialEntries changes only the identities belonging to the old and
+// new accounts. Identity conflicts are checked before any mutation, making a
+// rejected credential transaction atomic. The in-place map is always accessed
+// under clientAuthMu; getClientPolicy returns private PSK copies.
 func applyCredentialEntries(handle string, entries map[string]clientPolicy, deleting bool) error {
+	credentialUpdateMu.Lock()
+	defer credentialUpdateMu.Unlock()
+
 	clientAuthMu.Lock()
 	old, hadOld := clientPolicies[handle]
 	if !hadOld && deleting {
 		clientAuthMu.Unlock()
 		return nil
 	}
-	accountID := ""
-	if hadOld {
-		accountID = old.AccountID
-	}
 	if !deleting {
-		if p, ok := entries[handle]; !ok {
+		if !validOpaqueAuthHandle(handle) {
+			clientAuthMu.Unlock()
+			return fmt.Errorf("invalid auth_handle")
+		}
+		if _, ok := entries[handle]; !ok {
 			clientAuthMu.Unlock()
 			return fmt.Errorf("credential does not define requested auth_handle")
-		} else if accountID == "" {
-			accountID = p.AccountID
 		}
 	}
-	next := clonePoliciesLocked()
-	for id, p := range next {
-		if p.AccountID == accountID || (!deleting && p.AccountID == entries[handle].AccountID) {
-			delete(next, id)
+
+	// Unit tests and in-memory bootstrap may initialize clientPolicies without
+	// using loadRuntimeConfig. Rebuild once in that case, not per update.
+	if policyIDsByAccount == nil {
+		policyIDsByAccount = buildPolicyAccountIndex(clientPolicies)
+	}
+	affected := make(map[string]struct{}, 2)
+	if hadOld {
+		affected[old.AccountID] = struct{}{}
+	}
+	if !deleting {
+		newAccount := entries[handle].AccountID
+		affected[newAccount] = struct{}{}
+		for id, p := range entries {
+			if p.AccountID != newAccount {
+				clientAuthMu.Unlock()
+				return fmt.Errorf("credential aliases must share an account")
+			}
+			if existing, exists := clientPolicies[id]; exists {
+				if _, replacing := affected[existing.AccountID]; !replacing {
+					clientAuthMu.Unlock()
+					return fmt.Errorf("credential identity collision %q", id)
+				}
+			}
 		}
+	}
+
+	removed := make(map[string]struct{})
+	for account := range affected {
+		for id := range policyIDsByAccount[account] {
+			delete(clientPolicies, id)
+			removed[id] = struct{}{}
+		}
+		delete(policyIDsByAccount, account)
 	}
 	if !deleting {
 		for id, p := range entries {
-			if existing, exists := next[id]; exists && existing.AccountID != p.AccountID {
-				clientAuthMu.Unlock()
-				return fmt.Errorf("credential identity collision %q", id)
+			// Never retain a slice owned by the JSON decoder/caller. Other
+			// accounts' secrets are deliberately left untouched.
+			p.PSK = append([]byte(nil), p.PSK...)
+			clientPolicies[id] = p
+			if policyIDsByAccount[p.AccountID] == nil {
+				policyIDsByAccount[p.AccountID] = make(map[string]struct{})
 			}
-			next[id] = p
+			policyIDsByAccount[p.AccountID][id] = struct{}{}
+			delete(removed, id)
 		}
 	}
-	clientPolicies = next
+	// The map pointer stays stable. Only affected identities are removed from
+	// the rate limiter; full sweeps are reserved for full configuration reloads.
+	policies := clientPolicies
 	clientAuthMu.Unlock()
-	cleanupRateStateForPolicies(next)
-	// Re-evaluate every active session immediately. Rotated/revoked credentials
-	// close matching sessions, while unrelated accounts retain their sessions.
-	revokeUnauthorizedSessions(next)
+
+	sessionsMu.Lock()
+	for id := range removed {
+		delete(sessionOpenRates, id)
+	}
+	sessionsMu.Unlock()
+	revokeUnauthorizedSessionsForAccounts(policies, affected)
 	return nil
 }
 

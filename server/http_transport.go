@@ -1,6 +1,7 @@
 package main
 
 import (
+	controlmeta "../common/controlmeta"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -106,6 +107,18 @@ func parseDownRequestMeta(r *http.Request) (uint64, uint64, error) {
 		return 0, 0, fmt.Errorf("invalid DOWN ACK")
 	}
 	return seq, ack, nil
+}
+
+// In transition mode missing tags are tolerated for previously deployed
+// clients, but malformed/present tags never fall back to unsigned requests.
+// Switch crypto.require_authenticated_control=true only after all clients
+// emit cmac; this is necessary to resist a compromised HTTP frontend.
+func verifyHTTPControlMeta(s *session, r *http.Request, purpose string, seq, ack uint64) bool {
+	supplied := r.URL.Query().Get("cmac")
+	if supplied == "" {
+		return !requireAuthenticatedControl
+	}
+	return controlmeta.Verify(s.crypto.controlKey, r.Method, purpose, seq, ack, r.URL.Query().Get("max"), supplied)
 }
 
 func cloneDownResponse(r cachedDownResponse) cachedDownResponse {

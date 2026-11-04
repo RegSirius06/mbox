@@ -94,6 +94,9 @@ DEFAULT_AUTH = {
     # Transitional compatibility: new profiles use opaque random auth handles.
     # Set false after all legacy profiles have migrated.
     "accept_legacy_client_ids": "true",
+    # Leave permissive until all deployed clients send session-scoped cmac.
+    # Strict mode rejects unsigned DOWN/UP/CLOSE HTTP controls.
+    "require_authenticated_control": "false",
 }
 
 
@@ -459,6 +462,7 @@ def render_runtime(reload_auth=False, restart=False):
             "server_private_key_file": cp["server"]["server_private_key"],
             "credential_dir": cp["server"]["credential_dir"],
             "credential_reload_socket": cp["server"]["credential_reload_socket"],
+            "require_authenticated_control": cp.getboolean("auth", "require_authenticated_control"),
             "clients": clients,
         },
         "limits": {k:int(cp["limits"][k]) for k in DEFAULT_LIMITS},
@@ -542,6 +546,10 @@ def validate_config(cp):
     for section, key in needed:
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
+    try:
+        cp.getboolean("auth", "require_authenticated_control")
+    except ValueError:
+        die("auth.require_authenticated_control must be true or false")
     credential_dir = Path(cp["server"]["credential_dir"])
     credential_socket = Path(cp["server"]["credential_reload_socket"])
     if not credential_dir.is_absolute():

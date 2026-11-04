@@ -1,6 +1,7 @@
 package main
 
 import (
+	controlmeta "../common/controlmeta"
 	"crypto/sha256"
 	"io"
 	"log"
@@ -125,8 +126,16 @@ func handleUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, basePath+camouflage.UpPath)
-	s, ok := getSession(id)
+	s, ok := lookupSession(id, false)
 	if !ok {
+		camouflageNotFound(w)
+		return
+	}
+	if !verifyHTTPControlMeta(s, r, "UP", seq, ack) {
+		camouflageNotFound(w)
+		return
+	}
+	if !refreshAuthenticatedSession(id, s) {
 		camouflageNotFound(w)
 		return
 	}
@@ -197,8 +206,16 @@ func handleDown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, basePath+camouflage.DownPath)
-	s, ok := getSession(id)
+	s, ok := lookupSession(id, false)
 	if !ok {
+		camouflageNotFound(w)
+		return
+	}
+	if !verifyHTTPControlMeta(s, r, "DOWN", seq, ack) {
+		camouflageNotFound(w)
+		return
+	}
+	if !refreshAuthenticatedSession(id, s) {
 		camouflageNotFound(w)
 		return
 	}
@@ -223,6 +240,21 @@ func handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, basePath+camouflage.ClosePath)
+	s, ok := lookupSession(id, false)
+	if !ok {
+		camouflageNotFound(w)
+		return
+	}
+	cmac := r.URL.Query().Get("cmac")
+	if cmac == "" {
+		if requireAuthenticatedControl {
+			camouflageNotFound(w)
+			return
+		}
+	} else if !controlmeta.Verify(s.crypto.controlKey, r.Method, "CLOSE", 0, 0, "", cmac) {
+		camouflageNotFound(w)
+		return
+	}
 	closeSession(id)
 	w.WriteHeader(http.StatusNoContent)
 }

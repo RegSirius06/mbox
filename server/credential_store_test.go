@@ -57,11 +57,13 @@ func TestIncrementalCredentialRotationRevokesOnlyAffectedAccount(t *testing.T) {
 	writeTestCredential(t, dir, handle, "alice", "alice", 0x22)
 
 	oldPolicies := clientPolicies
+	oldIndex := policyIDsByAccount
 	oldSessions := sessions
 	oldDir := credentialDirPath
 	defer func() {
 		clientAuthMu.Lock()
 		clientPolicies = oldPolicies
+		policyIDsByAccount = oldIndex
 		clientAuthMu.Unlock()
 		sessionsMu.Lock()
 		sessions = oldSessions
@@ -79,6 +81,7 @@ func TestIncrementalCredentialRotationRevokesOnlyAffectedAccount(t *testing.T) {
 		"alice":      {PSK: append([]byte(nil), oldAlice...), AccountID: "alice"},
 		"bob-handle": {PSK: oldBob, AccountID: "bob"},
 	}
+	policyIDsByAccount = buildPolicyAccountIndex(clientPolicies)
 	clientAuthMu.Unlock()
 	alice := testSessionForPolicy(handle, "alice", oldAlice)
 	bob := testSessionForPolicy("bob-handle", "bob", oldBob)
@@ -110,17 +113,20 @@ func TestCredentialAdminSocketReloadsOneFile(t *testing.T) {
 	handle := "ffeeddccbbaa99887766554433221100"
 	writeTestCredential(t, dir, handle, "carol", "", 0x44)
 	oldPolicies := clientPolicies
+	oldIndex := policyIDsByAccount
 	oldDir := credentialDirPath
 	oldSock := credentialReloadSock
 	defer func() {
 		stopCredentialAdminSocket()
 		clientAuthMu.Lock()
 		clientPolicies = oldPolicies
+		policyIDsByAccount = oldIndex
 		clientAuthMu.Unlock()
 		credentialDirPath, credentialReloadSock = oldDir, oldSock
 	}()
 	clientAuthMu.Lock()
 	clientPolicies = map[string]clientPolicy{}
+	policyIDsByAccount = buildPolicyAccountIndex(clientPolicies)
 	clientAuthMu.Unlock()
 	credentialDirPath = dir
 	credentialReloadSock = filepath.Join(t.TempDir(), "credentials.sock")
