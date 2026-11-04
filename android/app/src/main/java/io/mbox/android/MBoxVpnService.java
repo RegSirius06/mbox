@@ -18,12 +18,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
-import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadLocalRandom;
@@ -368,7 +366,7 @@ public class MBoxVpnService extends VpnService {
         List<String> endpointAddresses = new ArrayList<>();
         if (networkDebug) {
             endpointAddresses = resolveEndpointAddresses(endpointHost);
-            logDnsResult(endpointHost, endpointAddresses, true);
+            MBoxDnsDiagnostics.logDnsResult(endpointHost, endpointAddresses, true);
         } else {
             // Avoid an extra resolver query in the normal Cronet persona. Cronet owns
             // DNS/address racing on the explicitly bound physical Network.
@@ -448,34 +446,6 @@ public class MBoxVpnService extends VpnService {
             throw new Exception("ERR_DNS: DNS не вернул адрес для " + host);
         }
         return new ArrayList<>(unique);
-    }
-
-    private void logDnsResult(String host, List<String> addresses, boolean debug) {
-        int v4 = 0;
-        int v6 = 0;
-        List<String> shown = new ArrayList<>();
-        for (String ip : addresses) {
-            if (ip.contains(":")) {
-                v6++;
-            } else {
-                v4++;
-            }
-            shown.add(debug ? ip : redactAddress(ip));
-        }
-        Log.i(TAG, "NET stage=DNS code=DNS_OK host=" + host
-                + " count=" + addresses.size() + " ipv4=" + v4 + " ipv6=" + v6
-                + " addresses=" + String.join(",", shown));
-    }
-
-    private static String redactAddress(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            return String.format(Locale.ROOT, "ip#%02x%02x%02x%02x",
-                    digest[0] & 0xff, digest[1] & 0xff, digest[2] & 0xff, digest[3] & 0xff);
-        } catch (Exception ignored) {
-            return "ip#redacted";
-        }
     }
 
     private static String safeMessage(Throwable error) {

@@ -137,8 +137,10 @@ final class CronetBridge implements Closeable {
              DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
              DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()))) {
             s.setSoTimeout((REQUEST_TIMEOUT_SECONDS + 5) * 1000);
-            BridgeRequest request = readRequest(in);
-            if (!constantTimeEquals(token, request.token)) {
+            BridgeRequest request;
+            try {
+                request = readAuthenticatedRequest(in);
+            } catch (BridgeAuthGate.InvalidTokenException ignored) {
                 writeResponse(out, BridgeResult.error("ERR_ANDROID_BRIDGE_AUTH", "invalid bridge token"));
                 return;
             }
@@ -152,11 +154,11 @@ final class CronetBridge implements Closeable {
         }
     }
 
-    private BridgeRequest readRequest(DataInputStream in) throws Exception {
-        if (in.readInt() != REQUEST_MAGIC) {
-            throw new IOException("invalid bridge request magic");
-        }
-        String suppliedToken = readString16(in, 512);
+    private BridgeRequest readAuthenticatedRequest(DataInputStream in) throws Exception {
+        // Untrusted localhost peers must authenticate BEFORE reading variable-size
+        // headers, paths or up to MAX_BODY bytes into memory. The Go wire format
+        // already sends the token immediately after the four-byte magic.
+        BridgeAuthGate.requireToken(in, REQUEST_MAGIC, token);
         String method = readString16(in, 32);
         if (!"GET".equals(method) && !"POST".equals(method)) {
             throw new IOException("unsupported HTTP method");
@@ -182,7 +184,7 @@ final class CronetBridge implements Closeable {
         }
         byte[] body = new byte[(int) bodyLength];
         in.readFully(body);
-        return new BridgeRequest(suppliedToken, method, path, headers, body);
+        return new BridgeRequest(method, path, headers, body);
     }
 
     private BridgeResult execute(BridgeRequest request) throws Exception {
@@ -433,19 +435,6 @@ final class CronetBridge implements Closeable {
         return out.toString();
     }
 
-    private static boolean constantTimeEquals(String a, String b) {
-        byte[] aa = a.getBytes(StandardCharsets.UTF_8);
-        byte[] bb = b.getBytes(StandardCharsets.UTF_8);
-        int diff = aa.length ^ bb.length;
-        int n = Math.max(aa.length, bb.length);
-        for (int i = 0; i < n; i++) {
-            byte av = i < aa.length ? aa[i] : 0;
-            byte bv = i < bb.length ? bb[i] : 0;
-            diff |= av ^ bv;
-        }
-        return diff == 0;
-    }
-
     private static Thread namedThread(Runnable r, String name) {
         Thread t = new Thread(r, name);
         t.setDaemon(true);
@@ -519,13 +508,11 @@ final class CronetBridge implements Closeable {
     }
 
     private static final class BridgeRequest {
-        final String token;
         final String method;
         final String path;
         final List<Header> headers;
         final byte[] body;
-        BridgeRequest(String token, String method, String path, List<Header> headers, byte[] body) {
-            this.token = token;
+        BridgeRequest(String method, String path, List<Header> headers, byte[] body) {
             this.method = method;
             this.path = path;
             this.headers = headers;

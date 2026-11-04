@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	maxCredentialFileBytes = 64 * 1024
-	maxCredentialFiles     = 1_000_000
+	maxCredentialFileBytes  = 64 * 1024
+	maxCredentialFiles      = 1_000_000
+	maxCredentialAdminConns = 16
 )
 
 type credentialFile struct {
@@ -57,10 +59,16 @@ func credentialFilename(handle string) (string, error) {
 
 func decodeCredentialFile(raw []byte) (credentialFile, map[string]clientPolicy, error) {
 	var c credentialFile
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
 		return c, nil, fmt.Errorf("invalid credential JSON: %w", err)
+	}
+	// A credential is exactly one JSON document. Silently accepting a second
+	// object after the first would make validation and operator review disagree.
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return c, nil, fmt.Errorf("credential has trailing JSON data")
 	}
 	if !validOpaqueAuthHandle(c.AuthHandle) {
 		return c, nil, fmt.Errorf("invalid auth_handle")
@@ -257,7 +265,18 @@ func startCredentialAdminSocket(path string) (net.Listener, error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("credential reload socket must be absolute")
 	}
-	_ = os.Remove(path)
+	// The configured admin socket path must never delete an unrelated file
+	// or a symlink during startup/upgrade. A stale socket can be replaced.
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("credential admin path exists and is not a socket")
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err
@@ -274,12 +293,27 @@ func startCredentialAdminSocket(path string) (net.Listener, error) {
 }
 
 func credentialAdminLoop(ln net.Listener) {
+	credentialAdminLoopWithHandler(ln, handleCredentialAdminConn)
+}
+
+func credentialAdminLoopWithHandler(ln net.Listener, handler func(net.Conn)) {
+	// An untrusted local peer that can connect to the admin socket must not
+	// create unlimited goroutines with idle or partial JSON requests.
+	permits := make(chan struct{}, maxCredentialAdminConns)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go handleCredentialAdminConn(conn)
+		select {
+		case permits <- struct{}{}:
+			go func() {
+				defer func() { <-permits }()
+				handler(conn) // production handler closes the socket
+			}()
+		default:
+			_ = conn.Close()
+		}
 	}
 }
 
@@ -319,7 +353,11 @@ func stopCredentialAdminSocket() {
 		_ = ln.Close()
 	}
 	if credentialReloadSock != "" {
-		_ = os.Remove(credentialReloadSock)
+		// Never unlink an operator file/symlink that appeared at the path
+		// after our listener was started.
+		if info, err := os.Lstat(credentialReloadSock); err == nil && info.Mode()&os.ModeSocket != 0 {
+			_ = os.Remove(credentialReloadSock)
+		}
 	}
 }
 

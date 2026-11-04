@@ -40,7 +40,10 @@ Android's Cronet bridge listens only on `127.0.0.1`, but other local apps
 can still connect without knowing its random per-launch authorization token.
 The pre-auth socket work is therefore bounded: at most 8 active workers and
 32 pending connections. Excess connections are rejected and closed; shutdown
-also closes queued sockets that never entered a worker. A host-JDK regression
+also closes queued sockets that never entered a worker. The 64-byte random
+bridge token is validated before the path, headers or up to 8 MiB request body
+are allocated/read; untrusted localhost peers cannot force pre-auth body
+materialization. A host-JDK regression
 test stresses overload and shutdown cleanup.
 
 This prevents *this specific* unbounded worker-queue / socket accumulation,
@@ -66,3 +69,16 @@ Never commit production keys, DBs, generated runtime configs or provisioning lin
 ## Audit boundary
 
 Noise removes the largest home-grown cryptographic construction, but independent review is still required for framing/AAD/counters, retry/replay, provisioning, Android lifecycle and the Go<->Cronet bridge before any production-security claim.
+
+## Credential admin socket security (post-beta.2.2 hardening candidate)
+
+The on-host credential administration socket now bounds concurrent accepted
+requests to 16; excess connections are closed instead of creating unbounded
+goroutines. Server startup rejects an existing regular file or symlink at the
+configured socket pathname; shutdown only removes actual sockets. Credential
+JSON decoding rejects trailing objects/tokens after the first document. This
+mitigates local availability and input-validation risks, but assumes the
+admin socket directory and server host permissions remain trustworthy.
+
+**Rollout:** This server change is source-only until tested and deployed. The
+working origin is not modified by preparing this patch.
