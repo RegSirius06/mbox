@@ -176,13 +176,13 @@ def test_postdeploy_health_failure_automatically_rolls_back(tmp_path, monkeypatc
     args, _, _, _, _ = fixture_plan(tmp_path, monkeypatch)
     monkeypatch.setattr(m, 'require_root', lambda: None)
     seen = []
-    def fake_ssh(host, script, argv, data=None):
+    def fake_ssh(host, script, argv, data=None, retry_transport=0):
         seen.append((script, argv))
         if script == m._RELAY_SSH_DEPLOY:
             return 'DEPLOY_OK\nBACKUP_ID=20261104-203000-1234abcd\n'
         return 'ROLLBACK_OK\n'
     monkeypatch.setattr(m, '_relay_ssh_call', fake_ssh)
-    monkeypatch.setattr(m, '_relay_public_health', lambda: (_ for _ in ()).throw(RuntimeError('HTTP 404')))
+    monkeypatch.setattr(m, '_relay_wait_public_health', lambda: (_ for _ in ()).throw(RuntimeError('HTTP 404')))
     with pytest.raises(SystemExit):
         m.relay_deploy(args)
     assert len(seen) == 2
@@ -216,3 +216,77 @@ def test_ssh_timeout_is_actionable(monkeypatch, capsys):
                           ('/example/web', '/example/private'))
     assert exc.value.code == 1
     assert 'SSH timed out' in capsys.readouterr().err
+
+
+def test_health_transient_500_recovers_without_rollback(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(m.time, 'sleep', lambda n: calls.append(('sleep', n)))
+    def health():
+        calls.append(('health', None))
+        if sum(x[0] == 'health' for x in calls) < 3:
+            raise RuntimeError('HTTP 500')
+    monkeypatch.setattr(m, '_relay_public_health', health)
+    m._relay_wait_public_health(attempts=4, delay_seconds=2)
+    assert sum(x[0] == 'health' for x in calls) == 3
+    assert [x[1] for x in calls if x[0] == 'sleep'] == [2, 2]
+    assert 'RECOVERED_AFTER_ATTEMPTS=3' in capsys.readouterr().out
+
+
+def test_health_persistent_failure_then_raises(monkeypatch):
+    attempts = []
+    monkeypatch.setattr(m.time, 'sleep', lambda n: attempts.append(('sleep', n)))
+    def fail():
+        attempts.append(('health', None))
+        raise RuntimeError('HTTP 500')
+    monkeypatch.setattr(m, '_relay_public_health', fail)
+    with pytest.raises(RuntimeError, match='failed on 3 attempts'):
+        m._relay_wait_public_health(attempts=3, delay_seconds=1)
+    assert sum(x[0] == 'health' for x in attempts) == 3
+    assert sum(x[0] == 'sleep' for x in attempts) == 2
+
+
+def test_rollback_retries_only_on_ssh_disconnect(monkeypatch, capsys):
+    attempts = []
+    monkeypatch.setattr(m.time, 'sleep', lambda n: None)
+    def ssh_run(cmd, **kwargs):
+        attempts.append(cmd)
+        if len(attempts) < 3:
+            raise subprocess.CalledProcessError(255, cmd, stderr=b'Connection closed by host\n')
+        return subprocess.CompletedProcess(cmd, 0, stdout=b'ROLLBACK_OK\n', stderr=b'')
+    monkeypatch.setattr(m.subprocess, 'run', ssh_run)
+    result = m._relay_ssh_call('host', m._RELAY_SSH_ROLLBACK,
+                               ('/web', '/private', '20261104-173323-179c714d'), retry_transport=2)
+    assert result == 'ROLLBACK_OK\n'
+    assert len(attempts) == 3
+    assert 'retrying (3/3)' in capsys.readouterr().err
+
+
+def test_no_retry_for_remote_validation_failure(monkeypatch):
+    attempts = []
+    def ssh_run(cmd, **kwargs):
+        attempts.append(cmd)
+        raise subprocess.CalledProcessError(1, cmd, stderr=b'ROLLBACK_FAILED: invalid backup\n')
+    monkeypatch.setattr(m.subprocess, 'run', ssh_run)
+    with pytest.raises(SystemExit):
+        m._relay_ssh_call('host', m._RELAY_SSH_ROLLBACK, ('/web', '/private', 'latest'), retry_transport=2)
+    assert len(attempts) == 1
+
+
+def test_rejects_retrying_ssh_deploy(monkeypatch):
+    monkeypatch.setattr(m.subprocess, 'run', lambda *a, **k: pytest.fail('unexpected ssh'))
+    with pytest.raises(ValueError, match='only for rollback'):
+        m._relay_ssh_call('host', m._RELAY_SSH_DEPLOY, ('/web', '/private'), data=b'a', retry_transport=2)
+
+
+def test_rollback_disconnect_prints_actionable_not_confirmed(tmp_path, monkeypatch, capsys):
+    args, *_ = fixture_plan(tmp_path, monkeypatch)
+    monkeypatch.setattr(m, 'require_root', lambda: None)
+    def ssh(host, script, argv, data=None, retry_transport=0):
+        if script == m._RELAY_SSH_DEPLOY:
+            return 'DEPLOY_OK\nBACKUP_ID=20261104-173323-179c714d\n'
+        raise SystemExit(1)
+    monkeypatch.setattr(m, '_relay_ssh_call', ssh)
+    monkeypatch.setattr(m, '_relay_wait_public_health', lambda: (_ for _ in ()).throw(RuntimeError('HTTP 500')))
+    with pytest.raises(SystemExit):
+        m.relay_deploy(args)
+    assert 'AUTOMATIC_ROLLBACK_NOT_CONFIRMED' in capsys.readouterr().err

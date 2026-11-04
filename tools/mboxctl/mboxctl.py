@@ -1768,25 +1768,41 @@ print('BACKUP_ID=' + backup.name)
 '''
 
 
-def _relay_ssh_call(host, script, args, data=None):
+def _relay_ssh_call(host, script, args, data=None, retry_transport=0):
     # Paths and code are quoted as separate shell arguments for the remote SSH
     # command string. Do not use a shell on the *local* host.
+    # Never automatically repeat a deploy: the remote side may have committed
+    # before SSH disconnected. Restoring a known backup ID is idempotent.
+    if retry_transport and (script != _RELAY_SSH_ROLLBACK or data is not None):
+        raise ValueError('SSH transport retries are permitted only for rollback')
     cmd = 'python3 -c ' + shlex.quote(script) + ' ' + ' '.join(shlex.quote(x) for x in args)
-    try:
-        result = subprocess.run(['ssh', host, cmd], input=data, check=True,
-                                timeout=180, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or b'').decode('utf-8', errors='replace')
-        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-        reason = next((line for line in reversed(lines)
-                       if 'ROLLBACK_FAILED:' in line or 'DEPLOY_FAILED:' in line),
-                      lines[-1] if lines else 'remote command failed')
-        die(f'relay SSH failed (exit {exc.returncode}): {reason[:350]}')
-    except subprocess.TimeoutExpired:
-        die('relay SSH timed out; inspect the remote host before retrying')
-    except OSError as exc:
-        die(f'cannot start SSH: {exc}')
+    for attempt in range(retry_transport + 1):
+        try:
+            result = subprocess.run(['ssh', host, cmd], input=data, check=True,
+                                    timeout=180, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+            break
+        except subprocess.CalledProcessError as exc:
+            # OpenSSH uses 255 for connection failures. Remote validation
+            # failures must not be retried; only transport interruptions can.
+            if exc.returncode == 255 and attempt < retry_transport:
+                eprint(f'rollback SSH disconnected; retrying ({attempt + 2}/{retry_transport + 1})')
+                time.sleep(2)
+                continue
+            stderr = (exc.stderr or b'').decode('utf-8', errors='replace')
+            lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+            reason = next((line for line in reversed(lines)
+                           if 'ROLLBACK_FAILED:' in line or 'DEPLOY_FAILED:' in line),
+                          lines[-1] if lines else 'remote command failed')
+            die(f'relay SSH failed (exit {exc.returncode}): {reason[:350]}')
+        except subprocess.TimeoutExpired:
+            if attempt < retry_transport:
+                eprint(f'rollback SSH timed out; retrying ({attempt + 2}/{retry_transport + 1})')
+                time.sleep(2)
+                continue
+            die('relay SSH timed out; inspect the remote host before retrying')
+        except OSError as exc:
+            die(f'cannot start SSH: {exc}')
     output = result.stdout.decode('utf-8', errors='replace')
     if output:
         print(output, end='')
@@ -1802,6 +1818,27 @@ def _relay_public_health():
             raise RuntimeError(f'public health returned HTTP {response.status}')
         # A healthy MBox endpoint can return b'ok', not just b'ready'.
         response.read(128)
+
+
+def _relay_wait_public_health(attempts=12, delay_seconds=3):
+    # FastCGI on shared hosting may briefly return 500 while workers are being
+    # recycled after an atomic executable/config replacement. Do not trigger
+    # rollback on a single transient probe failure.
+    if attempts < 1 or delay_seconds < 0:
+        raise ValueError('invalid relay health retry settings')
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            _relay_public_health()
+            if attempt:
+                print(f'PUBLIC_HEALTH_RECOVERED_AFTER_ATTEMPTS={attempt + 1}')
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                eprint(f'public health not ready ({attempt + 1}/{attempts}): {type(exc).__name__}')
+                time.sleep(delay_seconds)
+    raise RuntimeError(f'public health failed on {attempts} attempts: {last_error}')
 
 
 def relay_deploy(args):
@@ -1832,14 +1869,16 @@ def relay_deploy(args):
         die('remote deployment did not return a verifiable backup ID; inspect remote files before retrying')
     if not args.skip_health_check:
         try:
-            _relay_public_health()
-        except Exception as e:
-            eprint(f'public health failed after relay deploy: {e}; restoring backup {backup_ids[0]}')
+            _relay_wait_public_health()
+        except Exception as exc:
+            backup_id = backup_ids[0]
+            eprint(f'public health failed after retries: {exc}; restoring backup {backup_id}')
             try:
                 _relay_ssh_call(args.ssh, _RELAY_SSH_ROLLBACK,
-                                (webroot, private, backup_ids[0]))
-            except Exception as rollback_error:
-                die(f'public health failed and automatic rollback failed: {rollback_error}')
+                                (webroot, private, backup_id), retry_transport=2)
+            except SystemExit:
+                die('AUTOMATIC_ROLLBACK_NOT_CONFIRMED: inspect REG.RU before retrying '
+                    f'(backup ID: {backup_id})')
             die('public health failed; previous relay restored. Verify Caddy/origin before retrying')
         print('PUBLIC_HEALTH_HTTP_200')
 
@@ -1852,7 +1891,8 @@ def relay_rollback(args):
     private = _relay_deploy_path(args.remote_private_dir, '--remote-private-dir')
     if os.path.commonpath((webroot, private)) in (webroot, private):
         die('private directory must be separate from webroot')
-    _relay_ssh_call(args.ssh, _RELAY_SSH_ROLLBACK, (webroot, private, args.backup_id))
+    _relay_ssh_call(args.ssh, _RELAY_SSH_ROLLBACK,
+                    (webroot, private, args.backup_id), retry_transport=2)
 
 
 def relay_test(args):
