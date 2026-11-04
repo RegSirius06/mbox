@@ -116,7 +116,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPost || validateControlQuery(r, "UP") != nil {
 		camouflageNotFound(w)
 		return
 	}
@@ -196,7 +196,7 @@ func handleUp(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDown(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet || validateControlQuery(r, "DOWN") != nil {
 		camouflageNotFound(w)
 		return
 	}
@@ -235,7 +235,7 @@ func handleDown(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClose(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPost || validateControlQuery(r, "CLOSE") != nil {
 		camouflageNotFound(w)
 		return
 	}
