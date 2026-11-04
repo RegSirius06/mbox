@@ -31,7 +31,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb shell dumpsys package io.mbox.android | grep -E 'versionCode|versionName'
 ```
 
-Expected: `versionCode=6`, `versionName=1.0.0-beta.3`. A debug APK is for local testing only. Verify Internet/TG, reconnect and device reboot. The developer-provided release build must be signed separately.
+Expected: `versionCode=6`, `versionName=1.0.0-beta.3`. Verify Internet/TG, reconnect and device reboot. **Exception for this experimental beta.3 prerelease:** we explicitly ship the debug-signed artifact with a `-debug.apk` filename and prominent warnings. It is not a production release build.
 
 For the root-managed RU VPS, rebuild from the beta.3 tree and deploy only if validation succeeds:
 
@@ -45,50 +45,45 @@ tools/deploy-origin-root.sh --host root@YOUR_RU_VPS --apply
 
 This changes only origin server executable and `mboxctl`; **do not redeploy REG.RU FastCGI** for this version-only delta. Record `mboxctl doctor`, running binary SHA and whether `auth.require_authenticated_control=true` remains effective.
 
-## 3. Sign a public APK, never use the debug artifact
+## 3. Prepare explicitly labelled experimental debug APK
 
-Use a protected Android **release keystore** stored outside the repo and a separately verified expected signer cert SHA-256. Do **not** paste keystore passwords or private keys into chat or commit them.
+For beta.3 only, the operator has chosen to publish the debug-signed APK. Do not confuse it with a production-signed release. The debug APK can be debuggable and is signed with a development key; changing to a release certificate later usually prevents in-place upgrades. Preserve credentials/profiles securely before reinstalling.
 
 ```bash
-export MBOX_RELEASE_KEYSTORE=/secure/path/mbox-release.jks
-export MBOX_RELEASE_KEY_ALIAS=mbox-release
-export MBOX_RELEASE_SIGNER_SHA256=YOUR_EXPECTED_64_HEX_CERT_SHA256
-./tools/build-release-apk.sh
+mkdir -p dist/release
+cp android/app/build/outputs/apk/debug/app-debug.apk dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk
+(cd dist/release && sha256sum MBox-1.0.0-beta.3-android-arm64-debug.apk > MBox-1.0.0-beta.3-android-arm64-debug.apk.sha256)
 ```
 
-This invokes release assembly, aligns and signs the APK, checks the expected signer digest, non-debuggable manifest, and writes an artifact checksum. For updates in-place, signer must match the APK already installed; a debug-signed test APK cannot be upgraded in-place to a release-signed APK with another certificate. Back up/export the profile before uninstalling, and avoid sharing PSKs.
+The regular `tools/build-release-apk.sh` and `tools/check-production-apk.sh` remain intact for a future signed production APK; do not bypass their security checks by renaming a debug APK.
 
-## 4. Publish Git commit, tag and prerelease via GitHub CLI (`gh`)
-
-After all checks, on Arch:
+## 4. Publish via Pull Request, then tag merged main
 
 ```bash
 gh auth status
 git status --short
-# If beta.3 was applied with git am, the release changes are already committed.
-# Do not create an empty duplicate commit.
-git status --short
-git log -3 --oneline
-# Only commit additional local edits, if any, after inspecting them.
 git diff --check
-
 git fetch origin main
-# STOP if this fails: do not force-push or overwrite remote history.
-git merge-base --is-ancestor origin/main HEAD
-# Publish all release source/docs on the default branch:
-git push origin HEAD:main
-
-git tag -a v1.0.0-beta.3 -m 'MBox 1.0.0-beta.3 experimental prerelease'
+# Branch from the local hardening history; do not push it directly onto main.
+git push -u origin HEAD:audit/hardening-2026-11-04
+gh pr create --repo RegSirius06/mbox --base main --head audit/hardening-2026-11-04 --title 'MBox 1.0.0-beta.3 experimental prerelease' --body-file RELEASE_NOTES.ru.md
+gh pr checks --watch
+# Review the PR before merging. Keep feature branch for easy comparison and rollback.
+gh pr merge --merge
+git fetch origin main
+# Verify the merge commit contains beta.3:
+git show origin/main:VERSION
+git tag -a v1.0.0-beta.3 origin/main -m 'MBox 1.0.0-beta.3 experimental prerelease'
 git push origin v1.0.0-beta.3
-
 gh release create v1.0.0-beta.3 \
-  dist/release/MBox-1.0.0-beta.3-android-arm64.apk \
-  dist/release/MBox-1.0.0-beta.3-android-arm64.apk.sha256 \
-  --title 'MBox 1.0.0-beta.3 (experimental prerelease)' \
+  dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk \
+  dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk.sha256 \
+  --repo RegSirius06/mbox \
+  --title 'MBox 1.0.0-beta.3 (experimental debug APK)' \
   --notes-file RELEASE_NOTES.ru.md --prerelease --verify-tag
 ```
 
-If branch protection rejects a direct push or main has diverged, create a PR instead and tag the merge commit **after** merging. Never tag a debug APK or force-push an existing release. Verify remote tag and release assets with `gh release view v1.0.0-beta.3 --json tagName,isPrerelease,assets,url`.
+Stop on any error; do not force-push the main branch, and never put the private keystore, app profile, PSKs, runtime secrets, or server database in Git or GitHub Releases. After merging, verify tag and release asset names with `gh release view v1.0.0-beta.3 --json tagName,isPrerelease,assets,url`.
 
 ## 5. Limitations to declare to testers
 

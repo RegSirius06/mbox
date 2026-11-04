@@ -2,6 +2,8 @@
 
 [Русская версия](RELEASE_NOTES.ru.md)
 
+**Android artifact for this experimental prerelease:** `MBox-1.0.0-beta.3-android-arm64-debug.apk`, signed using the local Android debug key. This is a debuggable, non-production APK. Switching to a different signing certificate later will prevent in-place updates unless a supported signing-key migration exists; preserve the profile securely before reinstalling. Never share embedded credentials publicly.
+
 **Compatibility break with the published beta.2.1:** beta.3 requires authenticated HTTP control metadata (`cmac`) when the origin has `auth.require_authenticated_control=true`. The published beta.2.1 Android client does not send `cmac`. The Noise record suite and existing PSK/profile format have **not** changed. beta.2.2 builds containing `cmac` remain compatible. There is no fallback to unsigned controls in strict mode. The version bump itself does not add another wire incompatibility.
 
 ## What changed since the public beta.2.1
@@ -11,7 +13,7 @@
 - Limit concurrent origin HTTP requests; validate relay HMAC headers before body buffering; amortize bounded replay-nonce cache cleanup.
 - Reject ambiguous, duplicated or encoded aliases of `seq`, `ack`, `max` and `cmac` control query parameters.
 - Root-managed Arch-to-RU-VPS deployment helper with preflight, backup, executable digest verification and rollback.
-- Android package version `1.0.0-beta.3`, `versionCode=6`; `mboxctl` and `VERSION` aligned. A public APK must be signed with a non-debug key and pass pinned-certificate verification.
+- Android package version `1.0.0-beta.3`, `versionCode=6`; `mboxctl` and `VERSION` aligned. The production APK signing gate remains available, but this experimental prerelease explicitly distributes a debug-signed APK and does not claim production release security.
 
 ## Field observations (one test deployment, 2026-11-05)
 
