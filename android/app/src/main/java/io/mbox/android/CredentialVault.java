@@ -9,7 +9,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
@@ -22,7 +21,6 @@ final class CredentialVault {
     private static final String STORE = "AndroidKeyStore";
     private static final String ALIAS = "mbox-profile-secrets-v1";
     private static final byte[] MAGIC = new byte[]{'M','B','X','1'};
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     private CredentialVault() {}
 
@@ -42,10 +40,15 @@ final class CredentialVault {
     }
 
     static void encryptToFile(File destination, String plaintext) throws Exception {
-        byte[] iv = new byte[12];
-        RANDOM.nextBytes(iv);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.ENCRYPT_MODE, key(), new GCMParameterSpec(128, iv));
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+
+        // Android Keystore generates a fresh IV for each encryption.
+        byte[] iv = cipher.getIV();
+        if (iv == null || iv.length != 12) {
+            throw new IllegalStateException("Invalid AES-GCM IV length");
+        }
+
         byte[] encrypted = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
         File parent = destination.getParentFile();
         if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) throw new Exception("Не удалось создать каталог секрета");
