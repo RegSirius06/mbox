@@ -81,6 +81,12 @@ public class MBoxVpnService extends VpnService {
         desiredRunning = getSharedPreferences(STATE_PREFS, MODE_PRIVATE)
                 .getBoolean(PREF_DESIRED_RUNNING, false);
         connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        // Security invariant: restoration may be initiated by Android with a
+        // null intent. Diagnose whether the service was actually recreated,
+        // without logging profile URLs, account identifiers or credentials.
+        Log.i(TAG, "VPN LIFECYCLE onCreate desired=" + desiredRunning
+                + " always_on=" + isAlwaysOn()
+                + " lockdown=" + isLockdownEnabled());
         networkMonitor = new UnderlyingNetworkMonitor(connectivityManager, (previous, current) -> {
             if (!desiredRunning) {
                 return;
@@ -95,6 +101,12 @@ public class MBoxVpnService extends VpnService {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? null : intent.getAction();
+        // Only log the action category, never intent data or extras. These
+        // logs distinguish an Android restart from a user-triggered start.
+        String actionKind = ACTION_START.equals(action) ? "start"
+                : ACTION_STOP.equals(action) ? "stop" : "system_or_null";
+        Log.i(TAG, "VPN LIFECYCLE onStartCommand kind=" + actionKind
+                + " flags=" + flags + " desired=" + desiredRunning);
         if (ACTION_STOP.equals(action)) {
             setDesiredRunning(false);
             requestStop();
@@ -624,6 +636,7 @@ public class MBoxVpnService extends VpnService {
 
     @Override
     public void onDestroy() {
+        Log.i(TAG, "VPN LIFECYCLE onDestroy");
         desiredRunning = false;
         Thread thread;
         synchronized (this) {

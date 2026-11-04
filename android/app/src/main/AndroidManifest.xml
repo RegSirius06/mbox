@@ -36,9 +36,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Allow the Android VPN controller to discover/start this component
+             across system-managed Always-on lifecycle transitions. BIND_VPN_SERVICE is a signature
+             permission, so exporting the component does not let third-party
+             applications bind to or start it. -->
         <service
             android:name=".MBoxVpnService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="systemExempted"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
