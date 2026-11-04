@@ -2,7 +2,7 @@
 
 [Русская версия](README.ru.md) | English
 
-> **Current version: 1.0.0-beta.2.1.** This is a beta.2-compatible hardening release: it keeps the beta.2 Noise wire/credentials and adds P0/P1 network diagnostics, dual-stack resilience, bundled Chromium Cronet for Android public HTTPS, real-device handover recovery, per-device session supersession and a modularized code layout. `v1.0.0-beta.2` remains the previous tagged baseline. beta.2.1 has **not yet been re-qualified under mobile white-list restrictions**.
+> **Development candidate: `1.0.0-beta.2.2`.** Noise wire/credentials remain beta.2-compatible. The new origin hardening and APK signer gate are described in `docs/BETA_2_2_HARDENING_MATRIX_RU.md`. The previous device-tested baseline was beta.2.1. This candidate has not passed device packet-capture or sustained-load release gates.
 
 MBox is an experimental encrypted multiplexed TCP transport designed to work through HTTP intermediaries that buffer complete requests/responses and therefore cannot carry an ordinary long-lived streaming tunnel.
 

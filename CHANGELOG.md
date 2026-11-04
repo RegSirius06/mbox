@@ -1,5 +1,13 @@
 # Changelog
 
+
+## Unreleased — beta.2.2 source candidate
+
+- Limit simultaneous origin requests and reject malformed HMAC headers before reading bodies / Ограничение параллельных HTTP-запросов origin и отказ до чтения body при плохих заголовках.
+- Amortize origin nonce cache cleanup, retain bounded replay state / Периодическая очистка bounded nonce-кэша.
+- Canonicalize UP/DOWN/CLOSE query parser, reject duplicated parameters / Защита от двусмысленных HTTP-параметров.
+- Pin the release Android signing certificate; align beta.2.2 version / Пин сертификата APK и синхронизация версий.
+
 [Русская версия](CHANGELOG.ru.md)
 
 ## 1.0.0-beta.2.1 — 2026-11-02

@@ -1,3 +1,11 @@
+# MBox 1.0.0-beta.2.2 — development candidate (source only)
+
+This is **not** a full production/security-qualified release. Compared with `68f624c`, this series bounds in-flight origin HTTP requests, validates origin signature headers before buffering, amortizes replay nonce cache cleanup, rejects ambiguous HTTP control queries, pins the expected release APK signing certificate, and aligns Android `versionCode=5` / version name. The Noise record and PSK format are unchanged. The public Android package has **not** been built or signed in this environment; applying this patch does **not** deploy any component.
+
+For the complete 55-item checklist and blockers see `docs/BETA_2_2_HARDENING_MATRIX_RU.md`. Physical Android/Lockdown leak tests, native UDP, signed one-time provisioning, multi-day soak and fingerprint laboratory remain outside this candidate.
+
+## Previous beta.2.1 notes
+
 # MBox 1.0.0-beta.2.1
 
 [Русская версия](RELEASE_NOTES.ru.md)
