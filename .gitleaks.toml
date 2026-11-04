@@ -1,0 +1,20 @@
+# Keep default secret detection. Only known synthetic test values are exempt.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public, fixed regression test credential fixtures (not production keys)"
+condition = "AND"
+regexTarget = "secret"
+paths = [
+  '^server/credential_admin_boundary_test\.go$',
+  '^server/credential_file_secure_open_test\.go$',
+  '^tests/BridgeAuthGateHarness\.java$',
+]
+regexes = [
+  '^00112233445566778899aabbccddeeff$',
+  '^0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef$',
+]

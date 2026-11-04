@@ -79,6 +79,9 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: {distribution: temurin, java-version: '${{ env.JAVA_VERSION }}'}
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        # setup-android's default "tools platform-tools" includes the removed "tools" package.
+        with:
+          packages: 'platform-tools'
       - run: yes | sdkmanager --licenses >/dev/null; sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}"
       - run: cd android && ./tools/build-debug.sh
   secret-scan:

@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import shlex
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,10 +13,15 @@ def run_gate(tmp_path, signer_output, manifest_output, signer_exit=0, pinned=Tru
     apk = tmp_path / 'release.apk'
     apk.write_bytes(b'fake-apk-for-script-test')
     signer = bindir / 'apksigner'
-    signer.write_text('#!/bin/sh\n' + 'echo ' + repr(signer_output) + '\n' + f'exit {signer_exit}\n')
+    # Use printf instead of echo: /bin/sh is bash on Arch but dash on Ubuntu.
+    # Their echo implementations disagree about interpreting \n escapes.
+    signer.write_text('#!/bin/sh\n' +
+                      f"printf '%s\\n' {shlex.quote(signer_output)}\n" +
+                      f'exit {signer_exit}\n')
     signer.chmod(0o755)
     aapt = bindir / 'aapt'
-    aapt.write_text('#!/bin/sh\n' + 'echo ' + repr(manifest_output) + '\n')
+    aapt.write_text('#!/bin/sh\n' +
+                    f"printf '%s\\n' {shlex.quote(manifest_output)}\n")
     aapt.chmod(0o755)
     env = dict(os.environ, PATH=str(bindir) + ':' + os.environ['PATH'])
     env.pop('MBOX_RELEASE_SIGNER_SHA256', None)
