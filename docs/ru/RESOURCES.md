@@ -12,6 +12,7 @@ max_total_streams = 1024
 max_stream_opens_per_second = 32
 max_session_opens_per_minute = 180
 max_concurrent_handshakes = 32
+max_concurrent_http_requests = 64
 max_handshake_attempts_per_second = 64
 max_down_queue_bytes = 4 MiB
 max_down_replay_bytes = 8 MiB

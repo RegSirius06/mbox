@@ -15,12 +15,16 @@ max_total_streams = 1024
 max_stream_opens_per_second = 32
 max_session_opens_per_minute = 180
 max_concurrent_handshakes = 32
+max_concurrent_http_requests = 64
 max_handshake_attempts_per_second = 64
 max_down_queue_bytes = 4194304
 max_down_replay_bytes = 8388608
 global_queued_bytes = 67108864
 ```
 
+The maximum in-flight HTTP request cap bounds memory allocated while verifying
+relay-authenticated bodies. Requests exceeding the cap receive a retriable 503
+without being buffered. It is a *concurrency* cap, not a requests-per-second cap.
 The pre-auth handshake caps bound CPU work from invalid OPEN floods before a session is created; denied probes still receive the same generic camouflage 404. The default global transport queue budget is 64 MiB. This is not the entire process RSS: Go stacks, HTTP buffers, crypto state and kernel socket buffers also consume memory. The systemd service additionally sets `GOMEMLIMIT=192MiB` and `MemoryHigh=256M` as soft pressure/GC guidance; it does not impose a kill-on-300-MiB policy.
 
 Use:

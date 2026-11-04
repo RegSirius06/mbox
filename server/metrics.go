@@ -10,13 +10,14 @@ import (
 )
 
 type serverMetricsCounters struct {
-	httpRequests       atomic.Uint64
-	http5xx            atomic.Uint64
-	httpLatencyNanos   atomic.Uint64
-	authFailures       atomic.Uint64
-	handshakeRateLimit atomic.Uint64
-	originAuthFailures atomic.Uint64
-	sessionRejects     atomic.Uint64
+	httpRequests           atomic.Uint64
+	http5xx                atomic.Uint64
+	httpLatencyNanos       atomic.Uint64
+	authFailures           atomic.Uint64
+	handshakeRateLimit     atomic.Uint64
+	originAuthFailures     atomic.Uint64
+	originAdmissionRejects atomic.Uint64
+	sessionRejects         atomic.Uint64
 }
 
 var metricsCounters serverMetricsCounters
@@ -73,6 +74,7 @@ type safeMetricsSnapshot struct {
 	AuthFailures           uint64    `json:"auth_failures"`
 	HandshakeRateLimited   uint64    `json:"handshake_rate_limited"`
 	OriginAuthFailures     uint64    `json:"origin_auth_failures"`
+	OriginAdmissionRejects uint64    `json:"origin_admission_rejects"`
 	SessionAdmissionReject uint64    `json:"session_admission_rejects"`
 }
 
@@ -92,6 +94,7 @@ func collectSafeMetrics() safeMetricsSnapshot {
 		AuthFailures:           metricsCounters.authFailures.Load(),
 		HandshakeRateLimited:   metricsCounters.handshakeRateLimit.Load(),
 		OriginAuthFailures:     metricsCounters.originAuthFailures.Load(),
+		OriginAdmissionRejects: metricsCounters.originAdmissionRejects.Load(),
 		SessionAdmissionReject: metricsCounters.sessionRejects.Load(),
 	}
 	sessionsMu.Lock()

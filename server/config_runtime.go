@@ -42,6 +42,7 @@ type resourceLimitsConfig struct {
 	MaxStreamOpensPerSecond     int `json:"max_stream_opens_per_second"`
 	MaxSessionOpensPerMinute    int `json:"max_session_opens_per_minute"`
 	MaxConcurrentHandshakes     int `json:"max_concurrent_handshakes"`
+	MaxConcurrentHTTPRequests   int `json:"max_concurrent_http_requests"`
 	MaxHandshakeAttemptsPerSec  int `json:"max_handshake_attempts_per_second"`
 	MaxDownQueueBytes           int `json:"max_down_queue_bytes"`
 	MaxDownReplayBytes          int `json:"max_down_replay_bytes"`
@@ -56,6 +57,7 @@ var runtimeLimits = resourceLimitsConfig{
 	MaxStreamOpensPerSecond:     32,
 	MaxSessionOpensPerMinute:    180,
 	MaxConcurrentHandshakes:     32,
+	MaxConcurrentHTTPRequests:   64,
 	MaxHandshakeAttemptsPerSec:  64,
 	MaxDownQueueBytes:           4 * 1024 * 1024,
 	MaxDownReplayBytes:          8 * 1024 * 1024,
@@ -118,6 +120,9 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	if in.MaxConcurrentHandshakes > 0 {
 		out.MaxConcurrentHandshakes = in.MaxConcurrentHandshakes
 	}
+	if in.MaxConcurrentHTTPRequests > 0 {
+		out.MaxConcurrentHTTPRequests = in.MaxConcurrentHTTPRequests
+	}
 	if in.MaxHandshakeAttemptsPerSec > 0 {
 		out.MaxHandshakeAttemptsPerSec = in.MaxHandshakeAttemptsPerSec
 	}
@@ -153,6 +158,9 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	}
 	if out.MaxConcurrentHandshakes < 1 || out.MaxConcurrentHandshakes > 4096 {
 		return out, fmt.Errorf("limits.max_concurrent_handshakes out of range")
+	}
+	if out.MaxConcurrentHTTPRequests < 1 || out.MaxConcurrentHTTPRequests > 4096 {
+		return out, fmt.Errorf("limits.max_concurrent_http_requests out of range")
 	}
 	if out.MaxHandshakeAttemptsPerSec < 1 || out.MaxHandshakeAttemptsPerSec > 100000 {
 		return out, fmt.Errorf("limits.max_handshake_attempts_per_second out of range")

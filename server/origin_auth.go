@@ -15,18 +15,20 @@ import (
 )
 
 const (
-	originTimestampHeader = "X-MBox-Origin-Timestamp"
-	originNonceHeader     = "X-MBox-Origin-Nonce"
-	originSignatureHeader = "X-MBox-Origin-Signature"
-	originAuthSkew        = 60 * time.Second
-	originNonceTTL        = 2 * time.Minute
-	originNonceMax        = 65536
+	originTimestampHeader    = "X-MBox-Origin-Timestamp"
+	originNonceHeader        = "X-MBox-Origin-Nonce"
+	originSignatureHeader    = "X-MBox-Origin-Signature"
+	originAuthSkew           = 60 * time.Second
+	originNonceTTL           = 2 * time.Minute
+	originNonceMax           = 65536
+	originNonceSweepInterval = 5 * time.Second
 )
 
 var (
-	originAuthSecret []byte
-	originNonceMu    sync.Mutex
-	originNonces     = make(map[string]time.Time)
+	originAuthSecret     []byte
+	originNonceMu        sync.Mutex
+	originNonces         = make(map[string]time.Time)
+	originNonceNextSweep time.Time
 )
 
 func originAuthMessage(method, requestPath, rawQuery, ts, nonce string, body []byte) []byte {
@@ -48,12 +50,21 @@ func pruneOriginNoncesLocked(now time.Time) {
 	}
 }
 
+// The replay cache is swept at most once per interval. If it is full, reject
+// new nonces in O(1) until the next sweep; this also bounds CPU under replay
+// saturation. Old entries are also pruned by the background maintenance loop.
 func consumeOriginNonce(nonce string, now time.Time) bool {
 	originNonceMu.Lock()
 	defer originNonceMu.Unlock()
-	pruneOriginNoncesLocked(now)
-	if _, exists := originNonces[nonce]; exists {
-		return false
+	if originNonceNextSweep.IsZero() || !now.Before(originNonceNextSweep) {
+		pruneOriginNoncesLocked(now)
+		originNonceNextSweep = now.Add(originNonceSweepInterval)
+	}
+	if expires, exists := originNonces[nonce]; exists {
+		if expires.After(now) {
+			return false
+		}
+		delete(originNonces, nonce)
 	}
 	if len(originNonces) >= originNonceMax {
 		return false
@@ -62,13 +73,23 @@ func consumeOriginNonce(nonce string, now time.Time) bool {
 	return true
 }
 
-func verifyOriginRequest(r *http.Request, body []byte, now time.Time) error {
+// originAuthPreflight rejects missing, duplicated, malformed and stale signed
+// request metadata before buffering an attacker-controlled HTTP request body.
+// Its checks do NOT authenticate the request: the body HMAC is still mandatory.
+func originAuthPreflight(r *http.Request, now time.Time) error {
 	if len(originAuthSecret) != 32 {
 		return fmt.Errorf("origin authentication unavailable")
 	}
+	if len(r.Header.Values(originTimestampHeader)) != 1 || len(r.Header.Values(originNonceHeader)) != 1 || len(r.Header.Values(originSignatureHeader)) != 1 {
+		return fmt.Errorf("ambiguous origin authentication headers")
+	}
 	tsText := r.Header.Get(originTimestampHeader)
-	nonce := strings.ToLower(r.Header.Get(originNonceHeader))
+	nonce := r.Header.Get(originNonceHeader)
 	sigText := r.Header.Get(originSignatureHeader)
+	// Only canonical encodings are accepted: relays always send lowercase hex.
+	if len(tsText) > 20 || len(nonce) != 32 || len(sigText) != 64 || strings.ToLower(nonce) != nonce || strings.ToLower(sigText) != sigText {
+		return fmt.Errorf("noncanonical origin authentication headers")
+	}
 	ts, err := strconv.ParseInt(tsText, 10, 64)
 	if err != nil {
 		return fmt.Errorf("bad origin timestamp")
@@ -85,6 +106,16 @@ func verifyOriginRequest(r *http.Request, body []byte, now time.Time) error {
 	if err != nil || len(sig) != sha256.Size {
 		return fmt.Errorf("bad origin signature")
 	}
+	return nil
+}
+
+func verifyOriginRequest(r *http.Request, body []byte, now time.Time) error {
+	if err := originAuthPreflight(r, now); err != nil {
+		return err
+	}
+	tsText := r.Header.Get(originTimestampHeader)
+	nonce := r.Header.Get(originNonceHeader)
+	sig, _ := hex.DecodeString(r.Header.Get(originSignatureHeader))
 	expected := originSignature(originAuthSecret, r.Method, r.URL.Path, r.URL.RawQuery, tsText, nonce, body)
 	if !hmac.Equal(sig, expected) {
 		return fmt.Errorf("origin authentication failed")
@@ -98,7 +129,33 @@ func verifyOriginRequest(r *http.Request, body []byte, now time.Time) error {
 }
 
 func originAuthMiddleware(next http.Handler) http.Handler {
+	return originAuthMiddlewareWithLimit(next, runtimeLimits.MaxConcurrentHTTPRequests)
+}
+
+// The semaphore is shared by all requests on the same origin listener. The
+// bounded, non-blocking admission rule prevents unauthenticated request bodies
+// from causing unbounded concurrent buffering (each may be maxRequestBody).
+// A full queue must not spawn a goroutine waiting for capacity.
+func originAuthMiddlewareWithLimit(next http.Handler, maxConcurrent int) http.Handler {
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+	slots := make(chan struct{}, maxConcurrent)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := originAuthPreflight(r, time.Now()); err != nil {
+			metricsCounters.originAuthFailures.Add(1)
+			camouflageNotFound(w)
+			return
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			metricsCounters.originAdmissionRejects.Add(1)
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody+1))
 		if err != nil || len(body) > maxRequestBody {
 			camouflageNotFound(w)

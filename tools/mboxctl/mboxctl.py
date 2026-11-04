@@ -84,6 +84,7 @@ DEFAULT_LIMITS = {
     "max_stream_opens_per_second": "32",
     "max_session_opens_per_minute": "180",
     "max_concurrent_handshakes": "32",
+    "max_concurrent_http_requests": "64",
     "max_handshake_attempts_per_second": "64",
     "max_down_queue_bytes": "4194304",
     "max_down_replay_bytes": "8388608",
@@ -614,7 +615,7 @@ def validate_config(cp):
     max_sessions=int(lm["max_sessions_global"]); default_sessions=int(lm["default_max_sessions_per_client"])
     streams_per_session=int(lm["max_streams_per_session"]); total_streams=int(lm["max_total_streams"])
     stream_rate=int(lm["max_stream_opens_per_second"]); session_rate=int(lm["max_session_opens_per_minute"])
-    handshake_conc=int(lm["max_concurrent_handshakes"]); handshake_rate=int(lm["max_handshake_attempts_per_second"])
+    handshake_conc=int(lm["max_concurrent_handshakes"]); http_conc=int(lm["max_concurrent_http_requests"]); handshake_rate=int(lm["max_handshake_attempts_per_second"])
     down_queue=int(lm["max_down_queue_bytes"]); down_replay=int(lm["max_down_replay_bytes"]); global_queue=int(lm["global_queued_bytes"])
     if not (1 <= max_sessions <= 100000): die("limits.max_sessions_global out of range")
     if default_sessions != -1 and not (1 <= default_sessions <= 10000): die("limits.default_max_sessions_per_client must be -1 or 1..10000")
@@ -624,6 +625,7 @@ def validate_config(cp):
     if not (1 <= stream_rate <= 10000): die("limits.max_stream_opens_per_second out of range")
     if not (1 <= session_rate <= 100000): die("limits.max_session_opens_per_minute out of range")
     if not (1 <= handshake_conc <= 4096): die("limits.max_concurrent_handshakes out of range")
+    if not (1 <= http_conc <= 4096): die("limits.max_concurrent_http_requests out of range")
     if not (1 <= handshake_rate <= 100000): die("limits.max_handshake_attempts_per_second out of range")
     if not (256*1024 <= down_queue <= 256*1024*1024): die("limits.max_down_queue_bytes out of range")
     if not (256*1024 <= down_replay <= 256*1024*1024): die("limits.max_down_replay_bytes out of range")

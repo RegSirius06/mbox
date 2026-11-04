@@ -51,7 +51,15 @@ func startSessionExpiryLoop() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
 		for range t.C {
-			cutoff := time.Now().Add(-5 * time.Minute)
+			now := time.Now()
+			cutoff := now.Add(-5 * time.Minute)
+			// Authentication nonce retention is bounded in both active and idle
+			// periods. Retaining old entries indefinitely after an idle spell
+			// would create a false steady-state heap baseline.
+			originNonceMu.Lock()
+			pruneOriginNoncesLocked(now)
+			originNonceNextSweep = now.Add(originNonceSweepInterval)
+			originNonceMu.Unlock()
 			var expired []string
 
 			sessionsMu.Lock()
