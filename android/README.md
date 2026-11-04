@@ -10,7 +10,9 @@ Android wrapper around the shared Go MBox client core and HEV tun2socks.
 Android apps -> VpnService/TUN -> HEV -> local MBox SOCKS -> MBox HTTPS transport -> shared-host frontend -> MBox server
 ```
 
-The application package is excluded from its own VPN route. In normal `cronet` mode, public HTTPS is delegated over an authenticated loopback bridge to bundled Chromium Cronet; Cronet owns DNS/address racing, TCP/TLS, ALPN and HTTP/2. A non-VPN underlying-network monitor drives real Wi-Fi/mobile handovers without reacting to MBox's own VPN network. The `go` mode remains available for explicit per-IP diagnostics.
+The application is **not** excluded as an entire UID from its own VPN route; the outer Cronet traffic is explicitly bound to the underlying non-VPN network. This improves containment but does not replace physical-interface leak testing or the Android OS Lockdown setting. In normal `cronet` mode, public HTTPS is delegated over an authenticated loopback bridge to bundled Chromium Cronet; Cronet owns DNS/address racing, TCP/TLS, ALPN and HTTP/2. A non-VPN underlying-network monitor drives real Wi-Fi/mobile handovers without reacting to MBox's own VPN network. The `go` mode remains available for explicit per-IP diagnostics.
+
+**Current experimental release:** `1.0.0-beta.3` (`versionCode=6`). Only a release-signed APK passing `tools/check-production-apk.sh` may be distributed; the debug APK is for local device testing. Published beta.2.1 clients do not work with an origin requiring signed `cmac` controls.
 
 ## Build
 

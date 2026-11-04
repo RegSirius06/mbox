@@ -16,6 +16,8 @@ Android apps -> VpnService/TUN -> HEV -> MBox SOCKS
 
 Underlying network monitor подписан только на `INTERNET + NOT_VPN`, поэтому собственный MBox VPN не вызывает self-reconnect. При полном исчезновении связи supervisor ждёт `UNDERLYING_AVAILABLE`, а не долбит сеть вслепую.
 
+**Текущая экспериментальная версия:** `1.0.0-beta.3` (`versionCode=6`). Для раздачи нужен APK, подписанный release-ключом и прошедший `tools/check-production-apk.sh`. Debug APK допустим только для локальных испытаний. Официальный beta.2.1 клиент несовместим с обязательным `cmac`.
+
 ## Сборка на Arch
 
 ```bash

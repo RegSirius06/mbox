@@ -6,7 +6,7 @@ without a packet capture covering the actual Wi-Fi/cellular interfaces.
 
 ## Prerequisites
 
-- Dedicated test phone with MBox beta.2.1 configuration backed up.
+- Dedicated test phone with MBox beta.3 configuration backed up.
 - ADB installed on Arch; USB debugging enabled on phone.
 - In Android Settings -> Network & internet -> VPN -> MBox, enable **Always-on
   VPN** and **Block connections without VPN**. The app cannot enable lockdown

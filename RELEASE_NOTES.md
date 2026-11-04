@@ -1,10 +1,38 @@
-# MBox 1.0.0-beta.2.2 — development candidate (source only)
+# MBox 1.0.0-beta.3 — prerelease notes (2026-11-05)
 
-This is **not** a full production/security-qualified release. Compared with `68f624c`, this series bounds in-flight origin HTTP requests, validates origin signature headers before buffering, amortizes replay nonce cache cleanup, rejects ambiguous HTTP control queries, pins the expected release APK signing certificate, and aligns Android `versionCode=5` / version name. The Noise record and PSK format are unchanged. The public Android package has **not** been built or signed in this environment; applying this patch does **not** deploy any component.
+[Русская версия](RELEASE_NOTES.ru.md)
 
-For the complete 55-item checklist and blockers see `docs/BETA_2_2_HARDENING_MATRIX_RU.md`. Physical Android/Lockdown leak tests, native UDP, signed one-time provisioning, multi-day soak and fingerprint laboratory remain outside this candidate.
+**Compatibility break with the published beta.2.1:** beta.3 requires authenticated HTTP control metadata (`cmac`) when the origin has `auth.require_authenticated_control=true`. The published beta.2.1 Android client does not send `cmac`. The Noise record suite and existing PSK/profile format have **not** changed. beta.2.2 builds containing `cmac` remain compatible. There is no fallback to unsigned controls in strict mode. The version bump itself does not add another wire incompatibility.
 
-## Previous beta.2.1 notes
+## What changed since the public beta.2.1
+
+- Session-bound HMAC authentication of HTTP DOWN/UP/CLOSE control metadata; origin rejects unsigned requests in strict mode. The REG.RU FastCGI relay does not need to hold client PSKs.
+- Incremental account/credential updates instead of copying the full credentials map on every user change.
+- Limit concurrent origin HTTP requests; validate relay HMAC headers before body buffering; amortize bounded replay-nonce cache cleanup.
+- Reject ambiguous, duplicated or encoded aliases of `seq`, `ack`, `max` and `cmac` control query parameters.
+- Root-managed Arch-to-RU-VPS deployment helper with preflight, backup, executable digest verification and rollback.
+- Android package version `1.0.0-beta.3`, `versionCode=6`; `mboxctl` and `VERSION` aligned. A public APK must be signed with a non-debug key and pass pinned-certificate verification.
+
+## Field observations (one test deployment, 2026-11-05)
+
+- Origin successfully updated on the root-managed RU VPS; backup/restore and `mboxctl doctor` passed, and the running executable digest matched the Arch build.
+- New Android build installed over the prior build; MBox connected through unchanged REG.RU FastCGI, Telegram loaded and cellular Internet worked during active operator allow-list restrictions.
+- Android reportedly resumed VPN after reboot; `auth.require_authenticated_control=true` was enabled on origin and the updated client continued to transfer traffic.
+- These are operator observations for one deployment, **not** evidence of universal operator compatibility, lack of traffic leaks or 24/7 stability. Carrier not specified for this test.
+
+## Known limitations and remaining release gates
+
+- The encrypted tunnel transports TCP streams only. SOCKS UDP ASSOCIATE/BIND are rejected; native UDP is not implemented. UDP-dependent apps may fail, and there is no verified physical-interface leak-proof result.
+- Physical Android Wi-Fi/LTE packet captures for DNS/TCP/UDP/IPv6 and process-crash/Always-on Lockdown remain required. Users should enable Android Always-on VPN and Block connections without VPN where available.
+- Signed one-time enrollment, long-run soak/load tests, multi-origin HA and full Chrome/Cronet traffic fingerprint comparison are not complete.
+- Cronet is a Chromium-derived HTTP stack, **not** evidence that MBox is indistinguishable from Chrome or reliably bypasses every DPI/allow-list policy.
+- REG.RU host is a separate shared-hosting FastCGI frontend, unchanged by the beta.3 version-only patch. Check current provider terms before new deployments.
+
+This is an **experimental prerelease**, not a production-security certification or closure of all 55 hardening requirements. See `docs/BETA_3_RELEASE_STATUS.md` and `docs/BETA_2_2_HARDENING_MATRIX_RU.md` for the continuing open items.
+
+---
+
+## Historical beta.2.1 notes
 
 # MBox 1.0.0-beta.2.1
 

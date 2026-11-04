@@ -1,119 +1,95 @@
-# MBox 1.0.0-beta.2.1 release checklist
+# MBox `1.0.0-beta.3` prerelease checklist
 
 [Русская версия](RELEASE_CHECKLIST.ru.md)
 
-This checklist is for preparing `v1.0.0-beta.2.1` from the current `audit/p0-p1-fingerprint-modular` branch. Do **not** move or overwrite the released `v1.0.0-beta.2` tag; beta.2.1 is a new compatible tag.
+This checklist uses **Arch for builds/tests**, **root-managed RU VPS** for origin and a **separate REG.RU shared-hosting FastCGI** frontend. Beta.3 only updates version strings and release documentation beyond the field-tested beta.2.2 code; the released beta.2.1 Android client is incompatible with strict `cmac`.
 
-## 1. Keep production secrets out of Git
-
-Never stage:
-
-- `/etc/mbox/`;
-- `/var/lib/mbox/users.db*`;
-- `*.psk`, private `*.key`;
-- real `mbox://` links/QRs;
-- generated production `server.json` / `relay.json`;
-- backup/rollback archives.
-
-Run the secret scan and manually review every provisioning-like hit.
-
-## 2. Confirm calibrated defaults
-
-The current real-device calibration uses:
-
-```text
-max_streams_per_session = 128
-max_total_streams = 1024
-```
-
-Verify both the Go server default and `mboxctl` generated default agree:
-
-```bash
-grep -RInE 'MaxStreamsPerSession:.*128|max_streams_per_session.*128' \
-  server tools/mboxctl docs README.md
-```
-
-## 3. Automated gate
+## 1. Freeze code and run gates on Arch
 
 ```bash
 cd ~/src/mbox-main
-export GO111MODULE=off
-
-for d in common/noise server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do
-  (cd "$d" && go test ./...) || exit 1
-done
-
-(cd common/noise && go test -race ./...)
-(cd server && go test -race ./...)
-(cd client && go test -race -count=20 ./...)
-
-(cd server && go vet ./...)
-(cd client && go vet ./...)
-(cd relay && go vet ./...)
-(cd tools/mbox-netprobe && go vet ./...)
-
-python -m pytest -q tests
-python tools/check-source-layout.py
-git diff --check
-./tools/secret-scan.sh
-```
-
-## 4. Android build and real-device sanity check
-
-Use Java 17:
-
-```bash
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 export PATH="$JAVA_HOME/bin:$PATH"
-hash -r
-./android/tools/build-debug.sh
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+git status --short
+cat VERSION
+python3 -m pytest -q tests
+python3 tools/check-source-layout.py
+GO111MODULE=off go test ./common/noise ./common/controlmeta ./server ./client ./relay
+GO111MODULE=off go test -race ./common/controlmeta ./server ./client ./relay
+GO111MODULE=off go vet ./common/noise ./common/controlmeta ./server ./client ./relay
+./tools/secret-scan.sh
+git diff --check
 ```
 
-Confirm the live log contains:
+For a release, review actual CI, Android build, field leak/Lockdown risks and the open items in `docs/BETA_3_RELEASE_STATUS.md`. Unit tests alone do not establish fail-closed behavior.
 
-```text
-stack=cronet
-proto=HTTP/2.0
-alpn=h2
-MBOX_OPEN_OK
-NOISE_OK
-TUNNEL_ESTABLISHED
-```
-
-Then exercise Wi-Fi/mobile handover and one airplane-mode cycle. A hard disconnect should show `WAIT_UNDERLYING`, and the server should show `SESSION SUPERSEDE` when the same device reconnects.
-
-## 5. Documentation gate
-
-Before commit verify:
-
-- `CHANGELOG.md` / `CHANGELOG.ru.md`;
-- `RELEASE_NOTES.md` / `.ru.md`;
-- English and Russian README files;
-- `docs/REG_RU_SHARED_HOSTING.md` and Russian equivalent;
-- `docs/STATUS.md`, `STEALTH.md`, `SECURITY.md`, `NETWORK_COMPATIBILITY.md`, `OPERATOR_TEST.md`;
-- no documentation claims that Cronet is byte-for-byte Chrome;
-- no documentation claims MegaFon is fixed;
-- current branch is explicitly marked **not yet field-tested under active white-list restrictions**.
-
-## 6. Commit and push the development branch
+## 2. Update Android, check origin and REG.RU
 
 ```bash
-git add -A
-git diff --cached --check
-git status --short
-git diff --cached --stat
-
-git commit -m 'Harden networking, add Cronet transport and robust Android handover'
-git push -u origin audit/p0-p1-fingerprint-modular
+./android/tools/build-debug.sh
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb shell dumpsys package io.mbox.android | grep -E 'versionCode|versionName'
 ```
 
-Do not tag the next release yet. First perform the operator field matrix.
+Expected: `versionCode=6`, `versionName=1.0.0-beta.3`. A debug APK is for local testing only. Verify Internet/TG, reconnect and device reboot. The developer-provided release build must be signed separately.
 
-## 7. Outstanding field qualification before next tag
+For the root-managed RU VPS, rebuild from the beta.3 tree and deploy only if validation succeeds:
 
-- active white-list tests on MTS and T2 to confirm no regression;
-- MegaFon test;
-- controlled `.fun` vs `.ru` on the same REG.RU shared-host backend;
-- Chrome vs MBox Cronet vs MBox Go fingerprint capture;
-- longer soak/load qualification and independent security review.
+```bash
+mkdir -p dist/vps
+(cd server && GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ../dist/vps/mbox-server .)
+tools/deploy-origin-root.sh --host root@YOUR_RU_VPS
+# Only once dry-run and build succeed:
+tools/deploy-origin-root.sh --host root@YOUR_RU_VPS --apply
+```
+
+This changes only origin server executable and `mboxctl`; **do not redeploy REG.RU FastCGI** for this version-only delta. Record `mboxctl doctor`, running binary SHA and whether `auth.require_authenticated_control=true` remains effective.
+
+## 3. Sign a public APK, never use the debug artifact
+
+Use a protected Android **release keystore** stored outside the repo and a separately verified expected signer cert SHA-256. Do **not** paste keystore passwords or private keys into chat or commit them.
+
+```bash
+export MBOX_RELEASE_KEYSTORE=/secure/path/mbox-release.jks
+export MBOX_RELEASE_KEY_ALIAS=mbox-release
+export MBOX_RELEASE_SIGNER_SHA256=YOUR_EXPECTED_64_HEX_CERT_SHA256
+./tools/build-release-apk.sh
+```
+
+This invokes release assembly, aligns and signs the APK, checks the expected signer digest, non-debuggable manifest, and writes an artifact checksum. For updates in-place, signer must match the APK already installed; a debug-signed test APK cannot be upgraded in-place to a release-signed APK with another certificate. Back up/export the profile before uninstalling, and avoid sharing PSKs.
+
+## 4. Publish Git commit, tag and prerelease via GitHub CLI (`gh`)
+
+After all checks, on Arch:
+
+```bash
+gh auth status
+git status --short
+# If beta.3 was applied with git am, the release changes are already committed.
+# Do not create an empty duplicate commit.
+git status --short
+git log -3 --oneline
+# Only commit additional local edits, if any, after inspecting them.
+git diff --check
+
+git fetch origin main
+# STOP if this fails: do not force-push or overwrite remote history.
+git merge-base --is-ancestor origin/main HEAD
+# Publish all release source/docs on the default branch:
+git push origin HEAD:main
+
+git tag -a v1.0.0-beta.3 -m 'MBox 1.0.0-beta.3 experimental prerelease'
+git push origin v1.0.0-beta.3
+
+gh release create v1.0.0-beta.3 \
+  dist/release/MBox-1.0.0-beta.3-android-arm64.apk \
+  dist/release/MBox-1.0.0-beta.3-android-arm64.apk.sha256 \
+  --title 'MBox 1.0.0-beta.3 (experimental prerelease)' \
+  --notes-file RELEASE_NOTES.ru.md --prerelease --verify-tag
+```
+
+If branch protection rejects a direct push or main has diverged, create a PR instead and tag the merge commit **after** merging. Never tag a debug APK or force-push an existing release. Verify remote tag and release assets with `gh release view v1.0.0-beta.3 --json tagName,isPrerelease,assets,url`.
+
+## 5. Limitations to declare to testers
+
+TCP-only; UDP-dependent apps may fail. Do not claim leak-free VPN: Android Lockdown + physical packet capture still pending. Distinguish REG.RU metadata visibility from ISP DPI. Do not distribute reusable PSK profiles in public issue threads. Keep the deployment credentials and databases out of Git.

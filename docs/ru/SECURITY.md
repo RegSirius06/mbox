@@ -2,7 +2,7 @@
 
 [English](../SECURITY.md)
 
-MBox экспериментальный и не проходил независимый security audit.
+MBox `1.0.0-beta.3` экспериментальный и не проходил независимый security audit. Строгий `cmac` защищает HTTP управляющие поля UP/DOWN/CLOSE при `auth.require_authenticated_control=true`: публичный beta.2.1 клиент с ним несовместим. Отсутствие DNS/TCP/UDP/IPv6 утечек ещё не доказано физическими packet captures.
 
 - сессии используют `Noise_NKpsk0_25519_AESGCM_SHA256`;
 - legacy crypto downgrade отсутствует;

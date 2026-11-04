@@ -10,7 +10,7 @@ Treat this only as a historical/local observation. Carrier filtering can differ 
 
 ## Current branch status
 
-MBox `1.0.0-beta.2.1` has **not yet been re-tested during active white-list restrictions**. Its public shared-host/FastCGI topology and beta.2 MBox wire semantics are preserved, while Android public HTTPS moved from Go networking to bundled Chromium Cronet. Therefore no compatibility regression is expected on networks where the old deployment already worked, but that expectation still requires field confirmation.
+On **2026-11-05**, the operator tested the updated beta.2.2 code (renamed beta.3) with active mobile Internet allow-list restrictions. Telegram and regular browsing worked through the existing REG.RU FastCGI → RU VPS path. The mobile carrier was not specified; this confirms only that individual test, **not** carrier-wide reliability or absence of packet leaks. The official beta.2.1 Android APK is incompatible with strict origin `cmac`.
 
 MegaFon remains unknown for the current build. Do not describe it as fixed or broken until a controlled test is run.
 

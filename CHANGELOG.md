@@ -1,14 +1,16 @@
 # Changelog
 
-
-## Unreleased — beta.2.2 source candidate
-
-- Limit simultaneous origin requests and reject malformed HMAC headers before reading bodies / Ограничение параллельных HTTP-запросов origin и отказ до чтения body при плохих заголовках.
-- Amortize origin nonce cache cleanup, retain bounded replay state / Периодическая очистка bounded nonce-кэша.
-- Canonicalize UP/DOWN/CLOSE query parser, reject duplicated parameters / Защита от двусмысленных HTTP-параметров.
-- Pin the release Android signing certificate; align beta.2.2 version / Пин сертификата APK и синхронизация версий.
-
 [Русская версия](CHANGELOG.ru.md)
+
+## 1.0.0-beta.3 — 2026-11-05 (experimental prerelease)
+
+- **Breaking change vs published beta.2.1:** with strict `cmac` enabled on origin, the published beta.2.1 Android APK cannot authenticate HTTP UP/DOWN/CLOSE control requests. Noise records and PSK profiles are unchanged; beta.2.2 builds with `cmac` remain compatible.
+- Session-bound `cmac` rejects forged ACK, counter, max and CLOSE mutations through untrusted HTTP frontend in strict mode.
+- Incremental credential map updates avoid whole-map copies for single-user operations.
+- P1 origin hardening: bounded concurrent requests; early relay HMAC-header rejection; amortized replay nonce TTL cleanup; strict canonical control query parser and fuzz checks.
+- Reversible root-managed VPS deployment; release-signature pinned-certificate gate; Android `versionCode=6` / CLI/version alignment.
+- Single-device field check under active mobile allow-list restrictions on 2026-11-05: connection and Telegram worked through unchanged REG.RU relay. No physical packet capture or multi-day soak was completed.
+- Remains experimental TCP-only transport, not a completed security audit or claim of universal DPI compatibility. See `RELEASE_NOTES.md`.
 
 ## 1.0.0-beta.2.1 — 2026-11-02
 

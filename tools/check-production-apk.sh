@@ -64,6 +64,11 @@ if ! grep -q "package: name='io.mbox.android'" <<< "$package_info"; then
     echo 'FAIL: unexpected Android application ID' >&2
     exit 1
 fi
+# Refuse a signed APK with a stale version masquerading as the new release.
+if ! grep -q "versionCode='6' versionName='1.0.0-beta.3'" <<< "$package_info"; then
+    echo 'FAIL: APK manifest version does not match beta.3' >&2
+    exit 1
+fi
 if grep -Eqi 'application-debuggable|debuggable[=: ]+true' <<< "$package_info"; then
     echo 'FAIL: APK sets android:debuggable=true' >&2
     exit 1

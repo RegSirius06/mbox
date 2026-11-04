@@ -1,4 +1,7 @@
-# Security notes
+# Security
+
+**Current beta.3 boundary:** the operator enabled `auth.require_authenticated_control=true` on the test RU VPS on 2026-11-05, and a new Android build continued to work through the REG.RU FastCGI relay. Official beta.2.1 Android lacks `cmac`, so it is incompatible in strict mode. This authenticates HTTP controls; it does **not** demonstrate Android physical-interface leak protection or exact browser fingerprinting.
+ notes
 
 [Русская версия](ru/SECURITY.md)
 

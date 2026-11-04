@@ -1,14 +1,15 @@
 # История изменений
 
+## 1.0.0-beta.3 — 2026-11-05 (предварительный релиз)
 
-## Не выпущено — кандидат beta.2.2
+- **Несовместимость с публичной beta.2.1:** при обязательном `cmac` старый клиент не сможет выполнять HTTP UP/DOWN/CLOSE. Noise и PSK/профили не менялись; beta.2.2 с `cmac` совместима.
+- Аутентификация управляющих HTTP-параметров, защита ACK/CLOSE от подделки посредником.
+- Инкрементальное обновление credentials без копирования всей таблицы.
+- Защита origin от перегрузки, ранняя проверка HMAC-заголовков, ограниченный nonce cache и строгий разбор параметров `seq/ack/max/cmac`.
+- Скрипт контролируемого обновления root-managed VPS, требование pinned release APK signer, Android `versionCode=6` и согласованный CLI.
+- Полевое наблюдение 05.11.2026: на одном Android новая версия работала через REG.RU во время активных мобильных белых списков. Отсутствие утечек packet capture и 24/7 нагрузка не проверены.
 
-- Limit simultaneous origin requests and reject malformed HMAC headers before reading bodies / Ограничение параллельных HTTP-запросов origin и отказ до чтения body при плохих заголовках.
-- Amortize origin nonce cache cleanup, retain bounded replay state / Периодическая очистка bounded nonce-кэша.
-- Canonicalize UP/DOWN/CLOSE query parser, reject duplicated parameters / Защита от двусмысленных HTTP-параметров.
-- Pin the release Android signing certificate; align beta.2.2 version / Пин сертификата APK и синхронизация версий.
-
-Русская сводка текущей ветки. Полная историческая версия: [CHANGELOG.md](CHANGELOG.md).
+Архив предыдущих версий: [CHANGELOG.md](CHANGELOG.md).
 
 ## 1.0.0-beta.2.1 — 2026-11-02
 

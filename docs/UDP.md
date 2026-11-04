@@ -1,4 +1,4 @@
-# UDP policy and acceptance boundary (experimental post-beta.2.2 client)
+# UDP policy and acceptance boundary (beta.3 experimental client)
 
 MBox currently implements authenticated/encrypted **TCP streams**, not native
 UDP datagrams. `hev-socks5-tunnel` supports UDP-in-UDP and UDP-in-TCP. Its
@@ -14,7 +14,7 @@ to the remote SOCKS service. `BIND` (`0x02`), `UDP ASSOCIATE` (`0x03`) and
 unknown commands return SOCKS reply `0x07` (command not supported). Unknown
 address types return `0x08`. No unsupported command crosses the MBox tunnel.
 The greeting and CONNECT request are forwarded byte-for-byte, retaining
-compatibility with the server-side SOCKS5 service and beta.2.1 record format.
+compatibility with the server-side SOCKS5 service and existing Noise/TCP record format.
 The handshake has a 30-second deadline, and buffers are bounded by SOCKS5
 field lengths. A rejected command closes its TCP stream and releases resources.
 
@@ -36,7 +36,7 @@ settings on itself.
 1. Enable Android Always-on and "Block connections without VPN". Verify
    both settings; **do not** run disruptive tests before they are enabled.
 2. Confirm TCP browsing, Telegram messages/images and an IPv6-capable target.
-   Preserve the existing beta.2.1 profile as a rollback candidate.
+   Preserve the existing user profile as a rollback candidate.
 3. Attempt SOCKS5 UDP ASSOCIATE and BIND locally through an authorized test
    harness; they must receive `05 07` and cause **zero** outgoing UDP packets.
 4. Collect client-side VPN/TUN and physical Wi-Fi/cellular packet captures,

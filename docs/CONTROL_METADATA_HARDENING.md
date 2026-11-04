@@ -1,4 +1,7 @@
-# MBox control metadata authentication — staged beta hardening
+# MBox control metadata authentication — beta.3 strict control MAC
+
+**Status 2026-11-05:** origin was configured with `auth.require_authenticated_control=true` and the updated Android client continued to work via REG.RU. The public beta.2.1 Android APK omits `cmac` and cannot be used with this strict mode. Noise records and PSK profiles are unchanged. Instructions below describe the historical staged rollout and do not imply beta.3 is backward compatible with the publicly released beta.2.1.
+
 
 ## Threat model and protocol
 
@@ -36,7 +39,7 @@ handler; this cannot be selected by the relay independently of the handler.
    client. The current server ignores the extra `cmac` query parameter, so
    this first stage is backward-compatible (but **not yet enforcing security**).
 3. Upgrade and smoke-test the server on a separate staging instance using
-   `crypto.require_authenticated_control=false` (the default). The server
+   `auth.require_authenticated_control=false` (the default). The server
    validates a supplied MAC, but accepts missing MACs for old clients. A
    compromised relay can still strip MACs **in this transitional mode**.
 4. Once every client is on the patched build, perform a controlled production
@@ -44,22 +47,22 @@ handler; this cannot be selected by the relay independently of the handler.
    REG.RU and record/replay behavior. Retire old clients.
 5. Only **after** verifying every client emits MACs, activate strict mode:
 
-   `sudo mboxctl config set auth.require_authenticated_control true`
+   `mboxctl config set auth.require_authenticated_control true`
 
    This regenerates runtime config and **restarts the server**, dropping
    existing sessions. Schedule it; do **not** execute prematurely. Confirm
-   `crypto.require_authenticated_control` is `true` in the generated server
+   `auth.require_authenticated_control` is `true` in the generated server
    runtime config. An older Android/client build that omits `cmac` will not
    be able to transfer data or close sessions in strict mode.
 6. Rollback if needed by restoring the previous binaries/config and the
    previous compatible client. To disable strict mode on the new server:
 
-   `sudo mboxctl config set auth.require_authenticated_control false`
+   `mboxctl config set auth.require_authenticated_control false`
 
    The rollback command also restarts the service. Transition mode does not
    meet the threat model of an untrusted relay.
 
-**Production was not modified by this patch.** Do not activate strict mode on
+**This historical patch originally did not deploy itself; field deployment was subsequently confirmed on 2026-11-05.** Do not activate strict mode on
 an unrehearsed system or before all clients are updated.
 
 ## Guarantees and exclusions
