@@ -2,7 +2,21 @@
 
 [Русская версия](ru/STATUS.md)
 
-## 1.0.0-beta.2.1 (current version)
+## Current: `1.0.0-beta.3` (experimental prerelease, 2026-11-05)
+
+- **Deployed as code on one test setup:** Android + root-managed RU VPS + existing REG.RU FastCGI; cellular data worked during active allow-list restrictions and Telegram loaded.
+- **Compatibility:** published beta.2.1 Android lacks `cmac`; origin with `auth.require_authenticated_control=true` rejects it. Noise record suite and profile/PSK bytes are unchanged. beta.2.2 clients built with `cmac` remain compatible.
+- **Network:** Android full-route TUN, Cronet-based HTTPS/H2, TCP-over-Noise, local SOCKS rejects UDP ASSOCIATE/BIND; native UDP is not implemented.
+- **Not accepted:** physical-interface DNS/TCP/UDP/IPv6 leak captures, Android crash/Lockdown, 24-72h soak, high-concurrency relay testing, one-time signed enrollment and Chrome/Cronet fingerprint regression.
+- **Release policy:** no debug-signed APK in public GitHub release; pin release signing certificate and publish checksum. Experimental prerelease must not be presented as a production-security audit.
+
+See `../RELEASE_NOTES.md`, `BETA_3_RELEASE_STATUS.md`, `ANDROID_FAIL_CLOSED_TEST_PLAN.md`.
+
+---
+
+## Historical beta.2.1 status (2026-11-02)
+
+## 1.0.0-beta.2.1 (historical)
 
 `1.0.0-beta.2.1` is a beta.2-compatible hardening release candidate/current tree. It preserves the beta.2 Noise wire and credentials while replacing Android public HTTPS with bundled Chromium Cronet and adding the diagnostics/lifecycle/resource hardening below.
 
@@ -42,7 +56,7 @@ The development build was built and installed on a real ARM64 Android device. Lo
 - server `SESSION SUPERSEDE` of stale sessions from the same device;
 - stream counts falling after idle, with a measured stress peak of 64 concurrent streams.
 
-### Still open before finalizing/tagging beta.2.1
+### At-the-time open items for beta.2.1
 
 - field tests during active mobile white-list restrictions on MTS/T2/MegaFon;
 - controlled `.fun` vs `.ru` test on the same shared-host backend;

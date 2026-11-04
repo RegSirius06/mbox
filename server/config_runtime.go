@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
 type runtimeTransportConfig struct {
-	Listen   string `json:"listen"`
-	Upstream string `json:"upstream"`
-	BasePath string `json:"base_path"`
+	Listen               string `json:"listen"`
+	Upstream             string `json:"upstream"`
+	BasePath             string `json:"base_path"`
+	OriginHMACSecretFile string `json:"origin_hmac_secret_file"`
 }
 
 type runtimeClientConfig struct {
@@ -22,12 +24,14 @@ type runtimeClientConfig struct {
 	PSK         string `json:"psk,omitempty"`
 	MaxSessions int    `json:"max_sessions,omitempty"` // 0 = use server default, -1 = unlimited
 	ExpiresAt   string `json:"expires_at,omitempty"`   // RFC3339; empty = no expiry
+	InternalID  string `json:"internal_id,omitempty"`
 }
 
 type clientPolicy struct {
 	PSK         []byte
 	MaxSessions int
 	ExpiresAt   time.Time
+	AccountID   string
 }
 
 type resourceLimitsConfig struct {
@@ -38,6 +42,7 @@ type resourceLimitsConfig struct {
 	MaxStreamOpensPerSecond     int `json:"max_stream_opens_per_second"`
 	MaxSessionOpensPerMinute    int `json:"max_session_opens_per_minute"`
 	MaxConcurrentHandshakes     int `json:"max_concurrent_handshakes"`
+	MaxConcurrentHTTPRequests   int `json:"max_concurrent_http_requests"`
 	MaxHandshakeAttemptsPerSec  int `json:"max_handshake_attempts_per_second"`
 	MaxDownQueueBytes           int `json:"max_down_queue_bytes"`
 	MaxDownReplayBytes          int `json:"max_down_replay_bytes"`
@@ -52,6 +57,7 @@ var runtimeLimits = resourceLimitsConfig{
 	MaxStreamOpensPerSecond:     32,
 	MaxSessionOpensPerMinute:    180,
 	MaxConcurrentHandshakes:     32,
+	MaxConcurrentHTTPRequests:   64,
 	MaxHandshakeAttemptsPerSec:  64,
 	MaxDownQueueBytes:           4 * 1024 * 1024,
 	MaxDownReplayBytes:          8 * 1024 * 1024,
@@ -59,8 +65,11 @@ var runtimeLimits = resourceLimitsConfig{
 }
 
 type runtimeCryptoConfig struct {
-	ServerPrivateKeyFile string                         `json:"server_private_key_file"`
-	Clients              map[string]runtimeClientConfig `json:"clients"`
+	ServerPrivateKeyFile        string                         `json:"server_private_key_file"`
+	CredentialDir               string                         `json:"credential_dir,omitempty"`
+	CredentialReloadSocket      string                         `json:"credential_reload_socket,omitempty"`
+	RequireAuthenticatedControl bool                           `json:"require_authenticated_control,omitempty"`
+	Clients                     map[string]runtimeClientConfig `json:"clients"`
 }
 
 type runtimeConfig struct {
@@ -71,10 +80,11 @@ type runtimeConfig struct {
 }
 
 var (
-	basePath       string
-	clientAuthMu   sync.RWMutex
-	clientPolicies = map[string]clientPolicy{}
-	coverCfg       coverConfig
+	basePath                    string
+	clientAuthMu                sync.RWMutex
+	clientPolicies              = map[string]clientPolicy{}
+	coverCfg                    coverConfig
+	requireAuthenticatedControl bool
 )
 
 func runtimeConfigPath(defaultPath string) string {
@@ -109,6 +119,9 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	}
 	if in.MaxConcurrentHandshakes > 0 {
 		out.MaxConcurrentHandshakes = in.MaxConcurrentHandshakes
+	}
+	if in.MaxConcurrentHTTPRequests > 0 {
+		out.MaxConcurrentHTTPRequests = in.MaxConcurrentHTTPRequests
 	}
 	if in.MaxHandshakeAttemptsPerSec > 0 {
 		out.MaxHandshakeAttemptsPerSec = in.MaxHandshakeAttemptsPerSec
@@ -145,6 +158,9 @@ func normalizeLimits(in resourceLimitsConfig) (resourceLimitsConfig, error) {
 	}
 	if out.MaxConcurrentHandshakes < 1 || out.MaxConcurrentHandshakes > 4096 {
 		return out, fmt.Errorf("limits.max_concurrent_handshakes out of range")
+	}
+	if out.MaxConcurrentHTTPRequests < 1 || out.MaxConcurrentHTTPRequests > 4096 {
+		return out, fmt.Errorf("limits.max_concurrent_http_requests out of range")
 	}
 	if out.MaxHandshakeAttemptsPerSec < 1 || out.MaxHandshakeAttemptsPerSec > 100000 {
 		return out, fmt.Errorf("limits.max_handshake_attempts_per_second out of range")
@@ -199,6 +215,16 @@ func loadRuntimeConfig(path string) error {
 	if strings.ContainsAny(cfg.Transport.BasePath, "?#") {
 		return fmt.Errorf("invalid transport.base_path %q", cfg.Transport.BasePath)
 	}
+	if cfg.Transport.OriginHMACSecretFile == "" {
+		return fmt.Errorf("transport.origin_hmac_secret_file is required")
+	}
+	originSecret, err := readHex32(cfg.Transport.OriginHMACSecretFile)
+	if err != nil {
+		return fmt.Errorf("transport.origin_hmac_secret_file: %w", err)
+	}
+	if info, statErr := os.Stat(cfg.Transport.OriginHMACSecretFile); statErr == nil && !privateKeyModeAllowed(info.Mode().Perm()) {
+		return fmt.Errorf("transport.origin_hmac_secret_file permissions too open: %04o", info.Mode().Perm())
+	}
 	if cfg.Crypto.ServerPrivateKeyFile == "" {
 		return fmt.Errorf("crypto.server_private_key_file is required")
 	}
@@ -213,6 +239,26 @@ func loadRuntimeConfig(path string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Crypto.CredentialDir != "" {
+		info, err := os.Stat(cfg.Crypto.CredentialDir)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("crypto.credential_dir must be a readable directory")
+		}
+		if info.Mode().Perm()&0o007 != 0 {
+			return fmt.Errorf("crypto.credential_dir must not be accessible to other users: %04o", info.Mode().Perm())
+		}
+		if cfg.Crypto.CredentialReloadSocket == "" || !filepath.IsAbs(cfg.Crypto.CredentialReloadSocket) {
+			return fmt.Errorf("crypto.credential_reload_socket must be absolute when credential_dir is configured")
+		}
+		dirPolicies, err := loadCredentialDir(cfg.Crypto.CredentialDir)
+		if err != nil {
+			return fmt.Errorf("crypto.credential_dir: %w", err)
+		}
+		policies, err = mergePolicies(policies, dirPolicies)
+		if err != nil {
+			return err
+		}
+	}
 	limits, err := normalizeLimits(cfg.Limits)
 	if err != nil {
 		return err
@@ -226,10 +272,15 @@ func loadRuntimeConfig(path string) error {
 	basePath = cfg.Transport.BasePath
 	serverPrivFile = cfg.Crypto.ServerPrivateKeyFile
 	serverStaticPrivate = append(serverStaticPrivate[:0], serverKey...)
+	originAuthSecret = append(originAuthSecret[:0], originSecret...)
 	coverCfg = cov
 	runtimeLimits = limits
+	credentialDirPath = cfg.Crypto.CredentialDir
+	credentialReloadSock = cfg.Crypto.CredentialReloadSocket
+	requireAuthenticatedControl = cfg.Crypto.RequireAuthenticatedControl
 	clientAuthMu.Lock()
 	clientPolicies = policies
+	policyIDsByAccount = buildPolicyAccountIndex(policies)
 	clientAuthMu.Unlock()
 	return loadCamouflageConfig(path)
 }
@@ -256,7 +307,14 @@ func decodeClientAuth(in map[string]runtimeClientConfig) (map[string]clientPolic
 				return nil, fmt.Errorf("crypto.clients[%q]: %w", id, err)
 			}
 		}
-		p := clientPolicy{PSK: append([]byte(nil), raw...), MaxSessions: c.MaxSessions}
+		accountID := c.InternalID
+		if accountID == "" {
+			accountID = id
+		}
+		if !validClientID(accountID) {
+			return nil, fmt.Errorf("crypto.clients[%q].internal_id invalid", id)
+		}
+		p := clientPolicy{PSK: append([]byte(nil), raw...), MaxSessions: c.MaxSessions, AccountID: accountID}
 		if c.ExpiresAt != "" {
 			t, err := time.Parse(time.RFC3339, c.ExpiresAt)
 			if err != nil {
@@ -285,6 +343,8 @@ func clientPolicyActive(p clientPolicy) bool {
 }
 
 func reloadClientAuth(path string) error {
+	credentialUpdateMu.Lock()
+	defer credentialUpdateMu.Unlock()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -297,9 +357,32 @@ func reloadClientAuth(path string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Crypto.CredentialDir != "" {
+		dirPolicies, err := loadCredentialDir(cfg.Crypto.CredentialDir)
+		if err != nil {
+			return err
+		}
+		policies, err = mergePolicies(policies, dirPolicies)
+		if err != nil {
+			return err
+		}
+	}
 	clientAuthMu.Lock()
 	clientPolicies = policies
+	policyIDsByAccount = buildPolicyAccountIndex(policies)
 	clientAuthMu.Unlock()
+	// Drop rate-limit state for identities that no longer exist. This keeps
+	// credential churn from retaining attacker/user-controlled map keys.
+	sessionsMu.Lock()
+	for id := range sessionOpenRates {
+		if id == "legacy" {
+			continue
+		}
+		if _, ok := policies[id]; !ok {
+			delete(sessionOpenRates, id)
+		}
+	}
+	sessionsMu.Unlock()
 	revokeUnauthorizedSessions(policies)
 	return nil
 }

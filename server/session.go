@@ -7,7 +7,30 @@ import (
 	"time"
 )
 
+const (
+	sessionOpenRateTTL        = 2 * time.Minute
+	maxSessionOpenRateEntries = 65536
+)
+
+// pruneSessionOpenRatesLocked bounds pre-auth identity state. Caller must hold
+// sessionsMu. Security invariant: attacker-controlled identities cannot cause
+// unbounded retention after their rate window is no longer useful.
+func pruneSessionOpenRatesLocked(now time.Time) {
+	cutoff := now.Add(-sessionOpenRateTTL)
+	for key, r := range sessionOpenRates {
+		if r.start.Before(cutoff) {
+			delete(sessionOpenRates, key)
+		}
+	}
+}
+
 func getSession(id string) (*session, bool) {
+	return lookupSession(id, true)
+}
+
+// Authentication must precede an activity timestamp refresh: otherwise a
+// relay knowing a session ID can keep it alive forever with forged HTTP polls.
+func lookupSession(id string, refresh bool) (*session, bool) {
 	sessionsMu.Lock()
 	s, ok := sessions[id]
 	if !ok {
@@ -33,12 +56,38 @@ func getSession(id string) (*session, bool) {
 		s.mu.Unlock()
 		return nil, false
 	}
-	s.lastSeen = time.Now()
+	if refresh {
+		s.lastSeen = time.Now()
+	}
 	s.mu.Unlock()
 	return s, true
 }
 
+// Refresh only if it is still the same registered, live session. The caller
+// must have verified the control MAC (or explicitly allowed legacy mode).
+func refreshAuthenticatedSession(id string, expected *session) bool {
+	sessionsMu.Lock()
+	current, ok := sessions[id]
+	if !ok || current != expected {
+		sessionsMu.Unlock()
+		return false
+	}
+	expected.mu.Lock()
+	sessionsMu.Unlock()
+	if expected.closed {
+		expected.mu.Unlock()
+		return false
+	}
+	expected.lastSeen = time.Now()
+	expected.mu.Unlock()
+	return true
+}
+
 func registerSession(id string, s *session) bool {
+	if serverDraining.Load() {
+		log.Printf("SESSION OPEN REJECT reason=draining")
+		return false
+	}
 	type replacedSession struct {
 		id string
 		s  *session
@@ -54,7 +103,7 @@ func registerSession(id string, s *session) bool {
 	replaceIDs := make(map[string]struct{})
 	if s.deviceID != "" {
 		for existingID, existing := range sessions {
-			if existing.clientID == s.clientID && existing.deviceID == s.deviceID {
+			if existing.accountID == s.accountID && existing.deviceID == s.deviceID {
 				replaceIDs[existingID] = struct{}{}
 			}
 		}
@@ -63,7 +112,7 @@ func registerSession(id string, s *session) bool {
 	effectiveGlobal := len(sessions) - len(replaceIDs)
 	if effectiveGlobal >= runtimeLimits.MaxSessionsGlobal {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%q", s.clientID)
+		log.Printf("SESSION OPEN REJECT reason=max_sessions_global client=%s", redactedClientID(s.accountID))
 		return false
 	}
 	limit := runtimeLimits.DefaultMaxSessionsPerClient
@@ -76,13 +125,13 @@ func registerSession(id string, s *session) bool {
 			if _, replacing := replaceIDs[existingID]; replacing {
 				continue
 			}
-			if e.clientID == s.clientID {
+			if e.accountID == s.accountID {
 				count++
 			}
 		}
 		if count >= limit {
 			sessionsMu.Unlock()
-			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%q active=%d limit=%d", s.clientID, count, limit)
+			log.Printf("SESSION OPEN REJECT reason=max_sessions_per_client client=%s active=%d limit=%d", redactedClientID(s.accountID), count, limit)
 			return false
 		}
 	}
@@ -91,13 +140,21 @@ func registerSession(id string, s *session) bool {
 		key = "legacy"
 	}
 	now := time.Now()
+	if _, exists := sessionOpenRates[key]; !exists && len(sessionOpenRates) >= maxSessionOpenRateEntries {
+		pruneSessionOpenRatesLocked(now)
+		if len(sessionOpenRates) >= maxSessionOpenRateEntries {
+			sessionsMu.Unlock()
+			log.Printf("SESSION OPEN REJECT reason=rate_state_capacity")
+			return false
+		}
+	}
 	r := sessionOpenRates[key]
 	if r.start.IsZero() || now.Sub(r.start) >= time.Minute {
 		r = rateWindow{start: now}
 	}
 	if r.count >= runtimeLimits.MaxSessionOpensPerMinute {
 		sessionsMu.Unlock()
-		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%q limit=%d", s.clientID, runtimeLimits.MaxSessionOpensPerMinute)
+		log.Printf("SESSION OPEN REJECT reason=session_open_rate client=%s limit=%d", redactedClientID(s.accountID), runtimeLimits.MaxSessionOpensPerMinute)
 		return false
 	}
 	r.count++
@@ -119,32 +176,46 @@ func registerSession(id string, s *session) bool {
 }
 
 func revokeUnauthorizedSessions(policies map[string]clientPolicy) {
+	revokeUnauthorizedSessionsForAccounts(policies, nil)
+}
+
+// accountFilter nil means full reload; otherwise only accounts changed by an
+// incremental credential transaction are inspected. Session revocation remains
+// synchronous with the administrative request.
+func revokeUnauthorizedSessionsForAccounts(policies map[string]clientPolicy, accountFilter map[string]struct{}) {
 	var revoke []string
 	type active struct {
-		id   string
-		last time.Time
+		id       string
+		last     time.Time
+		clientID string
 	}
 	byClient := map[string][]active{}
 	sessionsMu.Lock()
 	for id, s := range sessions {
+		if accountFilter != nil {
+			if _, affected := accountFilter[s.accountID]; !affected {
+				continue
+			}
+		}
 		if s.clientID == "" {
 			continue
 		}
 		p, ok := policies[s.clientID]
-		if !ok || !clientPolicyActive(p) || sha256.Sum256(p.PSK) != s.crypto.authPSKHash {
+		if !ok || !clientPolicyActive(p) || p.AccountID != s.accountID || sha256.Sum256(p.PSK) != s.crypto.authPSKHash {
 			revoke = append(revoke, id)
 			continue
 		}
 		s.mu.Lock()
 		last := s.lastSeen
 		s.mu.Unlock()
-		byClient[s.clientID] = append(byClient[s.clientID], active{id, last})
+		byClient[s.accountID] = append(byClient[s.accountID], active{id: id, last: last, clientID: s.clientID})
 	}
-	for cid, list := range byClient {
-		p := policies[cid]
-		limit := p.MaxSessions
-		if limit == 0 {
-			limit = runtimeLimits.DefaultMaxSessionsPerClient
+	for _, list := range byClient {
+		limit := runtimeLimits.DefaultMaxSessionsPerClient
+		// All sessions here belong to this account. The policy lookup no
+		// longer scans every session once for every active account.
+		if p, ok := policies[list[0].clientID]; ok && p.MaxSessions != 0 {
+			limit = p.MaxSessions
 		}
 		if limit < 0 || len(list) <= limit {
 			continue
@@ -190,7 +261,12 @@ func closeSessionState(id string, s *session) {
 	for id := range s.streams {
 		ids = append(ids, id)
 	}
-	queued := s.downBytes + s.downReplayBytes
+	queued := s.downBytes
+	// Replay accounting is ownership-based: release the exact reservation
+	// attached to each entry, not an estimate or ciphertext length.
+	for _, r := range s.downReplay {
+		queued += r.reservedBytes
+	}
 	for i := range s.downFrames {
 		s.downFrames[i] = nil
 	}

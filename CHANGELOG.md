@@ -2,6 +2,16 @@
 
 [Русская версия](CHANGELOG.ru.md)
 
+## 1.0.0-beta.3 — 2026-11-05 (experimental prerelease)
+
+- **Breaking change vs published beta.2.1:** with strict `cmac` enabled on origin, the published beta.2.1 Android APK cannot authenticate HTTP UP/DOWN/CLOSE control requests. Noise records and PSK profiles are unchanged; beta.2.2 builds with `cmac` remain compatible.
+- Session-bound `cmac` rejects forged ACK, counter, max and CLOSE mutations through untrusted HTTP frontend in strict mode.
+- Incremental credential map updates avoid whole-map copies for single-user operations.
+- P1 origin hardening: bounded concurrent requests; early relay HMAC-header rejection; amortized replay nonce TTL cleanup; strict canonical control query parser and fuzz checks.
+- Reversible root-managed VPS deployment; release-signature pinned-certificate gate; Android `versionCode=6` / CLI/version alignment.
+- Single-device field check under active mobile allow-list restrictions on 2026-11-05: connection and Telegram worked through unchanged REG.RU relay. No physical packet capture or multi-day soak was completed.
+- Remains experimental TCP-only transport, not a completed security audit or claim of universal DPI compatibility. See `RELEASE_NOTES.md`.
+
 ## 1.0.0-beta.2.1 — 2026-11-02
 
 This development branch keeps the beta.2 Noise wire generation and focuses on network robustness, diagnostics, a less obvious public-network fingerprint and real Android lifecycle behavior. It is not yet a tagged release.

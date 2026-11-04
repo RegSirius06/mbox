@@ -16,6 +16,8 @@ Android apps -> VpnService/TUN -> HEV -> MBox SOCKS
 
 Underlying network monitor подписан только на `INTERNET + NOT_VPN`, поэтому собственный MBox VPN не вызывает self-reconnect. При полном исчезновении связи supervisor ждёт `UNDERLYING_AVAILABLE`, а не долбит сеть вслепую.
 
+**Текущая экспериментальная версия:** `1.0.0-beta.3` (`versionCode=6`). Для раздачи нужен APK, подписанный release-ключом и прошедший `tools/check-production-apk.sh`. Debug APK допустим только для локальных испытаний. Официальный beta.2.1 клиент несовместим с обязательным `cmac`.
+
 ## Сборка на Arch
 
 ```bash
@@ -68,4 +70,4 @@ sudo mboxctl user link USER --android-http-stack go --network-debug
 - TCP transport; нативный UDP tunnel не реализован;
 - ARM64-only;
 - один активный профиль;
-- Always-on/lockdown пока не поддерживается безопасно: app UID исключён из собственного TUN для anti-loop.
+- Android-клиент использует full-route TUN без исключения UID приложения и Cronet с привязкой к физической сети. Always-on заявлен в манифесте; lockdown должен включаться пользователем в настройках ОС. Отсутствие утечек при падении процесса и смене сети ещё требует packet-capture приёмки (см. `../docs/ANDROID_FAIL_CLOSED_TEST_PLAN.md`).

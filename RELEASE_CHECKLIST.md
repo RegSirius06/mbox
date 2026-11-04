@@ -1,119 +1,90 @@
-# MBox 1.0.0-beta.2.1 release checklist
+# MBox `1.0.0-beta.3` prerelease checklist
 
 [Русская версия](RELEASE_CHECKLIST.ru.md)
 
-This checklist is for preparing `v1.0.0-beta.2.1` from the current `audit/p0-p1-fingerprint-modular` branch. Do **not** move or overwrite the released `v1.0.0-beta.2` tag; beta.2.1 is a new compatible tag.
+This checklist uses **Arch for builds/tests**, **root-managed RU VPS** for origin and a **separate REG.RU shared-hosting FastCGI** frontend. Beta.3 only updates version strings and release documentation beyond the field-tested beta.2.2 code; the released beta.2.1 Android client is incompatible with strict `cmac`.
 
-## 1. Keep production secrets out of Git
-
-Never stage:
-
-- `/etc/mbox/`;
-- `/var/lib/mbox/users.db*`;
-- `*.psk`, private `*.key`;
-- real `mbox://` links/QRs;
-- generated production `server.json` / `relay.json`;
-- backup/rollback archives.
-
-Run the secret scan and manually review every provisioning-like hit.
-
-## 2. Confirm calibrated defaults
-
-The current real-device calibration uses:
-
-```text
-max_streams_per_session = 128
-max_total_streams = 1024
-```
-
-Verify both the Go server default and `mboxctl` generated default agree:
-
-```bash
-grep -RInE 'MaxStreamsPerSession:.*128|max_streams_per_session.*128' \
-  server tools/mboxctl docs README.md
-```
-
-## 3. Automated gate
+## 1. Freeze code and run gates on Arch
 
 ```bash
 cd ~/src/mbox-main
-export GO111MODULE=off
-
-for d in common/noise server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do
-  (cd "$d" && go test ./...) || exit 1
-done
-
-(cd common/noise && go test -race ./...)
-(cd server && go test -race ./...)
-(cd client && go test -race -count=20 ./...)
-
-(cd server && go vet ./...)
-(cd client && go vet ./...)
-(cd relay && go vet ./...)
-(cd tools/mbox-netprobe && go vet ./...)
-
-python -m pytest -q tests
-python tools/check-source-layout.py
-git diff --check
-./tools/secret-scan.sh
-```
-
-## 4. Android build and real-device sanity check
-
-Use Java 17:
-
-```bash
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 export PATH="$JAVA_HOME/bin:$PATH"
-hash -r
-./android/tools/build-debug.sh
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+git status --short
+cat VERSION
+python3 -m pytest -q tests
+python3 tools/check-source-layout.py
+GO111MODULE=off go test ./common/noise ./common/controlmeta ./server ./client ./relay
+GO111MODULE=off go test -race ./common/controlmeta ./server ./client ./relay
+GO111MODULE=off go vet ./common/noise ./common/controlmeta ./server ./client ./relay
+./tools/secret-scan.sh
+git diff --check
 ```
 
-Confirm the live log contains:
+For a release, review actual CI, Android build, field leak/Lockdown risks and the open items in `docs/BETA_3_RELEASE_STATUS.md`. Unit tests alone do not establish fail-closed behavior.
 
-```text
-stack=cronet
-proto=HTTP/2.0
-alpn=h2
-MBOX_OPEN_OK
-NOISE_OK
-TUNNEL_ESTABLISHED
-```
-
-Then exercise Wi-Fi/mobile handover and one airplane-mode cycle. A hard disconnect should show `WAIT_UNDERLYING`, and the server should show `SESSION SUPERSEDE` when the same device reconnects.
-
-## 5. Documentation gate
-
-Before commit verify:
-
-- `CHANGELOG.md` / `CHANGELOG.ru.md`;
-- `RELEASE_NOTES.md` / `.ru.md`;
-- English and Russian README files;
-- `docs/REG_RU_SHARED_HOSTING.md` and Russian equivalent;
-- `docs/STATUS.md`, `STEALTH.md`, `SECURITY.md`, `NETWORK_COMPATIBILITY.md`, `OPERATOR_TEST.md`;
-- no documentation claims that Cronet is byte-for-byte Chrome;
-- no documentation claims MegaFon is fixed;
-- current branch is explicitly marked **not yet field-tested under active white-list restrictions**.
-
-## 6. Commit and push the development branch
+## 2. Update Android, check origin and REG.RU
 
 ```bash
-git add -A
-git diff --cached --check
-git status --short
-git diff --cached --stat
-
-git commit -m 'Harden networking, add Cronet transport and robust Android handover'
-git push -u origin audit/p0-p1-fingerprint-modular
+./android/tools/build-debug.sh
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb shell dumpsys package io.mbox.android | grep -E 'versionCode|versionName'
 ```
 
-Do not tag the next release yet. First perform the operator field matrix.
+Expected: `versionCode=6`, `versionName=1.0.0-beta.3`. Verify Internet/TG, reconnect and device reboot. **Exception for this experimental beta.3 prerelease:** we explicitly ship the debug-signed artifact with a `-debug.apk` filename and prominent warnings. It is not a production release build.
 
-## 7. Outstanding field qualification before next tag
+For the root-managed RU VPS, rebuild from the beta.3 tree and deploy only if validation succeeds:
 
-- active white-list tests on MTS and T2 to confirm no regression;
-- MegaFon test;
-- controlled `.fun` vs `.ru` on the same REG.RU shared-host backend;
-- Chrome vs MBox Cronet vs MBox Go fingerprint capture;
-- longer soak/load qualification and independent security review.
+```bash
+mkdir -p dist/vps
+(cd server && GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ../dist/vps/mbox-server .)
+tools/deploy-origin-root.sh --host root@YOUR_RU_VPS
+# Only once dry-run and build succeed:
+tools/deploy-origin-root.sh --host root@YOUR_RU_VPS --apply
+```
+
+This changes only origin server executable and `mboxctl`; **do not redeploy REG.RU FastCGI** for this version-only delta. Record `mboxctl doctor`, running binary SHA and whether `auth.require_authenticated_control=true` remains effective.
+
+## 3. Prepare explicitly labelled experimental debug APK
+
+For beta.3 only, the operator has chosen to publish the debug-signed APK. Do not confuse it with a production-signed release. The debug APK can be debuggable and is signed with a development key; changing to a release certificate later usually prevents in-place upgrades. Preserve credentials/profiles securely before reinstalling.
+
+```bash
+mkdir -p dist/release
+cp android/app/build/outputs/apk/debug/app-debug.apk dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk
+(cd dist/release && sha256sum MBox-1.0.0-beta.3-android-arm64-debug.apk > MBox-1.0.0-beta.3-android-arm64-debug.apk.sha256)
+```
+
+The regular `tools/build-release-apk.sh` and `tools/check-production-apk.sh` remain intact for a future signed production APK; do not bypass their security checks by renaming a debug APK.
+
+## 4. Publish via Pull Request, then tag merged main
+
+```bash
+gh auth status
+git status --short
+git diff --check
+git fetch origin main
+# Branch from the local hardening history; do not push it directly onto main.
+git push -u origin HEAD:audit/hardening-2026-11-04
+gh pr create --repo RegSirius06/mbox --base main --head audit/hardening-2026-11-04 --title 'MBox 1.0.0-beta.3 experimental prerelease' --body-file RELEASE_NOTES.ru.md
+gh pr checks --watch
+# Review the PR before merging. Keep feature branch for easy comparison and rollback.
+gh pr merge --merge
+git fetch origin main
+# Verify the merge commit contains beta.3:
+git show origin/main:VERSION
+git tag -a v1.0.0-beta.3 origin/main -m 'MBox 1.0.0-beta.3 experimental prerelease'
+git push origin v1.0.0-beta.3
+gh release create v1.0.0-beta.3 \
+  dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk \
+  dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk.sha256 \
+  --repo RegSirius06/mbox \
+  --title 'MBox 1.0.0-beta.3 (experimental debug APK)' \
+  --notes-file RELEASE_NOTES.ru.md --prerelease --verify-tag
+```
+
+Stop on any error; do not force-push the main branch, and never put the private keystore, app profile, PSKs, runtime secrets, or server database in Git or GitHub Releases. After merging, verify tag and release asset names with `gh release view v1.0.0-beta.3 --json tagName,isPrerelease,assets,url`.
+
+## 5. Limitations to declare to testers
+
+TCP-only; UDP-dependent apps may fail. Do not claim leak-free VPN: Android Lockdown + physical packet capture still pending. Distinguish REG.RU metadata visibility from ISP DPI. Do not distribute reusable PSK profiles in public issue threads. Keep the deployment credentials and databases out of Git.

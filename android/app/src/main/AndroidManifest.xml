@@ -36,20 +36,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Allow the Android VPN controller to discover/start this component
+             across system-managed Always-on lifecycle transitions. BIND_VPN_SERVICE is a signature
+             permission, so exporting the component does not let third-party
+             applications bind to or start it. -->
         <service
             android:name=".MBoxVpnService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="systemExempted"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-            <!-- Current outer transport bypasses the TUN via a per-app exclusion.
-                 Android lockdown blocks disallowed apps, so advertising Always-on
-                 support would create a reconnect loop with no usable outer network. -->
+            <!-- The application UID is no longer excluded from the VPN. The outer
+                 Cronet engine is bound specifically to the selected physical Network,
+                 so the service can remain installed while recovering and under Always-on. -->
             <meta-data
                 android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
-                android:value="false" />
+                android:value="true" />
         </service>
 
     </application>

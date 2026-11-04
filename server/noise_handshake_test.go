@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	controlmeta "../common/controlmeta"
 	noise "../common/noise"
 )
 
@@ -50,6 +51,13 @@ func TestServerNoiseOnlyHandshakeInteroperates(t *testing.T) {
 	}
 	if string(payload) != sid {
 		t.Fatalf("authenticated sid=%q", payload)
+	}
+	key, err := controlmeta.Derive(psk, init.ChannelBinding(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serverState.controlKey != key {
+		t.Fatal("client/server Noise channel binding produced different HTTP control keys")
 	}
 
 	c1, err := clientSend.Seal(0, nil, []byte("up"))

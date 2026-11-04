@@ -55,6 +55,8 @@ final class CronetBridge implements Closeable {
     private static final int MAX_HEADER_NAME = 128;
     private static final int MAX_HEADER_VALUE = 4096;
     private static final int REQUEST_TIMEOUT_SECONDS = 20;
+    private static final int MAX_BRIDGE_WORKERS = 8;
+    private static final int MAX_PENDING_BRIDGE_CONNECTIONS = 32;
 
     private final URI origin;
     private final boolean networkDebug;
@@ -62,19 +64,25 @@ final class CronetBridge implements Closeable {
     private final ServerSocket server;
     private final CronetEngine engine;
     private final ExecutorService acceptExecutor;
-    private final ExecutorService workerExecutor;
+    private final BridgeWorkerPool workerExecutor;
     private final ExecutorService callbackExecutor;
     private final ExecutorService metricsExecutor;
     private final java.util.Set<UrlRequest> activeRequests = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private CronetBridge(Context context, String baseUrl, Network network, boolean debug) throws Exception {
+        if (network == null) {
+            // Fail-closed invariant: never let Cronet fall back to Android's
+            // process/default network selection while the VPN owns all routes.
+            throw new IOException("Cronet requires an explicit underlying Network");
+        }
         this.origin = validateOrigin(baseUrl);
         this.networkDebug = debug;
         this.token = randomToken();
         this.server = new ServerSocket(0, 32, InetAddress.getByName("127.0.0.1"));
         this.acceptExecutor = Executors.newSingleThreadExecutor(r -> namedThread(r, "MBox-cronet-accept"));
-        this.workerExecutor = Executors.newFixedThreadPool(8, r -> namedThread(r, "MBox-cronet-worker"));
+        this.workerExecutor = new BridgeWorkerPool(MAX_BRIDGE_WORKERS,
+                MAX_PENDING_BRIDGE_CONNECTIONS, r -> namedThread(r, "MBox-cronet-worker"));
         this.callbackExecutor = Executors.newFixedThreadPool(4, r -> namedThread(r, "MBox-cronet-callback"));
         this.metricsExecutor = Executors.newSingleThreadExecutor(r -> namedThread(r, "MBox-cronet-metrics"));
 
@@ -83,9 +91,7 @@ final class CronetBridge implements Closeable {
                 .enableQuic(false)
                 .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISABLED, 0);
         this.engine = builder.build();
-        if (network != null) {
-            engine.bindToNetwork(network.getNetworkHandle());
-        }
+        engine.bindToNetwork(network.getNetworkHandle());
 
         acceptExecutor.execute(this::acceptLoop);
         Log.i(TAG, "NET stage=HTTP code=HTTP_STACK stack=cronet version=" + sanitize(engine.getVersionString()));
@@ -105,13 +111,21 @@ final class CronetBridge implements Closeable {
 
     private void acceptLoop() {
         while (!closed.get()) {
+            Socket socket = null;
             try {
-                Socket socket = server.accept();
+                socket = server.accept();
                 socket.setTcpNoDelay(true);
-                workerExecutor.execute(() -> handle(socket));
+                // Unauthenticated loopback peers must not fill an unbounded
+                // executor queue. The bounded dispatcher closes excess sockets.
+                workerExecutor.dispatch(socket, this::handle);
             } catch (IOException error) {
+                // Even if socket configuration fails after accept(), no
+                // untracked descriptor may survive the failed handoff.
+                if (socket != null) {
+                    try { socket.close(); } catch (IOException ignored) { }
+                }
                 if (!closed.get()) {
-                    Log.w(TAG, "Cronet bridge accept failed", error);
+                    Log.w(TAG, "Cronet bridge accept failed: " + MBoxLogSanitizer.sanitize(error.toString()));
                 }
                 return;
             }
@@ -123,8 +137,10 @@ final class CronetBridge implements Closeable {
              DataInputStream in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
              DataOutputStream out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()))) {
             s.setSoTimeout((REQUEST_TIMEOUT_SECONDS + 5) * 1000);
-            BridgeRequest request = readRequest(in);
-            if (!constantTimeEquals(token, request.token)) {
+            BridgeRequest request;
+            try {
+                request = readAuthenticatedRequest(in);
+            } catch (BridgeAuthGate.InvalidTokenException ignored) {
                 writeResponse(out, BridgeResult.error("ERR_ANDROID_BRIDGE_AUTH", "invalid bridge token"));
                 return;
             }
@@ -133,16 +149,16 @@ final class CronetBridge implements Closeable {
         } catch (EOFException ignored) {
         } catch (Throwable error) {
             if (!closed.get()) {
-                Log.w(TAG, "Cronet bridge request failed", error);
+                Log.w(TAG, "Cronet bridge request failed: " + MBoxLogSanitizer.sanitize(error.toString()));
             }
         }
     }
 
-    private BridgeRequest readRequest(DataInputStream in) throws Exception {
-        if (in.readInt() != REQUEST_MAGIC) {
-            throw new IOException("invalid bridge request magic");
-        }
-        String suppliedToken = readString16(in, 512);
+    private BridgeRequest readAuthenticatedRequest(DataInputStream in) throws Exception {
+        // Untrusted localhost peers must authenticate BEFORE reading variable-size
+        // headers, paths or up to MAX_BODY bytes into memory. The Go wire format
+        // already sends the token immediately after the four-byte magic.
+        BridgeAuthGate.requireToken(in, REQUEST_MAGIC, token);
         String method = readString16(in, 32);
         if (!"GET".equals(method) && !"POST".equals(method)) {
             throw new IOException("unsupported HTTP method");
@@ -168,7 +184,7 @@ final class CronetBridge implements Closeable {
         }
         byte[] body = new byte[(int) bodyLength];
         in.readFully(body);
-        return new BridgeRequest(suppliedToken, method, path, headers, body);
+        return new BridgeRequest(method, path, headers, body);
     }
 
     private BridgeResult execute(BridgeRequest request) throws Exception {
@@ -419,19 +435,6 @@ final class CronetBridge implements Closeable {
         return out.toString();
     }
 
-    private static boolean constantTimeEquals(String a, String b) {
-        byte[] aa = a.getBytes(StandardCharsets.UTF_8);
-        byte[] bb = b.getBytes(StandardCharsets.UTF_8);
-        int diff = aa.length ^ bb.length;
-        int n = Math.max(aa.length, bb.length);
-        for (int i = 0; i < n; i++) {
-            byte av = i < aa.length ? aa[i] : 0;
-            byte bv = i < bb.length ? bb[i] : 0;
-            diff |= av ^ bv;
-        }
-        return diff == 0;
-    }
-
     private static Thread namedThread(Runnable r, String name) {
         Thread t = new Thread(r, name);
         t.setDaemon(true);
@@ -485,13 +488,13 @@ final class CronetBridge implements Closeable {
         }
         activeRequests.clear();
         acceptExecutor.shutdownNow();
-        workerExecutor.shutdownNow();
+        workerExecutor.close();
         callbackExecutor.shutdownNow();
         metricsExecutor.shutdownNow();
         try {
             engine.shutdown();
         } catch (Throwable error) {
-            Log.w(TAG, "Cronet shutdown failed", error);
+            Log.w(TAG, "Cronet shutdown failed: " + MBoxLogSanitizer.sanitize(error.toString()));
         }
     }
 
@@ -505,13 +508,11 @@ final class CronetBridge implements Closeable {
     }
 
     private static final class BridgeRequest {
-        final String token;
         final String method;
         final String path;
         final List<Header> headers;
         final byte[] body;
-        BridgeRequest(String token, String method, String path, List<Header> headers, byte[] body) {
-            this.token = token;
+        BridgeRequest(String method, String path, List<Header> headers, byte[] body) {
             this.method = method;
             this.path = path;
             this.headers = headers;

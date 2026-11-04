@@ -30,10 +30,12 @@ final class AppRuntime {
                 "socks5:\n" +
                 "  address: " + SOCKS_HOST + "\n" +
                 "  port: " + SOCKS_PORT + "\n" +
-                // The current MBox core implements SOCKS CONNECT only. UDP
-                // applications may fall back to TCP; native UDP is a future
-                // MBox protocol extension, not something HEV can add alone.
-                "  udp: 'udp'\n" +
+                // Fail closed: HEV must never open a physical UDP relay socket.
+                // Its TCP relay mode keeps any attempted UDP relay on the local
+                // SOCKS TCP connection; unsupported UDP therefore fails instead
+                // of escaping the MBox transport. Native MBox datagrams remain
+                // a future authenticated/encrypted protocol extension.
+                "  udp: 'tcp'\n" +
                 "\n" +
                 "mapdns:\n" +
                 "  address: " + MAP_DNS + "\n" +

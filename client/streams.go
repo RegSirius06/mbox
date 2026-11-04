@@ -170,6 +170,15 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 		t.closeLocal(id, true)
 		return
 	}
+	// Fail-closed local SOCKS policy: native MBox carries only CONNECT.
+	// HEV's "udp: tcp" is a UDP-over-TCP extension, not a UDP-disable
+	// switch; never let an upstream SOCKS server interpret UDP/BIND here.
+	if err := guardSOCKSConnect(conn, func(p []byte) error {
+		return t.forwardLocalData(id, st, p)
+	}); err != nil {
+		t.closeLocal(id, true)
+		return
+	}
 	buf := make([]byte, maxFramePayload)
 	for {
 		grant, ok := st.reserveSendCredit(len(buf), t.done)

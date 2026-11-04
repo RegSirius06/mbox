@@ -1,6 +1,7 @@
 package main
 
 import (
+	controlmeta "../common/controlmeta"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -20,10 +22,17 @@ func (t *tunnel) closeRemote() {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
+	closeURL, parseErr := url.Parse(base + camouflage.ClosePath + t.sid)
+	if parseErr != nil {
+		return
+	}
+	q := closeURL.Query()
+	q.Set("cmac", controlmeta.Tag(t.crypto.controlKey, http.MethodPost, "CLOSE", 0, 0, ""))
+	closeURL.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		base+camouflage.ClosePath+t.sid,
+		closeURL.String(),
 		nil,
 	)
 	if err != nil {

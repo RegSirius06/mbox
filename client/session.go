@@ -17,7 +17,7 @@ func newTunnel() (*tunnel, error) {
 		return nil, fmt.Errorf("HTTP transport: %w", err)
 	}
 
-	openBody, noiseHS, err := buildOpenRequest()
+	openBody, noiseHS, openPSK, err := buildOpenRequest()
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func newTunnel() (*tunnel, error) {
 	// during a rolling server upgrade.
 	if status == http.StatusNotFound && deviceID != "" {
 		log.Printf("NET stage=MBOX_OPEN code=OPEN_RETRY_LEGACY")
-		openBody, noiseHS, err = buildLegacyOpenRequest()
+		openBody, noiseHS, openPSK, err = buildLegacyOpenRequest()
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +48,7 @@ func newTunnel() (*tunnel, error) {
 	}
 	log.Printf("NET stage=MBOX_OPEN code=MBOX_OPEN_OK")
 
-	t.crypto, t.sid, err = finishClientHandshake(noiseHS, data)
+	t.crypto, t.sid, err = finishClientHandshake(noiseHS, data, openPSK)
 	if err != nil {
 		log.Printf("NET stage=NOISE code=ERR_NOISE_AUTH error=%q", safeErr(err))
 		return nil, fmt.Errorf("Noise handshake: %w", err)

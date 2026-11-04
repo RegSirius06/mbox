@@ -52,24 +52,17 @@ sudo mboxctl relay bundle
 sudo mboxctl relay paths
 ```
 
-Deploy over SSH/SCP when available:
+Deploy RC1 through the **secure SSH** workflow described in
+[`SAFE_SSH_RELAY_DEPLOY.md`](SAFE_SSH_RELAY_DEPLOY.md). It requires explicit
+`--remote-private-dir`, `--origin-config` and `--relay-binary` inputs, and
+supports `--dry-run` and `relay rollback`. It never silently uses the old
+binary template or generates a fresh HMAC key. It also checks HTTP health
+and rolls back on failure.
 
-```bash
-sudo mboxctl relay deploy \
-  --ssh USER@HOST \
-  --remote-dir /var/www/USER/data/www/front.example.com
-```
-
-Or use FTPS:
-
-```bash
-sudo mboxctl relay deploy \
-  --ftp-host HOST \
-  --ftp-user USER \
-  --remote-dir /path/to/webroot
-```
-
-Normal deployment updates the relay files without overwriting an existing site. Add `--site` only when intentionally installing the packaged decoy `index.html`/`404.html`. Preserve a known-working FastCGI/`.htaccess` mapping: shared-host activation details vary between accounts.
+FTPS deployment is **disabled for HMAC-protected RC1**, because a shared-host
+FTP jail often cannot access an HMAC-key directory outside the webroot.
+Normal deployment preserves existing website pages and `.htaccess`; use
+`--site` only to intentionally replace the optional decoy pages.
 
 ## Verify the frontend
 
@@ -81,7 +74,7 @@ An unauthenticated transport probe normally receives an ordinary 404. For operat
 
 ## Current white-list qualification
 
-**MBox 1.0.0-beta.2.1 has not yet been field-tested during active white-list restrictions**. The frontend/FastCGI topology and beta.2 MBox wire semantics are preserved, so no regression is currently expected where the older deployment already worked, but this is not a fresh guarantee. MegaFon remains unknown until the controlled `.fun`/`.ru` test is performed.
+On 2026-11-05 a single Android device running the updated beta.2.2 code (now beta.3) connected via this unchanged REG.RU FastCGI frontend to the RU VPS under active mobile allow-list restrictions; Telegram and web traffic worked. Carrier was not identified. This does not establish cross-carrier compatibility, future availability, or leak-free behavior. Published beta.2.1 APK is incompatible with strict origin `cmac`.
 
 ## Provider references checked for this guide
 

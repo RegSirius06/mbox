@@ -47,6 +47,10 @@ type cachedDownResponse struct {
 	counter uint64
 	status  int
 	body    []byte
+	// reservedBytes is the exact global queue-budget reservation owned by
+	// this replay entry. Security invariant: every successful reservation has
+	// exactly one owner and is released exactly once, independent of body size.
+	reservedBytes int
 }
 
 type session struct {
@@ -55,7 +59,8 @@ type session struct {
 	downCommitMu    sync.Mutex
 	upCache         map[uint64]cachedUpResponse
 	upCacheOrder    []uint64
-	clientID        string
+	clientID        string // opaque wire auth handle (legacy clients may still send account ID)
+	accountID       string // backend-only account grouping identity
 	deviceID        string
 	streams         map[uint32]*stream
 	crypto          *cryptoState
@@ -90,9 +95,16 @@ var (
 	runtimeStatusMu       sync.Mutex
 	preAuthLimiter        *handshakeLimiter
 	lastHandshakeLimitLog atomic.Int64
+	lastAuthFailureLog    atomic.Int64
+	serverDraining        atomic.Bool
+	serverReady           atomic.Bool
 )
 
-const runtimeStatusPath = "/run/mbox/status.json"
+const defaultRuntimeStatusPath = "/run/mbox/status.json"
+
+// Production preserves its historic status path. Staging instances override it
+// explicitly, so two server processes never write the same status file.
+var runtimeStatusPath = defaultRuntimeStatusPath
 
 type runtimeStatusSnapshot struct {
 	GeneratedAt    time.Time      `json:"generated_at"`

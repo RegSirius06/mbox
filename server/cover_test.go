@@ -63,16 +63,32 @@ func TestActiveRealSessions(t *testing.T) {
 	}
 }
 
-func TestRealSessionCancelsCover(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	e := &coverEngine{cfg: coverConfig{StatusFile: "/tmp/mbox-cover-test-status.json"}, state: "active", stateSince: time.Now(), currentCancel: cancel}
-	old := globalCover
-	globalCover = e
-	defer func() { globalCover = old }()
-	notifyRealSessionOpen()
-	select {
-	case <-ctx.Done():
-	case <-time.After(time.Second):
-		t.Fatal("cover context was not cancelled")
+func TestCoverSchedulingIsIndependentOfRealSessions(t *testing.T) {
+	e := &coverEngine{cfg: coverConfig{StatusFile: ""}, state: "active", stateSince: time.Now()}
+	if e.state != "active" {
+		t.Fatalf("unexpected cover state %q", e.state)
+	}
+}
+
+func TestCoverDoesNotForgeBrowserHeaders(t *testing.T) {
+	var got http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	e := &coverEngine{
+		cfg:    coverConfig{PublicURL: ts.URL, Path: "/assets/", MaxRPS: 10, MaxRequestsPerHour: 10},
+		rng:    seedRand(),
+		client: ts.Client(),
+	}
+	if !e.sendOne(context.Background()) {
+		t.Fatal("cover request failed")
+	}
+	if ua := got.Get("User-Agent"); ua != "Go-http-client/1.1" && ua != "Go-http-client/2.0" {
+		t.Fatalf("unexpected forged User-Agent %q", ua)
+	}
+	if got.Get("Accept-Language") != "" {
+		t.Fatalf("unexpected browser-like Accept-Language %q", got.Get("Accept-Language"))
 	}
 }

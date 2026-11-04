@@ -18,3 +18,17 @@ func logHandshakeLimit(now time.Time) {
 		}
 	}
 }
+
+func logAuthFailure(now time.Time) {
+	sec := now.Unix()
+	for {
+		prev := lastAuthFailureLog.Load()
+		if prev >= sec {
+			return
+		}
+		if lastAuthFailureLog.CompareAndSwap(prev, sec) {
+			log.Printf("OPEN AUTH FAILED")
+			return
+		}
+	}
+}

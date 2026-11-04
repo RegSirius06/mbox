@@ -170,7 +170,11 @@ func TestFullDuplexSingleStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	upPayload := bytes.Repeat([]byte{0x11}, 24*1024)
+	// The local endpoint is SOCKS5, not an arbitrary raw TCP stream.
+	// Pipelined greeting and CONNECT prove byte-for-byte beta.2.1 framing
+	// is preserved before the full-duplex DATA portion starts.
+	socksPrelude := []byte{0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0, 80}
+	upPayload := append(append([]byte{}, socksPrelude...), bytes.Repeat([]byte{0x11}, 24*1024)...)
 	downPayload := bytes.Repeat([]byte{0x22}, 24*1024)
 	upWriteDone := make(chan error, 1)
 	go func() {
@@ -321,6 +325,7 @@ func TestDownloader502RetriesExactSequenceURL(t *testing.T) {
 
 	tun := newQueueTestTunnel()
 	tun.sid = "fedcba9876543210fedcba9876543210"
+	tun.crypto = &cryptoState{}
 	seen := make(chan string, 2)
 	var calls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

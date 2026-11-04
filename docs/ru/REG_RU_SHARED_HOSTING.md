@@ -35,24 +35,29 @@ sudo mboxctl relay bundle
 sudo mboxctl relay paths
 ```
 
-SSH/SCP:
+Безопасный RC1-deploy по SSH подробно описан в
+[`../SAFE_SSH_RELAY_DEPLOY.md`](../SAFE_SSH_RELAY_DEPLOY.md). Команда требует
+явно указать `--remote-private-dir` вне webroot, `--origin-config` работающего
+origin, `--relay-binary` с проверенной контрольной суммой и поддерживает
+`--dry-run`. Пример:
 
 ```bash
 sudo mboxctl relay deploy \
   --ssh USER@HOST \
-  --remote-dir /var/www/USER/data/www/front.example.com
+  --remote-dir /var/www/USER/data/www/front.example.com \
+  --remote-private-dir /var/www/USER/data/mbox-stage-private \
+  --origin-config /etc/mbox-stage/server.json \
+  --relay-binary /root/mbox-relay-compat.fcgi \
+  --relay-sha256 EXPECTED_SHA256 \
+  --dry-run
 ```
 
-FTPS:
-
-```bash
-sudo mboxctl relay deploy \
-  --ftp-host HOST \
-  --ftp-user USER \
-  --remote-dir /path/to/webroot
-```
-
-Обычный deploy не перезаписывает `index.html/404.html`. `--site` используйте только если хотите сознательно поставить комплектный decoy site. Рабочий `.htaccess`/FastCGI mapping не заменяйте вслепую.
+После проверки удалите только `--dry-run`. В случае ошибки HTTP health
+деплой автоматически восстанавливает прошлую версию; есть отдельная команда
+`mboxctl relay rollback`. FTPS в HMAC-версии намеренно запрещён: он может
+поместить секрет в публичный webroot. Обычный deploy не затрагивает
+`index.html`, `404.html` и `.htaccess`; параметр `--site` меняет только
+декоративные страницы по явному запросу.
 
 Проверка:
 
@@ -64,7 +69,7 @@ sudo mboxctl relay test
 
 ## Текущий статус БС
 
-Новая Cronet-ветка ещё не проходила полевой тест при активных БС. Архитектура shared-host/FastCGI и Noise-wire beta.2 сохранены, поэтому регрессия на ранее работавших сетях не ожидается, но это пока не подтверждено полем. MegaFon неизвестен.
+05.11.2026 на одном Android обновлённый код beta.2.2 (теперь beta.3) работал через прежний REG.RU FastCGI и RU VPS в условиях активных мобильных белых списков. Telegram и интернет загружались. Оператор в этом наблюдении не указан; это не универсальная гарантия и не доказательство отсутствия сетевых утечек. Публичный beta.2.1 APK несовместим со строгим `cmac`. MegaFon отдельно не проверен.
 
 ## Ссылки REG.RU, проверенные при обновлении гайда
 
