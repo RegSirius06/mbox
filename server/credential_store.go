@@ -12,13 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const (
-	maxCredentialFileBytes  = 64 * 1024
-	maxCredentialFiles      = 1_000_000
-	maxCredentialAdminConns = 16
+	maxCredentialFileBytes      = 64 * 1024
+	maxCredentialFiles          = 1_000_000
+	maxCredentialAdminConns     = 16
+	maxCredentialAdminLineBytes = 4096
 )
 
 type credentialFile struct {
@@ -106,11 +108,20 @@ func decodeCredentialFile(raw []byte) (credentialFile, map[string]clientPolicy, 
 }
 
 func readCredentialFile(path string) (credentialFile, map[string]clientPolicy, error) {
-	info, err := os.Lstat(path)
+	// Check the *opened file*, not an Lstat of a pathname which can be swapped
+	// before ReadFile. O_NOFOLLOW rejects symlink substitution; O_NONBLOCK
+	// avoids hanging when an attacker substitutes a FIFO for a credential.
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return credentialFile{}, nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+	f := os.NewFile(uintptr(fd), path)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return credentialFile{}, nil, err
+	}
+	if !info.Mode().IsRegular() {
 		return credentialFile{}, nil, fmt.Errorf("credential must be a regular file")
 	}
 	if info.Size() > maxCredentialFileBytes {
@@ -119,9 +130,13 @@ func readCredentialFile(path string) (credentialFile, map[string]clientPolicy, e
 	if !privateKeyModeAllowed(info.Mode().Perm()) {
 		return credentialFile{}, nil, fmt.Errorf("credential permissions too open: %04o", info.Mode().Perm())
 	}
-	raw, err := os.ReadFile(path)
+	// Bound the bytes actually consumed too: a file can grow after Stat.
+	raw, err := io.ReadAll(io.LimitReader(f, maxCredentialFileBytes+1))
 	if err != nil {
 		return credentialFile{}, nil, err
+	}
+	if len(raw) > maxCredentialFileBytes {
+		return credentialFile{}, nil, fmt.Errorf("credential file too large")
 	}
 	return decodeCredentialFile(raw)
 }
@@ -320,15 +335,28 @@ func credentialAdminLoopWithHandler(ln net.Listener, handler func(net.Conn)) {
 func handleCredentialAdminConn(conn net.Conn) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	dec := json.NewDecoder(io.LimitReader(conn, 4096))
+	// Admin protocol is one JSON object terminated by a newline. Parse the
+	// complete bounded line; do not accept a valid prefix followed by a
+	// second JSON value or arbitrarily large whitespace/unknown fields.
+	line, err := bufio.NewReader(io.LimitReader(conn, maxCredentialAdminLineBytes+1)).ReadBytes('\n')
+	if err != nil || len(line) > maxCredentialAdminLineBytes {
+		_, _ = io.WriteString(conn, "error\n")
+		return
+	}
+	dec := json.NewDecoder(bytes.NewReader(line))
 	dec.DisallowUnknownFields()
 	var req credentialAdminRequest
 	if err := dec.Decode(&req); err != nil {
 		_, _ = io.WriteString(conn, "error\n")
 		return
 	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		_, _ = io.WriteString(conn, "error\n")
+		return
+	}
 	handle := strings.ToLower(req.AuthHandle)
-	var err error
+	err = nil
 	switch req.Op {
 	case "reload":
 		err = reloadCredentialHandle(handle)
