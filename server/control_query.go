@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 const maxControlQueryBytes = 512
@@ -16,6 +17,11 @@ const maxControlQueryBytes = 512
 func validateControlQuery(r *http.Request, purpose string) error {
 	if len(r.URL.RawQuery) > maxControlQueryBytes {
 		return fmt.Errorf("control query too large")
+	}
+	// The client emits ASCII digits and base64url tags; no percent-encoded
+	// aliases are needed. Reject them to avoid frontend/backend key ambiguity.
+	if strings.Contains(r.URL.RawQuery, "%") {
+		return fmt.Errorf("encoded control query is not canonical")
 	}
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {

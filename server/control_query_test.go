@@ -20,6 +20,8 @@ func TestControlQueryStrictCanonicalParsing(t *testing.T) {
 		{"UP", "seq=1&ack=0&max=4096", false},
 		{"DOWN", "seq=1&ack=0&seq=2", false},
 		{"DOWN", "%73eq=1&ack=0&seq=1", false},
+		{"DOWN", "%73eq=1&ack=0", false},
+		{"DOWN", "seq=%31&ack=0", false},
 		{"DOWN", "seq=1&ack=0&cmac=x&cmac=y", false},
 		{"DOWN", "seq=1&ack=0&max=", false},
 		{"DOWN", "seq=1&ack=0&max=garbage", false},
