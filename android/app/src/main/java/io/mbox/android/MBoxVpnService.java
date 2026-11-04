@@ -190,8 +190,8 @@ public class MBoxVpnService extends VpnService {
                         break;
                     }
                     String message = error.getMessage() == null ? error.toString() : error.getMessage();
-                    Log.w(TAG, "VPN transport attempt failed", error);
-                    updateState(State.RECOVERING, message);
+                    Log.w(TAG, "VPN transport attempt failed: " + MBoxLogSanitizer.sanitize(message));
+                    updateState(State.RECOVERING, MBoxLogSanitizer.sanitize(message));
                     cleanupCoreTransport();
                 }
 
@@ -228,9 +228,9 @@ public class MBoxVpnService extends VpnService {
         } catch (Throwable fatal) {
             if (desiredRunning) {
                 String message = fatal.getMessage() == null ? fatal.toString() : fatal.getMessage();
-                Log.e(TAG, "Fail-closed VPN interface failed", fatal);
-                updateState(State.FAILED, message);
-                updateNotification("VPN failed closed: " + safeMessage(fatal));
+                Log.e(TAG, "Fail-closed VPN interface failed: " + MBoxLogSanitizer.sanitize(message));
+                updateState(State.FAILED, MBoxLogSanitizer.sanitize(message));
+                updateNotification("VPN failed closed: " + MBoxLogSanitizer.sanitize(safeMessage(fatal)));
             }
         } finally {
             cleanupCoreTransport();
@@ -329,7 +329,7 @@ public class MBoxVpnService extends VpnService {
 
     private static void updateState(State newState, String error) {
         state = newState;
-        lastError = error == null ? "" : error;
+        lastError = MBoxLogSanitizer.sanitize(error);
     }
 
     private synchronized Process startCoreTransport() throws Exception {
@@ -478,14 +478,14 @@ public class MBoxVpnService extends VpnService {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                Log.i(TAG, "core: " + line);
+                Log.i(TAG, "core: " + MBoxLogSanitizer.sanitize(line));
                 if (line.contains("SOCKS listening on")) {
                     ready.countDown();
                 }
             }
         } catch (Exception error) {
             if (!cleaning && desiredRunning && process == mbox) {
-                Log.w(TAG, "core log reader stopped", error);
+                Log.w(TAG, "core log reader stopped: " + MBoxLogSanitizer.sanitize(error.toString()));
             }
         }
     }

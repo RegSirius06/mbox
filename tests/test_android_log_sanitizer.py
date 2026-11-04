@@ -11,8 +11,8 @@ SOURCE = ROOT / 'android/app/src/main/java/io/mbox/android/MBoxLogSanitizer.java
 def test_android_error_log_reaches_sanitizer():
     source = SERVICE.read_text()
     assert '"core: " + MBoxLogSanitizer.sanitize(line)' in source
-    assert '"VPN tunnel attempt failed: " + MBoxLogSanitizer.sanitize(message)' in source
-    assert 'Log.w(TAG, "VPN tunnel attempt failed", error)' not in source
+    assert '"VPN transport attempt failed: " + MBoxLogSanitizer.sanitize(message)' in source
+    assert 'Log.w(TAG, "VPN transport attempt failed", error)' not in source
 
 
 def test_android_java_log_sanitizer(tmp_path):
@@ -42,3 +42,19 @@ def test_android_java_log_sanitizer(tmp_path):
     for secret in ('private123', 'example.fun', 'private-profile', 'alpha123', 'sosecret', 'abcdef', 'hidden', 'abc=def'):
         assert secret not in result
     assert r'first\nFORGED' in result
+
+
+def test_cronet_and_ui_error_paths_redact_before_display():
+    cronet = (ROOT / 'android/app/src/main/java/io/mbox/android/CronetBridge.java').read_text()
+    service = SERVICE.read_text()
+    assert 'updateState(State.RECOVERING, MBoxLogSanitizer.sanitize(message))' in service
+    assert 'Log.w(TAG, "Cronet bridge request failed", error)' not in cronet
+    assert '"Cronet bridge request failed: " + MBoxLogSanitizer.sanitize(error.toString())' in cronet
+
+
+def test_fail_closed_log_redaction():
+    source = SERVICE.read_text()
+    assert 'updateState(State.FAILED, MBoxLogSanitizer.sanitize(message))' in source
+    assert '"Fail-closed VPN interface failed: " + MBoxLogSanitizer.sanitize(message)' in source
+    assert 'MBoxLogSanitizer.sanitize(safeMessage(fatal))' in source
+    assert 'lastError = MBoxLogSanitizer.sanitize(error);' in source

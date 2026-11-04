@@ -114,7 +114,7 @@ final class CronetBridge implements Closeable {
                 workerExecutor.execute(() -> handle(socket));
             } catch (IOException error) {
                 if (!closed.get()) {
-                    Log.w(TAG, "Cronet bridge accept failed", error);
+                    Log.w(TAG, "Cronet bridge accept failed: " + MBoxLogSanitizer.sanitize(error.toString()));
                 }
                 return;
             }
@@ -136,7 +136,7 @@ final class CronetBridge implements Closeable {
         } catch (EOFException ignored) {
         } catch (Throwable error) {
             if (!closed.get()) {
-                Log.w(TAG, "Cronet bridge request failed", error);
+                Log.w(TAG, "Cronet bridge request failed: " + MBoxLogSanitizer.sanitize(error.toString()));
             }
         }
     }
@@ -494,7 +494,7 @@ final class CronetBridge implements Closeable {
         try {
             engine.shutdown();
         } catch (Throwable error) {
-            Log.w(TAG, "Cronet shutdown failed", error);
+            Log.w(TAG, "Cronet shutdown failed: " + MBoxLogSanitizer.sanitize(error.toString()));
         }
     }
 
