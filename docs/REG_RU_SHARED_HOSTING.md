@@ -52,24 +52,17 @@ sudo mboxctl relay bundle
 sudo mboxctl relay paths
 ```
 
-Deploy over SSH/SCP when available:
+Deploy RC1 through the **secure SSH** workflow described in
+[`SAFE_SSH_RELAY_DEPLOY.md`](SAFE_SSH_RELAY_DEPLOY.md). It requires explicit
+`--remote-private-dir`, `--origin-config` and `--relay-binary` inputs, and
+supports `--dry-run` and `relay rollback`. It never silently uses the old
+binary template or generates a fresh HMAC key. It also checks HTTP health
+and rolls back on failure.
 
-```bash
-sudo mboxctl relay deploy \
-  --ssh USER@HOST \
-  --remote-dir /var/www/USER/data/www/front.example.com
-```
-
-Or use FTPS:
-
-```bash
-sudo mboxctl relay deploy \
-  --ftp-host HOST \
-  --ftp-user USER \
-  --remote-dir /path/to/webroot
-```
-
-Normal deployment updates the relay files without overwriting an existing site. Add `--site` only when intentionally installing the packaged decoy `index.html`/`404.html`. Preserve a known-working FastCGI/`.htaccess` mapping: shared-host activation details vary between accounts.
+FTPS deployment is **disabled for HMAC-protected RC1**, because a shared-host
+FTP jail often cannot access an HMAC-key directory outside the webroot.
+Normal deployment preserves existing website pages and `.htaccess`; use
+`--site` only to intentionally replace the optional decoy pages.
 
 ## Verify the frontend
 

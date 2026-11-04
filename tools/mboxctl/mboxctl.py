@@ -18,6 +18,7 @@ import shlex
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
@@ -1501,79 +1502,344 @@ def ftp_cwd_smart(ftp, remote_dir, ftp_user):
     )
 
 
+# SSH relay deployments are deliberately independent of `generate_relay_files()`:
+# a staged origin may use an HMAC key that differs from /etc/mbox/mbox.conf.
+# Deploying a generated/default key would silently break the running tunnel.
+
+def _relay_deploy_path(value, label):
+    if not value or not value.startswith('/') or os.path.normpath(value) != value or '\n' in value:
+        die(f'{label} must be an absolute normalized path')
+    if value == '/':
+        die(f'{label} must not be /')
+    return value
+
+
+def _relay_deploy_payload(args):
+    if not args.remote_private_dir:
+        die('--remote-private-dir is required (must be outside the webroot)')
+    if not args.origin_config:
+        die('--origin-config is required; choose the actual active RC1 origin server.json')
+    if not args.relay_binary:
+        die('--relay-binary is required; do not silently use the old installed template')
+    webroot = _relay_deploy_path(args.remote_dir, '--remote-dir')
+    private = _relay_deploy_path(args.remote_private_dir, '--remote-private-dir')
+    if os.path.commonpath((webroot, private)) == webroot:
+        die('--remote-private-dir must be outside --remote-dir')
+    if os.path.commonpath((private, webroot)) == private:
+        die('--remote-private-dir must not be an ancestor of the webroot')
+
+    cp = load_conf()
+    validate_config(cp)
+    runtime_file = Path(args.origin_config)
+    if not runtime_file.is_file() or runtime_file.is_symlink():
+        die(f'origin runtime config is missing or a symlink: {runtime_file}')
+    try:
+        runtime = json.loads(runtime_file.read_text())
+        transport = runtime['transport']
+        base = transport['base_path']
+        key_path = Path(transport['origin_hmac_secret_file'])
+    except (ValueError, KeyError, TypeError) as e:
+        die(f'invalid origin runtime config: {e}')
+    if base != cp['server']['base_path']:
+        die('origin base_path does not match mbox.conf; refusing to change Android URLs')
+    if not key_path.is_absolute() or key_path.is_symlink():
+        die('origin HMAC key path must be absolute and not a symlink')
+    try:
+        info = key_path.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o007:
+            die('origin HMAC key must be regular and not world-accessible')
+        key_bytes = key_path.read_bytes()
+        if len(bytes.fromhex(key_bytes.decode().strip())) != 32:
+            die('origin HMAC key must be exactly 32 bytes encoded as hex')
+    except (OSError, UnicodeError, ValueError) as e:
+        die(f'cannot read configured origin HMAC key: {e}')
+    binary = Path(args.relay_binary)
+    if not binary.is_file() or binary.is_symlink():
+        die('relay binary does not exist or is a symlink')
+    binary_bytes = binary.read_bytes()
+    if len(binary_bytes) < 100_000 or not binary_bytes.startswith(b'\x7fELF'):
+        die('relay binary is not a plausible Linux ELF executable')
+    digest = hashlib.sha256(binary_bytes).hexdigest()
+    if args.relay_sha256 and digest != args.relay_sha256.lower():
+        die('relay SHA256 does not match --relay-sha256')
+
+    cfg = {
+        'target': cp['server']['origin_url'],
+        'allowed_exact': [base + '/health'],
+        'allowed_prefixes': [base + '/api/v1/'],
+        'max_slots': int(cp['relay']['max_slots']),
+        'max_body_bytes': int(cp['relay']['max_body_bytes']),
+        'runtime_dir': private + '/locks',
+        'origin_hmac_secret_file': private + '/origin-hmac.key',
+    }
+    # Prevent accidental changes to the only public hostname / URL.
+    if not (1 <= cfg['max_slots'] <= 128 and 1024 <= cfg['max_body_bytes'] <= 16*1024*1024):
+        die('relay max_slots or max_body_bytes outside RC1 limits')
+    files = {
+        'relay.fcgi': binary_bytes,
+        'relay.json': (json.dumps(cfg, indent=2) + '\n').encode(),
+        'origin-hmac.key': key_bytes,
+    }
+    if args.site:
+        for name in ('index.html', '404.html'):
+            p = SITE_TEMPLATE / name
+            if not p.is_file():
+                die(f'decoy page is missing: {p}')
+            files[name] = p.read_bytes()
+    return webroot, private, digest, files
+
+
+# This code executes under the REG.RU SSH account, not as root. It receives a
+# small tar archive over encrypted SSH stdin, avoiding persistent secret copies
+# in /tmp or the webroot. It leaves a complete private rollback snapshot.
+_RELAY_SSH_DEPLOY = r'''
+import hashlib, io, json, os, shutil, stat, sys, tarfile, tempfile, time
+from pathlib import Path
+
+os.umask(0o077)
+web, private = (Path(x) for x in sys.argv[1:3])
+if not web.is_dir() or web.is_symlink():
+    raise SystemExit('DEPLOY_FAILED: webroot missing or symlink')
+if not private.is_dir() or private.is_symlink():
+    raise SystemExit('DEPLOY_FAILED: private directory missing or symlink')
+web, private = web.resolve(), private.resolve()
+if os.path.commonpath((str(web), str(private))) in (str(web), str(private)):
+    raise SystemExit('DEPLOY_FAILED: webroot and private directory overlap')
+if stat.S_IMODE(private.stat().st_mode) != 0o700 or private.stat().st_uid != os.geteuid():
+    raise SystemExit('DEPLOY_FAILED: private directory must be owned by SSH user, mode 0700')
+locks = private / 'locks'
+if locks.exists() and (locks.is_symlink() or not locks.is_dir()):
+    raise SystemExit('DEPLOY_FAILED: unsafe locks directory')
+locks.mkdir(mode=0o700, exist_ok=True)
+if stat.S_IMODE(locks.stat().st_mode) != 0o700 or locks.stat().st_uid != os.geteuid():
+    raise SystemExit('DEPLOY_FAILED: locks directory must have mode 0700')
+
+with tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read()), mode='r:gz') as tf:
+    members = tf.getmembers()
+    allowed = {'relay.fcgi', 'relay.json', 'origin-hmac.key', 'index.html', '404.html'}
+    names = {m.name for m in members}
+    if len(names) != len(members) or not {'relay.fcgi','relay.json','origin-hmac.key'} <= names or not names <= allowed:
+        raise SystemExit('DEPLOY_FAILED: unexpected archive members')
+    if any(not m.isfile() or m.size > 20_000_000 for m in members):
+        raise SystemExit('DEPLOY_FAILED: unsafe archive member')
+    payload = {m.name: tf.extractfile(m).read() for m in members}
+
+if not payload['relay.fcgi'].startswith(b'\x7fELF'):
+    raise SystemExit('DEPLOY_FAILED: invalid ELF relay')
+try:
+    config = json.loads(payload['relay.json'])
+    key = bytes.fromhex(payload['origin-hmac.key'].decode().strip())
+    if len(key) != 32:
+        raise ValueError('bad key size')
+    if config['origin_hmac_secret_file'] != str(private / 'origin-hmac.key') or config['runtime_dir'] != str(locks):
+        raise ValueError('private path mismatch')
+except (ValueError, KeyError, UnicodeError) as e:
+    raise SystemExit('DEPLOY_FAILED: invalid configuration/secret: ' + str(e))
+
+# Refuse to deploy into a different site or unexpectedly change its origin.
+current_config = web / 'relay.json'
+if current_config.is_file():
+    try:
+        current = json.loads(current_config.read_text())
+        if current.get('target') != config.get('target') or set(current.get('allowed_prefixes', [])) != set(config.get('allowed_prefixes', [])):
+            raise ValueError('different relay target/allowed path prefixes')
+    except (OSError, ValueError) as e:
+        raise SystemExit('DEPLOY_FAILED: existing webroot config mismatch: ' + str(e))
+
+for name in payload:
+    p = web / name if name != 'origin-hmac.key' else private / name
+    if p.is_symlink() or (p.exists() and not p.is_file()):
+        raise SystemExit('DEPLOY_FAILED: unsafe destination: ' + name)
+
+backups = private / 'backups'
+backups.mkdir(mode=0o700, exist_ok=True)
+if backups.is_symlink() or stat.S_IMODE(backups.stat().st_mode) != 0o700:
+    raise SystemExit('DEPLOY_FAILED: unsafe backups directory')
+backup_id = time.strftime('%Y%m%d-%H%M%S', time.gmtime()) + '-' + os.urandom(4).hex()
+backup = backups / backup_id
+backup.mkdir(mode=0o700)
+originals = {}
+for name in payload:
+    target = private / name if name == 'origin-hmac.key' else web / name
+    originals[name] = target.exists()
+    if target.exists():
+        shutil.copyfile(target, backup / name)
+        os.chmod(backup / name, 0o600)
+(backup / 'manifest.json').write_text(json.dumps(originals))
+os.chmod(backup / 'manifest.json', 0o600)
+
+with tempfile.TemporaryDirectory(prefix='.mbox-upload-', dir=str(private)) as tmp:
+    tmp = Path(tmp)
+    for name, content in payload.items():
+        p = tmp / name
+        p.write_bytes(content)
+        os.chmod(p, 0o755 if name == 'relay.fcgi' else 0o600)
+    replaced = []
+    try:
+        # The key must exist before the new configuration/binary are published.
+        for name in ('origin-hmac.key', 'relay.json', 'relay.fcgi', 'index.html', '404.html'):
+            if name not in payload:
+                continue
+            target = private / name if name == 'origin-hmac.key' else web / name
+            # os.replace across filesystems is not guaranteed; stage each file
+            # in its final directory, then rename into place.
+            with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix='.mbox-new-', delete=False) as f:
+                staged = Path(f.name)
+                f.write(payload[name])
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(staged, 0o755 if name == 'relay.fcgi' else 0o600)
+            os.replace(staged, target)
+            replaced.append(name)
+        assert hashlib.sha256((web / 'relay.fcgi').read_bytes()).digest() == hashlib.sha256(payload['relay.fcgi']).digest()
+        assert (private / 'origin-hmac.key').read_bytes() == payload['origin-hmac.key']
+        assert json.loads((web / 'relay.json').read_text()) == config
+    except BaseException:
+        for name in reversed(replaced):
+            target = private / name if name == 'origin-hmac.key' else web / name
+            if originals[name]:
+                with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix='.mbox-restore-', delete=False) as f:
+                    f.write((backup / name).read_bytes())
+                    restore = Path(f.name)
+                os.chmod(restore, 0o755 if name == 'relay.fcgi' else 0o600)
+                os.replace(restore, target)
+            else:
+                target.unlink(missing_ok=True)
+        raise
+
+print('DEPLOY_OK')
+print('BACKUP_ID=' + backup_id)
+print('RELAY_SHA256=' + hashlib.sha256(payload['relay.fcgi']).hexdigest())
+print('SECRET_OUTSIDE_WEBROOT=yes')
+'''
+
+
+_RELAY_SSH_ROLLBACK = r'''
+import json, os, shutil, stat, sys, tempfile
+from pathlib import Path
+os.umask(0o077)
+web, private = (Path(x) for x in sys.argv[1:3])
+backup_id = sys.argv[3]
+if not web.is_dir() or web.is_symlink() or not private.is_dir() or private.is_symlink():
+    raise SystemExit('ROLLBACK_FAILED: unsafe webroot/private directory')
+web, private = web.resolve(), private.resolve()
+if os.path.commonpath((str(web), str(private))) in (str(web), str(private)):
+    raise SystemExit('ROLLBACK_FAILED: paths overlap')
+if private.stat().st_uid != os.geteuid() or stat.S_IMODE(private.stat().st_mode) != 0o700:
+    raise SystemExit('ROLLBACK_FAILED: private directory not owned/mode 0700')
+root = private / 'backups'
+if not root.is_dir() or root.is_symlink():
+    raise SystemExit('ROLLBACK_FAILED: no backups directory')
+if backup_id == 'latest':
+    candidates = sorted(x for x in root.iterdir() if x.is_dir() and not x.is_symlink())
+    if not candidates:
+        raise SystemExit('ROLLBACK_FAILED: no backups')
+    backup = max(candidates, key=lambda x: x.stat().st_mtime_ns)
+else:
+    if not backup_id or any(c not in '0123456789-abcdef' for c in backup_id):
+        raise SystemExit('ROLLBACK_FAILED: bad backup id')
+    backup = root / backup_id
+if not backup.is_dir() or backup.is_symlink():
+    raise SystemExit('ROLLBACK_FAILED: backup missing')
+manifest = json.loads((backup / 'manifest.json').read_text())
+allowed = {'relay.fcgi', 'relay.json', 'origin-hmac.key', 'index.html', '404.html'}
+if not manifest or not set(manifest) <= allowed or any(type(v) is not bool for v in manifest.values()):
+    raise SystemExit('ROLLBACK_FAILED: invalid backup manifest')
+for name, existed in manifest.items():
+    target = private / name if name == 'origin-hmac.key' else web / name
+    if target.is_symlink():
+        raise SystemExit('ROLLBACK_FAILED: destination symlink')
+    if existed and not (backup / name).is_file():
+        raise SystemExit('ROLLBACK_FAILED: backup incomplete')
+for name in ('origin-hmac.key', 'relay.json', 'relay.fcgi', 'index.html', '404.html'):
+    if name not in manifest:
+        continue
+    target = private / name if name == 'origin-hmac.key' else web / name
+    if manifest[name]:
+        with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix='.mbox-rollback-', delete=False) as f:
+            f.write((backup / name).read_bytes())
+            temp = Path(f.name)
+        os.chmod(temp, 0o755 if name == 'relay.fcgi' else 0o600)
+        os.replace(temp, target)
+    else:
+        target.unlink(missing_ok=True)
+print('ROLLBACK_OK')
+print('BACKUP_ID=' + backup.name)
+'''
+
+
+def _relay_ssh_call(host, script, args, data=None):
+    # Paths and code are quoted as separate shell arguments for the remote SSH
+    # command string. Do not use a shell on the *local* host.
+    cmd = 'python3 -c ' + shlex.quote(script) + ' ' + ' '.join(shlex.quote(x) for x in args)
+    result = subprocess.run(['ssh', host, cmd], input=data, check=True,
+                            timeout=180, stdout=subprocess.PIPE)
+    output = result.stdout.decode('utf-8', errors='replace')
+    if output:
+        print(output, end='')
+    return output
+
+
+def _relay_public_health():
+    from urllib.request import urlopen
+    cp = load_conf()
+    url = cp['server']['public_url'].rstrip('/') + '/health'
+    with urlopen(url, timeout=15) as response:
+        if response.status != 200:
+            raise RuntimeError(f'public health returned HTTP {response.status}')
+        # A healthy MBox endpoint can return b'ok', not just b'ready'.
+        response.read(128)
+
+
 def relay_deploy(args):
-    require_root(); d=generate_relay_files(); files=[d/"relay.fcgi",d/"relay.json",d/"DEPLOY.txt",d/"SHA256SUMS"]
-    site_files=[]
-    if args.site and (d/"site").is_dir(): site_files=[d/"site"/"index.html",d/"site"/"404.html"]
-    if args.ssh:
-        if not args.remote_dir: die("--remote-dir is required with --ssh")
-        remote=args.remote_dir.rstrip("/")
-        ts=dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        stage=f"{remote}/.mbox-stage-{ts}"
-        run(["ssh",args.ssh,"mkdir -p "+shlex.quote(stage)])
-        run(["scp",str(d/"relay.fcgi"),str(d/"relay.json"),f"{args.ssh}:{stage}/"] )
-        if site_files: run(["scp",*(str(x) for x in site_files),f"{args.ssh}:{stage}/"])
-        site_script=""
-        if site_files:
-            site_script=(f"[ ! -f index.html ] || cp -p index.html index.html.rollback-{ts}; "
-                         f"[ ! -f 404.html ] || cp -p 404.html 404.html.rollback-{ts}; "
-                         f"cp {shlex.quote(stage)}/index.html index.html.new; mv -f index.html.new index.html; "
-                         f"cp {shlex.quote(stage)}/404.html 404.html.new; mv -f 404.html.new 404.html; ")
-        script=(
-            f"set -e; cd {shlex.quote(remote)}; "
-            f"[ ! -f relay.fcgi ] || cp -p relay.fcgi relay.fcgi.rollback-{ts}; "
-            f"[ ! -f relay.json ] || cp -p relay.json relay.json.rollback-{ts}; "
-            f"cp {shlex.quote(stage)}/relay.fcgi relay.fcgi.new; chmod 755 relay.fcgi.new; "
-            f"cp {shlex.quote(stage)}/relay.json relay.json.new; chmod 600 relay.json.new; "
-            f"mv -f relay.fcgi.new relay.fcgi; mv -f relay.json.new relay.json; "
-            + site_script +
-            f"rm -rf {shlex.quote(stage)}"
-        )
-        run(["ssh",args.ssh,script])
-        print(f"Uploaded atomically to {args.ssh}:{remote}/ (rollback copies kept)")
-        return
+    require_root()
     if args.ftp_host:
-        if not args.ftp_user or not args.remote_dir: die("--ftp-user and --remote-dir are required")
-        password=os.environ.get("MBOX_FTP_PASSWORD") or getpass.getpass("FTP password: ")
-        cls=ftplib.FTP_TLS if not args.ftp_plain else ftplib.FTP
-        ftp=cls(args.ftp_host,timeout=20); ftp.login(args.ftp_user,password)
-        if isinstance(ftp,ftplib.FTP_TLS): ftp.prot_p()
-        selected_dir=ftp_cwd_smart(ftp,args.remote_dir,args.ftp_user)
-        print(f"FTP directory: {selected_dir} (PWD {ftp.pwd()})")
-        ts=dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        existing=set(ftp.nlst())
-        for p in files[:2]:
-            name=p.name
-            if name in existing:
-                try: ftp.rename(name,f"{name}.rollback-{ts}")
-                except ftplib.all_errors: pass
-            temp=name+".new"
-            with p.open("rb") as f: ftp.storbinary(f"STOR {temp}",f)
-            try: ftp.rename(temp,name)
-            except ftplib.all_errors:
-                try: ftp.delete(name)
-                except ftplib.all_errors: pass
-                ftp.rename(temp,name)
-            if name == "relay.fcgi":
-                try: ftp.sendcmd("SITE CHMOD 755 relay.fcgi")
-                except ftplib.all_errors: pass
-            print(f"uploaded {name}")
-        if site_files:
-            for p in site_files:
-                name=p.name
-                if name in existing:
-                    try: ftp.rename(name,f"{name}.rollback-{ts}")
-                    except ftplib.all_errors: pass
-                temp=name+".new"
-                with p.open("rb") as f: ftp.storbinary(f"STOR {temp}",f)
-                try: ftp.rename(temp,name)
-                except ftplib.all_errors:
-                    try: ftp.delete(name)
-                    except ftplib.all_errors: pass
-                    ftp.rename(temp,name)
-                print(f"uploaded {name}")
-        ftp.quit(); return
-    die("choose --ssh USER@HOST or --ftp-host HOST")
+        die('FTPS relay deploy is disabled for HMAC-protected RC1: it cannot guarantee a private key outside webroot. Use --ssh')
+    if not args.ssh or not args.remote_dir:
+        die('relay deploy requires --ssh and --remote-dir')
+    webroot, private, digest, files = _relay_deploy_payload(args)
+    if args.dry_run:
+        print('DEPLOY PREFLIGHT OK (dry run; nothing transferred or modified)')
+        print('RELAY_SHA256=' + digest)
+        print('ORIGIN_CONFIG=' + args.origin_config)
+        print('REMOTE_WEBROOT=' + webroot)
+        print('REMOTE_PRIVATE=' + private)
+        return
+    import io
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode='w:gz') as tf:
+        for name, content in files.items():
+            member = tarfile.TarInfo(name)
+            member.mode = 0o755 if name == 'relay.fcgi' else 0o600
+            member.size = len(content)
+            tf.addfile(member, io.BytesIO(content))
+    output = _relay_ssh_call(args.ssh, _RELAY_SSH_DEPLOY, (webroot, private), buffer.getvalue())
+    backup_ids = re.findall(r'^BACKUP_ID=([0-9]{8}-[0-9]{6}-[0-9a-f]{8})$', output, flags=re.M)
+    if len(backup_ids) != 1 or 'DEPLOY_OK' not in output:
+        die('remote deployment did not return a verifiable backup ID; inspect remote files before retrying')
+    if not args.skip_health_check:
+        try:
+            _relay_public_health()
+        except Exception as e:
+            eprint(f'public health failed after relay deploy: {e}; restoring backup {backup_ids[0]}')
+            try:
+                _relay_ssh_call(args.ssh, _RELAY_SSH_ROLLBACK,
+                                (webroot, private, backup_ids[0]))
+            except Exception as rollback_error:
+                die(f'public health failed and automatic rollback failed: {rollback_error}')
+            die('public health failed; previous relay restored. Verify Caddy/origin before retrying')
+        print('PUBLIC_HEALTH_HTTP_200')
+
+
+def relay_rollback(args):
+    require_root()
+    if not args.ssh or not args.remote_dir or not args.remote_private_dir:
+        die('relay rollback requires --ssh, --remote-dir, --remote-private-dir')
+    webroot = _relay_deploy_path(args.remote_dir, '--remote-dir')
+    private = _relay_deploy_path(args.remote_private_dir, '--remote-private-dir')
+    if os.path.commonpath((webroot, private)) in (webroot, private):
+        die('private directory must be separate from webroot')
+    _relay_ssh_call(args.ssh, _RELAY_SSH_ROLLBACK, (webroot, private, args.backup_id))
 
 
 def relay_test(args):
@@ -1739,7 +2005,8 @@ def make_parser():
     r=sp.add_parser("relay"); rs=r.add_subparsers(dest="sub",required=True)
     q=rs.add_parser("bundle"); q.add_argument("--output"); q.set_defaults(func=relay_bundle)
     q=rs.add_parser("paths"); q.set_defaults(func=relay_paths)
-    q=rs.add_parser("deploy"); q.add_argument("--ssh"); q.add_argument("--ftp-host"); q.add_argument("--ftp-user"); q.add_argument("--ftp-plain",action="store_true"); q.add_argument("--remote-dir"); q.add_argument("--site",action="store_true",help="also deploy decoy index.html and 404.html to the shared-hosting web root"); q.set_defaults(func=relay_deploy)
+    q=rs.add_parser("deploy"); q.add_argument("--ssh"); q.add_argument("--ftp-host"); q.add_argument("--ftp-user"); q.add_argument("--ftp-plain",action="store_true"); q.add_argument("--remote-dir"); q.add_argument("--remote-private-dir"); q.add_argument("--origin-config"); q.add_argument("--relay-binary"); q.add_argument("--relay-sha256"); q.add_argument("--dry-run",action="store_true"); q.add_argument("--skip-health-check",action="store_true",help="disable automatic HTTP health check and rollback (only for maintenance)"); q.add_argument("--site",action="store_true",help="also deploy decoy index.html and 404.html to the shared-hosting web root"); q.set_defaults(func=relay_deploy)
+    q=rs.add_parser("rollback"); q.add_argument("--ssh",required=True); q.add_argument("--remote-dir",required=True); q.add_argument("--remote-private-dir",required=True); q.add_argument("--backup-id",default="latest"); q.set_defaults(func=relay_rollback)
     q=rs.add_parser("test"); q.set_defaults(func=relay_test)
     s=sp.add_parser("server"); ss=s.add_subparsers(dest="sub",required=True)
     for name in ["start","stop","restart","status"]:
@@ -1757,7 +2024,7 @@ def make_parser():
     q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
     q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
     q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2.1"))
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2.1+secure-ssh-relay-deploy.1"))
     return p
 
 
