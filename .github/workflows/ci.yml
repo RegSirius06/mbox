@@ -26,8 +26,8 @@ jobs:
       - name: Format, vet, tests
         env: {GO111MODULE: 'off'}
         run: |
-          test -z "$(find common/noise common/controlmeta common/flowctl common/wire client server relay tools/mbox-key tools/mbox-link tools/mbox-netprobe -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
-          for d in common/noise common/controlmeta common/flowctl common/wire server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do (cd "$d" && go vet . && go test .); done
+          test -z "$(find common/noise common/controlmeta common/flowctl common/wire common/udpwire client server relay tools/mbox-key tools/mbox-link tools/mbox-netprobe -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+          for d in common/noise common/controlmeta common/flowctl common/wire common/udpwire server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do (cd "$d" && go vet . && go test .); done
   go-race:
     runs-on: ubuntu-24.04
     steps:
@@ -41,6 +41,7 @@ jobs:
           (cd common/controlmeta && go test -race .)
           (cd common/flowctl && go test -race .)
           (cd common/wire && go test -race .)
+          (cd common/udpwire && go test -race .)
           (cd server && go test -race .)
           (cd client && go test -race .)
           (cd relay && go test -race .)
@@ -54,6 +55,8 @@ jobs:
         env: {GO111MODULE: 'off'}
         run: |
           (cd common/controlmeta && go test -run=^$ -fuzz=FuzzRejectTamperedControlMetadata -fuzztime=10s .)
+          (cd common/udpwire && go test -run=^$ -fuzz=FuzzMBoxDatagram -fuzztime=10s .)
+          (cd common/udpwire && go test -run=^$ -fuzz=FuzzHEVDatagram -fuzztime=10s .)
           (cd server && go test -run=^$ -fuzz=FuzzDownRequestMeta -fuzztime=10s .)
           (cd server && go test -run=^$ -fuzz=FuzzControlQueryParser -fuzztime=10s .)
           (cd client && go test -run=^$ -fuzz=FuzzMuxFrameParser -fuzztime=10s .)

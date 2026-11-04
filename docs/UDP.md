@@ -54,3 +54,51 @@ settings on itself.
 Automated Go unit tests cover the SOCKS5 parser, fragmentation, refusal and
 byte-for-byte CONNECT preservation; they are not a substitute for device
 packet capture or native HEV integration tests.
+
+## UDP development milestone 1 (after beta.3; **not enabled**)
+
+The first preparatory change introduces `common/udpwire`, a reusable bounded
+codec for MBox's prospective encrypted datagram frames and HEV's proprietary
+SOCKS5 FWD UDP (`CMD=0x05`) length-prefixed UDP-in-TCP messages.
+
+- Independent IPv4 and IPv6 address forms; domain/zone/unspecified destinations
+  are rejected at this stage. This parser performs **no DNS resolution**.
+- One datagram per frame. Maximum payload is **1232 bytes**; no silent
+  truncation, fragmentation, reassembly or direct UDP fallback.
+- Versioned internal encoding includes authenticated-session-local, nonzero
+  `flow_id`. In a future transport this entire payload must be inside a Noise
+  record; it is never exposed in the HTTP URL or sent on the Android physical
+  interface.
+- Encoders/decoders copy datagram contents, enforce exact sizes and reject
+  malformed headers. Bounded streaming HEV reads fail closed.
+- Regression and fuzz tests cover malformed/truncated input, IPv4/IPv6,
+  payload limits, canonical form, streaming partial reads and codec roundtrips.
+
+**Crucial:** a standalone codec does not provide UDP connectivity or prove
+leak freedom. The live local SOCKS client still rejects `CMD=0x05` and RFC
+1928 `UDP ASSOCIATE (0x03)`. Do not change this until all security acceptance
+conditions below pass.
+
+### Planned transport handoff
+
+```
+Android HEV (udp: tcp) -> local SOCKS FWD UDP (no physical UDP)
+ -> MBox encrypted datagram frame over existing Noise/HTTPS/REG.RU relay
+ -> per-session bounded UDP association on origin
+ -> sing-box mixed inbound SOCKS5 UDP ASSOCIATE
+ -> configured sing-box routing (direct or chained exit)
+ -> reply via the SAME MBox session / Noise / HEV datagram
+```
+
+Direct `net.DialUDP` from the RU VPS to an Internet destination would bypass
+sing-box routing and potentially expose DNS or other traffic from the wrong
+exit. It must **not** be used as a shortcut. DNS, STUN, QUIC, WebRTC and VoIP
+should take the same authenticated path when UDP is eventually enabled.
+
+Next implementation gates: (1) SOCKS5 FWD-UDP association parser with strict
+SOCKS handshake, (2) session-owned UDP flow map and per-flow/global quotas,
+TTL and backpressure, (3) authenticated MBox UDP frame and ordered delivery,
+(4) SOCKS5 UDP-ASSOCIATE handoff to sing-box with bounded buffers, no direct
+origin sockets, (5) real Android Wi-Fi/LTE/TUN packet capture with VPN Lockdown,
+service crash, network handover, DNS/UDP/IPv6/QUIC/STUN, plus load, race and
+long-soak tests. Keep UDP disabled until all five are confirmed.

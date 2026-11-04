@@ -62,7 +62,7 @@ func TestSOCKSConnectGateForwardsVerbatim(t *testing.T) {
 }
 
 func TestSOCKSConnectGateRejectsBINDAndUDP(t *testing.T) {
-	for _, cmd := range []byte{2, 3, 0x80} {
+	for _, cmd := range []byte{2, 3, 5, 0x80} {
 		for _, chunk := range []int{1, 16} {
 			intro := []byte{5, 1, 0}
 			request := []byte{5, cmd, 0, 1, 127, 0, 0, 1, 0, 53}
