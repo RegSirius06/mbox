@@ -189,3 +189,30 @@ def test_postdeploy_health_failure_automatically_rolls_back(tmp_path, monkeypatc
     assert seen[0][0] == m._RELAY_SSH_DEPLOY
     assert seen[1][0] == m._RELAY_SSH_ROLLBACK
     assert seen[1][1][2] == '20261104-203000-1234abcd'
+
+
+def test_ssh_rollback_failure_reports_short_error(monkeypatch, capsys):
+    def fail(cmd, **kwargs):
+        raise subprocess.CalledProcessError(
+            1, cmd, stderr=b'ROLLBACK_FAILED: no backups directory\n'
+        )
+    monkeypatch.setattr(m.subprocess, 'run', fail)
+    with pytest.raises(SystemExit) as exc:
+        m._relay_ssh_call('example.test', m._RELAY_SSH_ROLLBACK,
+                          ('/example/web', '/example/private', 'latest'))
+    assert exc.value.code == 1
+    message = capsys.readouterr().err
+    assert 'ROLLBACK_FAILED: no backups directory' in message
+    assert 'python3 -c' not in message
+    assert 'Traceback' not in message
+
+
+def test_ssh_timeout_is_actionable(monkeypatch, capsys):
+    def timeout(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 180)
+    monkeypatch.setattr(m.subprocess, 'run', timeout)
+    with pytest.raises(SystemExit) as exc:
+        m._relay_ssh_call('example.test', m._RELAY_SSH_DEPLOY,
+                          ('/example/web', '/example/private'))
+    assert exc.value.code == 1
+    assert 'SSH timed out' in capsys.readouterr().err

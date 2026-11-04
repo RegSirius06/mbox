@@ -1772,8 +1772,21 @@ def _relay_ssh_call(host, script, args, data=None):
     # Paths and code are quoted as separate shell arguments for the remote SSH
     # command string. Do not use a shell on the *local* host.
     cmd = 'python3 -c ' + shlex.quote(script) + ' ' + ' '.join(shlex.quote(x) for x in args)
-    result = subprocess.run(['ssh', host, cmd], input=data, check=True,
-                            timeout=180, stdout=subprocess.PIPE)
+    try:
+        result = subprocess.run(['ssh', host, cmd], input=data, check=True,
+                                timeout=180, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b'').decode('utf-8', errors='replace')
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        reason = next((line for line in reversed(lines)
+                       if 'ROLLBACK_FAILED:' in line or 'DEPLOY_FAILED:' in line),
+                      lines[-1] if lines else 'remote command failed')
+        die(f'relay SSH failed (exit {exc.returncode}): {reason[:350]}')
+    except subprocess.TimeoutExpired:
+        die('relay SSH timed out; inspect the remote host before retrying')
+    except OSError as exc:
+        die(f'cannot start SSH: {exc}')
     output = result.stdout.decode('utf-8', errors='replace')
     if output:
         print(output, end='')
@@ -2024,7 +2037,7 @@ def make_parser():
     q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
     q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
     q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2.1+secure-ssh-relay-deploy.1"))
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.2.2"))
     return p
 
 
