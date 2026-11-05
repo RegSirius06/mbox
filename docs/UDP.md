@@ -102,3 +102,52 @@ TTL and backpressure, (3) authenticated MBox UDP frame and ordered delivery,
 origin sockets, (5) real Android Wi-Fi/LTE/TUN packet capture with VPN Lockdown,
 service crash, network handover, DNS/UDP/IPv6/QUIC/STUN, plus load, race and
 long-soak tests. Keep UDP disabled until all five are confirmed.
+
+## UDP development milestone 2 — session-owned SOCKS5 association (LAB ONLY)
+
+The next source-only milestone adds the **complete Go-client-to-origin datagram
+path**, but **does not enable it in the Android build or in default server
+configurations**. It is intentionally unsuitable for release to ordinary VPN
+users until real Android physical-link capture verifies fail-closed behavior.
+
+- `transport.enable_udp_lab=true` is an explicit, opt-in key in the Go client
+  JSON. Client startup additionally requires `--developer-mode`; Android does
+  **not** import or enable this flag from a public profile.
+- Server `transport.enable_udp_lab=true` independently gates UDP frames; the
+  default is `false`. Old TCP/Noise traffic remains unchanged.
+- HEV SOCKS command **0x05** is intercepted locally after its ordinary SOCKS
+  greeting. The original TCP SOCKS stream closes. A new MBox flow is opened
+  and its SOCKS success reply is returned **only after** the server's UDP
+  association is confirmed. **0x03 UDP ASSOCIATE remains denied locally.**
+- `frameUDPOpen=7`, `frameUDPReady=8`, `frameUDPData=9`; a datagram carries
+  the bounded, versioned `udpwire` encoding **inside Noise**. Client and server
+  verify flow ID matching, prohibit unknown frames, use the same ordered DOWN
+  delivery and authenticated HTTP ACK/replay logic as the TCP path.
+- The origin connects by TCP to the configured SOCKS5 upstream and requests
+  RFC 1928 UDP ASSOCIATE. Its **only UDP socket is connected to the loopback
+  address returned by that SOCKS relay**. DNS names and non-loopback UDP
+  relays are rejected, as are unsolicited packet-source addresses. The
+  remote SOCKS (normally sing-box) controls all final destination routing.
+- Per-session UDP flow count ≤16; per-flow pending queue ≤32 datagrams;
+  ≤128 datagrams/second per flow; ≤64 recently contacted destinations;
+  UDP data ≤1232 bytes; 2-minute idle timeout; server global queue accounting
+  includes all waiting UDP payloads. Socket and queue cleanup follows session
+  shutdown and credential revocation. No fragmentation and no direct bypass.
+
+**Limitations and must-pass gates before enabling for users:**
+
+1. Validate the running sing-box version/inbound actually supports UDP
+   ASSOCIATE, including its chosen overseas outbound policy; the test proxy in
+   Go tests proves protocol behavior, **not** real sing-box routing.
+2. Run a full HTTPS/REG.RU integration test and then a physical Android TUN,
+   Wi-Fi and LTE capture under VPN Lockdown. Check UDP DNS, IPv6, STUN, QUIC,
+   invalid datagrams, process death, handover, reconnect and TCP regression.
+3. Run long-duration soak, socket/FD and goroutine leak checks under concurrent
+   UDP flows and multiple users. Source-level `go test -race` is necessary but
+   insufficient for a public release.
+4. Decide on MTU/fragmentation for larger UDP and actual Android config/UI
+   integration. The current 1232-byte limit intentionally drops larger UDP
+   datagrams rather than truncating them or bypassing the tunnel.
+
+**Do not deploy this milestone to the production Android VPN or enable the
+lab setting on a public origin.** The validated beta.3 remains TCP-only.

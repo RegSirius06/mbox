@@ -261,6 +261,10 @@ func closeSessionState(id string, s *session) {
 	for id := range s.streams {
 		ids = append(ids, id)
 	}
+	udpIDs := make([]uint32, 0, len(s.udpFlows))
+	for id := range s.udpFlows {
+		udpIDs = append(udpIDs, id)
+	}
 	queued := s.downBytes
 	// Replay accounting is ownership-based: release the exact reservation
 	// attached to each entry, not an estimate or ciphertext length.
@@ -284,6 +288,9 @@ func closeSessionState(id string, s *session) {
 	s.closeOnce.Do(func() { close(s.done) })
 	for _, streamID := range ids {
 		closeStream(s, streamID, false)
+	}
+	for _, id := range udpIDs {
+		closeUDPFlow(s, id, false)
 	}
 	log.Printf("SESSION CLOSE %s", redactedSessionID(id))
 }

@@ -57,6 +57,7 @@ jobs:
           (cd common/controlmeta && go test -run=^$ -fuzz=FuzzRejectTamperedControlMetadata -fuzztime=10s .)
           (cd common/udpwire && go test -run=^$ -fuzz=FuzzMBoxDatagram -fuzztime=10s .)
           (cd common/udpwire && go test -run=^$ -fuzz=FuzzHEVDatagram -fuzztime=10s .)
+          (cd server && go test -run=^$ -fuzz=FuzzSOCKSUDPWire -fuzztime=10s .)
           (cd server && go test -run=^$ -fuzz=FuzzDownRequestMeta -fuzztime=10s .)
           (cd server && go test -run=^$ -fuzz=FuzzControlQueryParser -fuzztime=10s .)
           (cd client && go test -run=^$ -fuzz=FuzzMuxFrameParser -fuzztime=10s .)

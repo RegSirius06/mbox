@@ -61,7 +61,7 @@ func allowStreamOpenLocked(s *session) error {
 	if s.openWindowCount >= runtimeLimits.MaxStreamOpensPerSecond {
 		return fmt.Errorf("stream open rate exceeded")
 	}
-	if len(s.streams) >= runtimeLimits.MaxStreamsPerSession {
+	if len(s.streams)+len(s.udpFlows) >= runtimeLimits.MaxStreamsPerSession {
 		return fmt.Errorf("streams/session quota exceeded")
 	}
 	s.openWindowCount++
@@ -175,6 +175,10 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 		}
 		s.mu.Lock()
 		_, exists := s.streams[streamID]
+		if _, udpExists := s.udpFlows[streamID]; udpExists {
+			s.mu.Unlock()
+			return fmt.Errorf("TCP/UDP ID collision")
+		}
 		if exists {
 			s.mu.Unlock()
 			return nil
@@ -251,11 +255,25 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 			return nil
 		}
 		return st.addSendCredit(credit)
+	case frameUDPOpen:
+		if len(payload) != 0 {
+			return fmt.Errorf("UDP OPEN payload must be empty")
+		}
+		if err := newUDPFlow(s, streamID); err != nil {
+			_ = appendFrame(s, streamID, frameError, []byte("UDP open rejected"))
+		}
+		return nil
+	case frameUDPData:
+		if !enableUDPLabServer {
+			return fmt.Errorf("UDP disabled")
+		}
+		return onUDPData(s, streamID, payload)
 	case frameClose:
 		if len(payload) != 0 {
 			return fmt.Errorf("CLOSE payload must be empty")
 		}
 		closeStream(s, streamID, false)
+		closeUDPFlow(s, streamID, false)
 		return nil
 	case framePing:
 		return appendFrame(s, streamID, framePing, payload)

@@ -9,12 +9,15 @@ import (
 )
 
 const (
-	frameOpen   = 1
-	frameData   = 2
-	frameClose  = 3
-	frameError  = 4
-	framePing   = 5
-	frameWindow = 6
+	frameOpen     = 1
+	frameData     = 2
+	frameClose    = 3
+	frameError    = 4
+	framePing     = 5
+	frameWindow   = 6
+	frameUDPOpen  = 7
+	frameUDPReady = 8
+	frameUDPData  = 9
 )
 
 var (
@@ -38,6 +41,7 @@ type tunnel struct {
 
 	streamsMu sync.Mutex
 	streams   map[uint32]*localStream
+	udpFlows  map[uint32]*localUDPFlow
 	nextID    atomic.Uint32
 	streamWG  sync.WaitGroup
 

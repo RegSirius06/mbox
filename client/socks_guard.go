@@ -11,6 +11,7 @@ import (
 const socksHandshakeTimeout = 30 * time.Second
 
 var errSOCKSCommandRejected = errors.New("SOCKS5 command rejected by MBox policy")
+var errHEVForwardUDPRequested = errors.New("HEV UDP-in-TCP requested via SOCKS5 command 0x05")
 
 // guardSOCKSConnect is a local (pre-Noise) security boundary. The MBox
 // transport carries a raw SOCKS5 byte stream to the remote SOCKS server;
@@ -19,6 +20,13 @@ var errSOCKSCommandRejected = errors.New("SOCKS5 command rejected by MBox policy
 // Only an RFC 1928 CONNECT request may cross this boundary. The original
 // greeting/request bytes are forwarded unchanged for beta.2.1 compatibility.
 func guardSOCKSConnect(conn net.Conn, forward func([]byte) error) error {
+	return guardSOCKSConnectWithUDP(conn, forward, false)
+}
+
+// The lab-only extension never forwards HEV FWD UDP to an upstream SOCKS
+// server. It consumes the request and hands the same local TCP socket to the
+// dedicated authenticated MBox UDP path.
+func guardSOCKSConnectWithUDP(conn net.Conn, forward func([]byte) error, udpLab bool) error {
 	if err := conn.SetReadDeadline(time.Now().Add(socksHandshakeTimeout)); err != nil {
 		return err
 	}
@@ -58,7 +66,8 @@ func guardSOCKSConnect(conn net.Conn, forward func([]byte) error) error {
 	if reqHeader[0] != 0x05 || reqHeader[2] != 0x00 {
 		return fmt.Errorf("invalid local SOCKS5 request header")
 	}
-	if reqHeader[1] != 0x01 { // CONNECT is the ONLY permitted command.
+	hevUDP := udpLab && reqHeader[1] == 0x05
+	if reqHeader[1] != 0x01 && !hevUDP { // Never forward UDP to TCP upstream.
 		writeSOCKSFailure(conn, 0x07) // Command not supported.
 		return errSOCKSCommandRejected
 	}
@@ -86,6 +95,9 @@ func guardSOCKSConnect(conn net.Conn, forward func([]byte) error) error {
 		request = append(request, reqHeader[:]...)
 		request = append(request, domainLen[0])
 		request = append(request, remaining...)
+		if hevUDP {
+			return errHEVForwardUDPRequested
+		}
 		return forward(request)
 	default:
 		writeSOCKSFailure(conn, 0x08) // Address type not supported.
@@ -97,6 +109,9 @@ func guardSOCKSConnect(conn net.Conn, forward func([]byte) error) error {
 		return err
 	}
 	request := append(reqHeader[:], remaining...)
+	if hevUDP {
+		return errHEVForwardUDPRequested
+	}
 	return forward(request)
 }
 

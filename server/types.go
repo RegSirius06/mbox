@@ -13,12 +13,15 @@ const (
 	maxRequestBody = 2 * 1024 * 1024
 	maxDownQueue   = 8 * 1024 * 1024
 
-	frameOpen   = 1
-	frameData   = 2
-	frameClose  = 3
-	frameError  = 4
-	framePing   = 5
-	frameWindow = 6
+	frameOpen     = 1
+	frameData     = 2
+	frameClose    = 3
+	frameError    = 4
+	framePing     = 5
+	frameWindow   = 6
+	frameUDPOpen  = 7
+	frameUDPReady = 8
+	frameUDPData  = 9
 
 	maxDownReplayRequests = 1024
 )
@@ -64,6 +67,7 @@ type session struct {
 	accountID       string // backend-only account grouping identity
 	deviceID        string
 	streams         map[uint32]*stream
+	udpFlows        map[uint32]*udpFlow
 	crypto          *cryptoState
 	downFrames      [][]byte
 	downBytes       int

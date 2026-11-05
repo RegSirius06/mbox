@@ -11,7 +11,7 @@ import (
 func (t *tunnel) activeStreams() int {
 	t.streamsMu.Lock()
 	defer t.streamsMu.Unlock()
-	return len(t.streams)
+	return len(t.streams) + len(t.udpFlows)
 }
 
 func (t *tunnel) submitDownRecord(record []byte) error {

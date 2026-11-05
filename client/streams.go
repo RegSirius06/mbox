@@ -2,7 +2,9 @@ package main
 
 import (
 	flowctl "../common/flowctl"
+	"../common/udpwire"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -90,8 +92,35 @@ func (t *tunnel) handleFrames(data []byte) error {
 		data = data[n:]
 		t.streamsMu.Lock()
 		st := t.streams[id]
+		uf := t.udpFlows[id]
 		t.streamsMu.Unlock()
 		switch typ {
+		case frameUDPReady:
+			if len(payload) != 0 {
+				return fmt.Errorf("UDP READY must be empty")
+			}
+			if uf != nil && !uf.closed.Load() {
+				uf.signalReady(true)
+			}
+		case frameUDPData:
+			d, err := udpwire.Unmarshal(payload)
+			if err != nil || d.FlowID != id {
+				return fmt.Errorf("bad UDP return frame")
+			}
+			if uf == nil || uf.closed.Load() {
+				continue
+			}
+			if !uf.readyOK.Load() {
+				return fmt.Errorf("UDP response before ready")
+			}
+			wire, err := udpwire.MarshalHEV(d.Peer, d.Data)
+			if err != nil {
+				return err
+			}
+			if !uf.writeQ.tryPush(wire) {
+				t.closeUDPFlow(id, true)
+				return fmt.Errorf("UDP client write queue overflow")
+			}
 		case frameData:
 			if st == nil || st.closed.Load() {
 				continue
@@ -118,11 +147,13 @@ func (t *tunnel) handleFrames(data []byte) error {
 				return fmt.Errorf("CLOSE payload must be empty")
 			}
 			t.closeLocal(id, false)
+			t.closeUDPFlow(id, false)
 		case frameError:
 			log.Printf("STREAM %d server error: %s", id, string(payload))
 			t.closeLocal(id, false)
+			t.closeUDPFlow(id, false)
 		case framePing:
-		case frameOpen:
+		case frameOpen, frameUDPOpen:
 			return fmt.Errorf("server-initiated OPEN is not supported")
 		default:
 			return fmt.Errorf("unknown frame type %d", typ)
@@ -174,9 +205,13 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 	// Fail-closed local SOCKS policy: native MBox carries only CONNECT.
 	// HEV's "udp: tcp" is a UDP-over-TCP extension, not a UDP-disable
 	// switch; never let an upstream SOCKS server interpret UDP/BIND here.
-	if err := guardSOCKSConnect(conn, func(p []byte) error {
+	if err := guardSOCKSConnectWithUDP(conn, func(p []byte) error {
 		return t.forwardLocalData(id, st, p)
-	}); err != nil {
+	}, enableUDPLabClient); err != nil {
+		if errors.Is(err, errHEVForwardUDPRequested) {
+			t.handoffToUDP(id, st, conn)
+			return
+		}
 		t.closeLocal(id, true)
 		return
 	}

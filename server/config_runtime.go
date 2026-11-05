@@ -17,6 +17,7 @@ type runtimeTransportConfig struct {
 	Upstream             string `json:"upstream"`
 	BasePath             string `json:"base_path"`
 	OriginHMACSecretFile string `json:"origin_hmac_secret_file"`
+	EnableUDPLab         bool   `json:"enable_udp_lab,omitempty"`
 }
 
 type runtimeClientConfig struct {
@@ -85,6 +86,7 @@ var (
 	clientPolicies              = map[string]clientPolicy{}
 	coverCfg                    coverConfig
 	requireAuthenticatedControl bool
+	enableUDPLabServer          bool
 )
 
 func runtimeConfigPath(defaultPath string) string {
@@ -278,6 +280,7 @@ func loadRuntimeConfig(path string) error {
 	credentialDirPath = cfg.Crypto.CredentialDir
 	credentialReloadSock = cfg.Crypto.CredentialReloadSocket
 	requireAuthenticatedControl = cfg.Crypto.RequireAuthenticatedControl
+	enableUDPLabServer = cfg.Transport.EnableUDPLab
 	clientAuthMu.Lock()
 	clientPolicies = policies
 	policyIDsByAccount = buildPolicyAccountIndex(policies)

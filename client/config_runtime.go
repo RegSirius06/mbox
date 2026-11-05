@@ -10,8 +10,9 @@ import (
 )
 
 type runtimeTransportConfig struct {
-	Listen string `json:"listen"`
-	URL    string `json:"url"`
+	Listen       string `json:"listen"`
+	URL          string `json:"url"`
+	EnableUDPLab bool   `json:"enable_udp_lab,omitempty"`
 }
 
 type runtimeCryptoConfig struct {
@@ -37,6 +38,7 @@ var (
 	deviceID               string
 	networkDebug           bool
 	deterministicTransport bool
+	enableUDPLabClient     bool
 )
 
 func runtimeArgEnabled(name string) bool {
@@ -140,6 +142,10 @@ func loadRuntimeConfig(path string) error {
 		return fmt.Errorf("diagnostic transport options require --developer-mode")
 	}
 
+	if cfg.Transport.EnableUDPLab && !developerModeEnabled() {
+		return fmt.Errorf("UDP lab transport requires developer mode and device leak testing")
+	}
+	enableUDPLabClient = cfg.Transport.EnableUDPLab
 	listen = cfg.Transport.Listen
 	base = cfg.Transport.URL
 	clientID = cfg.Crypto.ClientID

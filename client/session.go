@@ -8,7 +8,7 @@ import (
 
 func newTunnel() (*tunnel, error) {
 	t := &tunnel{
-		streams: make(map[uint32]*localStream), upQueues: make(map[uint32][][]byte), upPerStream: make(map[uint32]int), upSpace: make(chan struct{}, 1), wake: make(chan struct{}, 1), downWake: make(chan struct{}, 1), downDeliver: make(chan []byte, 64), done: make(chan struct{}), downPending: make(map[uint64][]byte), nextDown: 1, fatalErr: make(chan error, 1),
+		streams: make(map[uint32]*localStream), udpFlows: make(map[uint32]*localUDPFlow), upQueues: make(map[uint32][][]byte), upPerStream: make(map[uint32]int), upSpace: make(chan struct{}, 1), wake: make(chan struct{}, 1), downWake: make(chan struct{}, 1), downDeliver: make(chan []byte, 64), done: make(chan struct{}), downPending: make(map[uint64][]byte), nextDown: 1, fatalErr: make(chan error, 1),
 	}
 
 	var err error
