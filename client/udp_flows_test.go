@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,6 +156,96 @@ func TestHEVHandoffWaitsForOldSOCKSWriter(t *testing.T) {
 	}
 	close(writerDone)
 	id, _ := waitQueuedFrame(t, tun, frameUDPOpen)
+	tun.closeUDPFlow(id, false)
+	<-finished
+	close(tun.done)
+	tun.streamWG.Wait()
+}
+
+func TestFatalTransportClosesLocalUDPImmediately(t *testing.T) {
+	tun := newQueueTestTunnel()
+	app, local := net.Pipe()
+	defer app.Close()
+	f := &localUDPFlow{conn: local, ready: make(chan struct{}), writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes)}
+	tun.udpFlows = map[uint32]*localUDPFlow{7: f}
+	tun.fail(errors.New("simulated downlink authentication failure"))
+	if !f.closed.Load() || tun.activeStreams() != 0 {
+		t.Fatal("UDP association survived fatal transport failure")
+	}
+	if f.writeQ.TryPush([]byte("late data")) {
+		t.Fatal("accepted data after tunnel failure")
+	}
+	_ = app.SetReadDeadline(time.Now().Add(time.Second))
+	var b [1]byte
+	if _, err := app.Read(b[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("local HEV socket did not close immediately: %v", err)
+	}
+}
+
+type gateFirstWriteConn struct {
+	net.Conn
+	first   sync.Once
+	entered chan struct{}
+	unblock chan struct{}
+	writes  atomic.Int32
+}
+
+func (c *gateFirstWriteConn) Write(p []byte) (int, error) {
+	c.writes.Add(1)
+	c.first.Do(func() {
+		close(c.entered)
+		<-c.unblock
+	})
+	return c.Conn.Write(p)
+}
+
+// A fast UDP response may arrive in the same DOWN batch as READY. Never
+// let the background writer send that datagram before SOCKS success (10 bytes).
+func TestHEVReplyPrecedesFastUDPDatagram(t *testing.T) {
+	tun := newQueueTestTunnel()
+	tun.udpFlows = make(map[uint32]*localUDPFlow)
+	app, local := net.Pipe()
+	defer app.Close()
+	wrapped := &gateFirstWriteConn{Conn: local, entered: make(chan struct{}), unblock: make(chan struct{})}
+	st := &localStream{conn: wrapped, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	tun.streams[1] = st
+	tun.nextID.Store(1)
+	finished := make(chan struct{})
+	go func() { defer close(finished); tun.handoffToUDP(1, st, wrapped) }()
+	id, _ := waitQueuedFrame(t, tun, frameUDPOpen)
+	if err := tun.handleFrames(frame(id, frameUDPReady, nil)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-wrapped.entered:
+	case <-time.After(time.Second):
+		t.Fatal("SOCKS success write not initiated")
+	}
+	peer := netip.MustParseAddrPort("1.1.1.1:53")
+	response, err := udpwire.Marshal(udpwire.Datagram{FlowID: id, Peer: peer, Data: []byte("response")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tun.handleFrames(frame(id, frameUDPData, response)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if n := wrapped.writes.Load(); n != 1 {
+		t.Fatalf("UDP writer raced unfinished SOCKS reply: %d writes", n)
+	}
+	close(wrapped.unblock)
+	_ = app.SetReadDeadline(time.Now().Add(time.Second))
+	raw := make([]byte, 10)
+	if _, err := io.ReadFull(app, raw); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, []byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0}) {
+		t.Fatalf("wrong SOCKS header: %x", raw)
+	}
+	gotPeer, gotData, err := udpwire.ReadHEV(app)
+	if err != nil || gotPeer != peer || string(gotData) != "response" {
+		t.Fatalf("response %v %q %v", gotPeer, gotData, err)
+	}
 	tun.closeUDPFlow(id, false)
 	<-finished
 	close(tun.done)

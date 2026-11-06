@@ -34,6 +34,21 @@ func (f *localUDPFlow) signalReady(ok bool) {
 	f.readyOnce.Do(func() { close(f.ready) })
 }
 
+// stopUDPFlows releases every local association immediately when the enclosing
+// Noise/HTTP transport fails. A closed tunnel must not leave UDP sockets alive
+// for the next read deadline (or offer a path outside the authenticated tunnel).
+func (t *tunnel) stopUDPFlows() {
+	t.streamsMu.Lock()
+	ids := make([]uint32, 0, len(t.udpFlows))
+	for id := range t.udpFlows {
+		ids = append(ids, id)
+	}
+	t.streamsMu.Unlock()
+	for _, id := range ids {
+		t.closeUDPFlow(id, false)
+	}
+}
+
 func (t *tunnel) closeUDPFlow(id uint32, notify bool) {
 	t.streamsMu.Lock()
 	f := t.udpFlows[id]
@@ -77,6 +92,13 @@ func (t *tunnel) localUDPWriter(id uint32, f *localUDPFlow) {
 // closed and an independent Noise-authenticated datagram flow is opened.
 func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 	t.streamsMu.Lock()
+	select {
+	case <-t.done:
+		t.streamsMu.Unlock()
+		_ = conn.Close()
+		return
+	default:
+	}
 	if t.streams[oldID] != st {
 		t.streamsMu.Unlock()
 		_ = conn.Close()
@@ -125,8 +147,6 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 			return
 		}
 	}
-	t.streamWG.Add(1)
-	go t.localUDPWriter(id, f)
 	if err := t.queue(id, frameUDPOpen, nil); err != nil {
 		t.closeUDPFlow(id, false)
 		return
@@ -154,6 +174,14 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 		t.closeUDPFlow(id, true)
 		return
 	}
+	// The first bytes sent to HEV MUST be the SOCKS success reply. In
+	// particular, a fast UDP response received in the same DOWN batch as
+	// READY must not race this reply onto the local TCP socket.
+	if f.closed.Load() {
+		return
+	}
+	t.streamWG.Add(1)
+	go t.localUDPWriter(id, f)
 	reader := bufio.NewReaderSize(conn, 4096)
 	for {
 		select {

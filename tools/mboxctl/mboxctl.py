@@ -165,6 +165,8 @@ def load_conf(required=True):
             for k, v in defaults.items():
                 if k not in cp[section]:
                     cp[section][k] = v
+    if "server" in cp and "enable_udp_lab" not in cp["server"]:
+        cp["server"]["enable_udp_lab"] = "false"
     if "server" in cp and not cp["server"].get("origin_hmac_secret", "").strip():
         cp["server"]["origin_hmac_secret"] = str(ORIGIN_HMAC_KEY)
     if "server" in cp and not cp["server"].get("credential_dir", "").strip():
@@ -456,6 +458,7 @@ def render_runtime(reload_auth=False, restart=False):
         "transport": {
             "listen": cp["server"]["listen"],
             "upstream": cp["server"]["upstream"],
+            "enable_udp_lab": cp.getboolean("server", "enable_udp_lab", fallback=False),
             "base_path": cp["server"]["base_path"],
             "origin_hmac_secret_file": cp["server"]["origin_hmac_secret"],
         },
@@ -547,6 +550,10 @@ def validate_config(cp):
     for section, key in needed:
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
+    try:
+        cp.getboolean("server", "enable_udp_lab", fallback=False)
+    except ValueError:
+        die("server.enable_udp_lab must be true or false")
     try:
         cp.getboolean("auth", "require_authenticated_control")
     except ValueError:

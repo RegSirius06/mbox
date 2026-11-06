@@ -70,5 +70,6 @@ func (t *tunnel) fail(err error) {
 	t.failOnce.Do(func() {
 		t.fatalErr <- err
 		close(t.done)
+		t.stopUDPFlows()
 	})
 }

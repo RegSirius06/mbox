@@ -221,3 +221,19 @@ def test_validate_config_rejects_relative_credential_paths(tmp_path, monkeypatch
         pass
     else:
         raise AssertionError('relative credential_dir accepted')
+
+
+def test_udp_lab_config_is_opt_in_and_survives_runtime_render(tmp_path, monkeypatch):
+    cp = _credential_test_env(tmp_path, monkeypatch)
+    runtime = tmp_path / 'etc' / 'server.json'
+    monkeypatch.setattr(m, 'RUNTIME', runtime)
+    monkeypatch.setattr(m, 'apply_server_read_permissions', lambda cp: None)
+    monkeypatch.setattr(m, 'sync_all_credentials', lambda cp: None)
+    loaded = m.load_conf()
+    assert loaded.getboolean('server', 'enable_udp_lab') is False
+    m.render_runtime()
+    assert m.json.loads(runtime.read_text())['transport']['enable_udp_lab'] is False
+    loaded['server']['enable_udp_lab'] = 'true'
+    m.save_conf(loaded)
+    m.render_runtime()
+    assert m.json.loads(runtime.read_text())['transport']['enable_udp_lab'] is True

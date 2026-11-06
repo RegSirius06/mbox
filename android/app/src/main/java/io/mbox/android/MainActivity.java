@@ -39,6 +39,7 @@ public class MainActivity extends Activity {
     private TextView status;
     private Button connectButton;
     private Button disconnectButton;
+    private Button udpLabButton;
     private String uiMessage = "";
 
     @Override
@@ -121,6 +122,12 @@ public class MainActivity extends Activity {
         root.addView(status);
         root.addView(connectButton);
         root.addView(disconnectButton);
+        if (AppRuntime.udpLabEnabled(this)) {
+            udpLabButton = new Button(this);
+            udpLabButton.setText("UDP Lab: STUN through VPN");
+            udpLabButton.setOnClickListener(v -> runUdpProbe());
+            root.addView(udpLabButton);
+        }
         root.addView(clipboardButton);
         root.addView(manualLabel);
         root.addView(link);
@@ -129,6 +136,25 @@ public class MainActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
         refreshUi();
+    }
+
+    private void runUdpProbe() {
+        if (udpLabButton == null ||
+                MBoxVpnService.getState() != MBoxVpnService.State.CONNECTED) {
+            return;
+        }
+        udpLabButton.setEnabled(false);
+        new Thread(() -> {
+            String result = UdpLabProbe.run(getApplicationContext());
+            handler.post(() -> {
+                udpLabButton.setEnabled(true);
+                new AlertDialog.Builder(this)
+                        .setTitle("MBox UDP laboratory")
+                        .setMessage(result + "\n\nA successful STUN response is not a leak audit.")
+                        .setPositiveButton("OK", null)
+                        .show();
+            });
+        }, "MBox-udp-probe").start();
     }
 
     private int dp(int value) {

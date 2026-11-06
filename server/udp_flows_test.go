@@ -191,3 +191,46 @@ func TestUDPStaleWorkerCannotReplaceOrCloseNewFlow(t *testing.T) {
 	}
 	closeUDPFlow(s, id, newFlow, false)
 }
+
+func TestUDPPublicDestinationGuard(t *testing.T) {
+	blocked := []string{
+		"127.0.0.1:123", "10.0.0.1:53", "192.168.1.5:53", "172.16.0.1:53",
+		"169.254.10.20:53", "100.64.1.1:53", "198.18.0.2:53",
+		"192.0.2.1:53", "198.51.100.1:53", "203.0.113.1:53",
+		"224.0.0.1:53", "[::1]:53", "[fe80::1]:53", "[fc00::5]:53",
+		"[2001:db8::1]:53",
+	}
+	for _, value := range blocked {
+		if publicUDPDestination(netip.MustParseAddrPort(value)) {
+			t.Fatalf("accepted private/special destination %s", value)
+		}
+	}
+	for _, value := range []string{"1.1.1.1:53", "8.8.8.8:53", "[2606:4700:4700::1111]:53"} {
+		if !publicUDPDestination(netip.MustParseAddrPort(value)) {
+			t.Fatalf("rejected public destination %s", value)
+		}
+	}
+}
+
+func TestUDPNonPublicNeverReachesSOCKSRelay(t *testing.T) {
+	s, sent := serverUDPFixtures(t)
+	const id uint32 = 89
+	if err := handleFrame(s, id, frameUDPOpen, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitUDPFlowReady(t, s, id)
+	for _, peer := range []string{"127.0.0.1:2080", "192.168.1.1:53", "100.64.0.2:53"} {
+		raw, err := udpwire.Marshal(udpwire.Datagram{FlowID: id, Peer: netip.MustParseAddrPort(peer), Data: []byte("probe")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := handleFrame(s, id, frameUDPData, raw); err == nil {
+			t.Fatalf("origin accepted private destination %s", peer)
+		}
+	}
+	select {
+	case got := <-sent:
+		t.Fatalf("private packet reached SOCKS relay: %x", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

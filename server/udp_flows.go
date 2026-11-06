@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -207,10 +208,43 @@ func udpFlowReceiver(s *session, id uint32, f *udpFlow) {
 	}
 }
 
+// An experimental UDP association may only target public unicast IPs.
+// In particular, do not make the origin's loopback, LAN, CGNAT or benchmark
+// networks reachable via sing-box rules that deliberately use direct routing.
+// This is an egress guard, not a replacement for checking sing-box policy.
+var udpNonPublic = [...]netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT / Android mapdns
+	netip.MustParsePrefix("198.18.0.0/15"), // network benchmarking
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+func publicUDPDestination(peer netip.AddrPort) bool {
+	if !udpwire.ValidPeer(peer) {
+		return false
+	}
+	addr := peer.Addr()
+	if !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.Is4In6() {
+		return false
+	}
+	for _, prefix := range udpNonPublic {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
+}
+
 func onUDPData(s *session, id uint32, raw []byte) error {
 	d, err := udpwire.Unmarshal(raw)
 	if err != nil || d.FlowID != id {
 		return fmt.Errorf("invalid UDP datagram or flow id")
+	}
+	if !publicUDPDestination(d.Peer) {
+		return fmt.Errorf("UDP destination is not a public unicast address")
 	}
 	s.mu.Lock()
 	f := s.udpFlows[id]
