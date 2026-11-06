@@ -388,6 +388,10 @@ public class MBoxVpnService extends VpnService {
             ProcessBuilder processBuilder = new ProcessBuilder(
                     mboxBinary, "-config", runtimeProfile.configFile.getAbsolutePath())
                     .redirectErrorStream(true);
+            if (AppRuntime.udpLabEnabled(this)) {
+                // Go requires a second explicit gate for lab-only UDP.
+                processBuilder.environment().put("MBOX_DEVELOPER_MODE", "1");
+            }
             if (!endpointAddresses.isEmpty()) {
                 processBuilder.environment().put("MBOX_CONNECT_ADDRS", String.join(",", endpointAddresses));
                 processBuilder.environment().put("MBOX_CONNECT_IP", endpointAddresses.get(0));

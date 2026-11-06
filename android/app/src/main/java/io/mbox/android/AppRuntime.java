@@ -16,6 +16,13 @@ final class AppRuntime {
     static final String MAP_NETWORK = "100.64.0.0";
     static final String MAP_NETMASK = "255.192.0.0";
 
+    // Laboratory UDP is permitted only in a debuggable APK; production APKs
+    // retain the default fail-closed UDP policy.
+    static boolean udpLabEnabled(android.content.Context context) {
+        return (context.getApplicationInfo().flags &
+                android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+    }
+
     static String socksListen() {
         return SOCKS_HOST + ":" + SOCKS_PORT;
     }
