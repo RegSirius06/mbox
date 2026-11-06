@@ -94,7 +94,7 @@ func TestSOCKSUDPAssociateRoundtripPreservesPeerAndBoundary(t *testing.T) {
 		}
 		select {
 		case wire := <-sent:
-			p, b, err := unmarshalSOCKSUDP(wire)
+			p, b, err := udpwire.UnmarshalSOCKS5(wire)
 			if err != nil || p != peer || !bytes.Equal(payload, b) {
 				t.Fatalf("upstream got %v %q %v", p, b, err)
 			}
@@ -122,7 +122,7 @@ func TestSOCKSUDPAssociateRejectsNonloopbackAndUntrustedRelay(t *testing.T) {
 
 func TestSOCKSUDPParserFailClosed(t *testing.T) {
 	p := netip.MustParseAddrPort("1.1.1.1:53")
-	raw, err := marshalSOCKSUDP(p, []byte("hi"))
+	raw, err := udpwire.MarshalSOCKS5(p, []byte("hi"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,11 +132,11 @@ func TestSOCKSUDPParserFailClosed(t *testing.T) {
 		append([]byte{0, 0, 0, 3}, raw[4:]...),
 	}
 	for i, wire := range cases {
-		if _, _, err := unmarshalSOCKSUDP(wire); err == nil {
+		if _, _, err := udpwire.UnmarshalSOCKS5(wire); err == nil {
 			t.Fatalf("accepted invalid packet %d", i)
 		}
 	}
-	if _, err := marshalSOCKSUDP(p, make([]byte, udpwire.MaxPayload+1)); err == nil {
+	if _, err := udpwire.MarshalSOCKS5(p, make([]byte, udpwire.MaxPayload+1)); err == nil {
 		t.Fatal("accepted oversized")
 	}
 }
@@ -170,11 +170,11 @@ func FuzzSOCKSUDPWire(f *testing.F) {
 	f.Add([]byte{0, 0, 1, 1, 1, 1, 1, 1, 0, 53, 42})
 	f.Add(bytes.Repeat([]byte{0xff}, 512))
 	f.Fuzz(func(t *testing.T, raw []byte) {
-		p, data, err := unmarshalSOCKSUDP(raw)
+		p, data, err := udpwire.UnmarshalSOCKS5(raw)
 		if err != nil {
 			return
 		}
-		encoded, e := marshalSOCKSUDP(p, data)
+		encoded, e := udpwire.MarshalSOCKS5(p, data)
 		if e != nil || !bytes.Equal(encoded, raw) {
 			t.Fatalf("accepted noncanonical SOCKS UDP: %v", e)
 		}

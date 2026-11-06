@@ -218,3 +218,24 @@ func TestStreamingLengthCapBeforeBodyRead(t *testing.T) {
 		t.Fatalf("missing pre-read cap: %v", err)
 	}
 }
+
+func TestSOCKS5CanonicalFrameAndPayloadOwnership(t *testing.T) {
+	for _, target := range []string{"1.1.1.1:53", "[2001:4860:4860::8888]:443"} {
+		peer := netip.MustParseAddrPort(target)
+		wire, err := MarshalSOCKS5(peer, []byte("dns"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(wire[:3], []byte{0, 0, 0}) {
+			t.Fatal("unexpected SOCKS UDP prefix")
+		}
+		got, payload, err := UnmarshalSOCKS5(wire)
+		if err != nil || got != peer || string(payload) != "dns" {
+			t.Fatalf("bad decoded SOCKS5 datagram %v %s %v", got, payload, err)
+		}
+		wire[len(wire)-1] = 'X'
+		if string(payload) != "dns" {
+			t.Fatal("input aliases returned payload")
+		}
+	}
+}

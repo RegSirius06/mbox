@@ -86,7 +86,7 @@ func TestUDPFlowAssociatesAndReplaysNoDirectOriginEgress(t *testing.T) {
 	}
 	select {
 	case wire := <-sent:
-		dest, data, err := unmarshalSOCKSUDP(wire)
+		dest, data, err := udpwire.UnmarshalSOCKS5(wire)
 		if err != nil || dest != peer || !bytes.Equal(data, []byte("dns")) {
 			t.Fatalf("incorrect SOCKS relay packet %v %q %v", dest, data, err)
 		}
@@ -158,4 +158,36 @@ func TestUDPFlowCloseDrainsQueuedGlobalBudget(t *testing.T) {
 	if x := globalQueuedBytes.Load(); x != 0 {
 		t.Fatalf("global budget not released after workers exit: %d", x)
 	}
+}
+
+// An asynchronous worker from a retired association must not close a newer
+// association that happens to use the same numeric flow ID.
+func TestUDPStaleWorkerCannotReplaceOrCloseNewFlow(t *testing.T) {
+	s, _ := serverUDPFixtures(t)
+	old := &udpFlow{done: make(chan struct{}), queued: make(chan udpQueuedDatagram, 1)}
+	newFlow := &udpFlow{done: make(chan struct{}), queued: make(chan udpQueuedDatagram, 1)}
+	const id = uint32(35)
+	s.mu.Lock()
+	s.udpFlows[id] = old
+	s.mu.Unlock()
+	totalStreams.Add(1)
+	closeUDPFlow(s, id, old, true)
+	s.mu.Lock()
+	before := len(s.downFrames)
+	s.udpFlows[id] = newFlow
+	s.mu.Unlock()
+	totalStreams.Add(1)
+
+	if err := appendFrame(s, id, frameUDPData, []byte("stale"), old); err == nil {
+		t.Fatal("retired worker injected a frame into replacement")
+	}
+	closeUDPFlow(s, id, old, true)
+	s.mu.Lock()
+	got := s.udpFlows[id]
+	after := len(s.downFrames)
+	s.mu.Unlock()
+	if got != newFlow || after != before {
+		t.Fatal("retired worker closed or notified replacement flow")
+	}
+	closeUDPFlow(s, id, newFlow, false)
 }

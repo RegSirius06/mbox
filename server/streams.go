@@ -10,18 +10,24 @@ import (
 	"time"
 )
 
-func appendFrame(s *session, streamID uint32, typ byte, payload []byte) error {
+// UDP replies are emitted only while the producing association still owns its
+// ID. The ownership check shares the same session lock as frame enqueueing.
+func appendFrame(s *session, streamID uint32, typ byte, payload []byte, expected ...*udpFlow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return appendFrameLocked(s, streamID, typ, payload, expected...)
+}
+
+// appendFrameLocked requires s.mu. Close paths use it to enqueue CLOSE before
+// retiring a flow ID, preventing a stale worker from notifying a new owner.
+func appendFrameLocked(s *session, streamID uint32, typ byte, payload []byte, expected ...*udpFlow) error {
+	if len(expected) > 0 && (len(expected) != 1 || expected[0] == nil || s.udpFlows[streamID] != expected[0] || expected[0].closed.Load()) {
+		return fmt.Errorf("stale UDP flow")
+	}
 	if len(payload) > maxFramePayload {
 		return fmt.Errorf("frame payload too large: %d", len(payload))
 	}
 	required := 9 + len(payload)
-	f := make([]byte, required)
-	binary.BigEndian.PutUint32(f[0:4], streamID)
-	f[4] = typ
-	binary.BigEndian.PutUint32(f[5:9], uint32(len(payload)))
-	copy(f[9:], payload)
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
 		return fmt.Errorf("session closed")
 	}
@@ -31,6 +37,11 @@ func appendFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 	if !reserveGlobalQueued(required) {
 		return fmt.Errorf("global queue budget exhausted")
 	}
+	f := make([]byte, required)
+	binary.BigEndian.PutUint32(f[0:4], streamID)
+	f[4] = typ
+	binary.BigEndian.PutUint32(f[5:9], uint32(len(payload)))
+	copy(f[9:], payload)
 	s.downFrames = append(s.downFrames, f)
 	s.downBytes += required
 	select {
@@ -273,7 +284,7 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 			return fmt.Errorf("CLOSE payload must be empty")
 		}
 		closeStream(s, streamID, false)
-		closeUDPFlow(s, streamID, false)
+		closeUDPFlow(s, streamID, nil, false)
 		return nil
 	case framePing:
 		return appendFrame(s, streamID, framePing, payload)

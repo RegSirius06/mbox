@@ -38,6 +38,9 @@ func (t *tunnel) startLocalWriter(id uint32, st *localStream) {
 	t.streamWG.Add(1)
 	go func() {
 		defer t.streamWG.Done()
+		if st.writerDone != nil {
+			defer close(st.writerDone)
+		}
 		t.localWriter(id, st)
 	}()
 }
@@ -117,7 +120,7 @@ func (t *tunnel) handleFrames(data []byte) error {
 			if err != nil {
 				return err
 			}
-			if !uf.writeQ.tryPush(wire) {
+			if !uf.writeQ.TryPush(wire) {
 				t.closeUDPFlow(id, true)
 				return fmt.Errorf("UDP client write queue overflow")
 			}
@@ -190,7 +193,7 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 		return
 	}
 	id := t.nextID.Add(1)
-	st := &localStream{conn: conn, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	st := &localStream{conn: conn, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1), writerDone: make(chan struct{})}
 	t.streams[id] = st
 	t.streamsMu.Unlock()
 	t.startLocalWriter(id, st)

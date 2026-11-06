@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	flowctl "../common/flowctl"
 	"../common/udpwire"
 )
 
@@ -60,7 +61,7 @@ func TestHEVUDPFlowRoundTripThroughEncryptedFrameQueue(t *testing.T) {
 	app, local := net.Pipe()
 	defer app.Close()
 	defer local.Close()
-	st := &localStream{conn: local, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	st := &localStream{conn: local, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 	tun.streams[1] = st
 	tun.nextID.Store(1)
 	done := make(chan struct{})
@@ -117,4 +118,44 @@ func TestHEVUDPReturnRejectsCrossFlowAndUnopenedTraffic(t *testing.T) {
 	if err := tun.handleFrames(frame(42, frameUDPData, dat)); err != nil {
 		t.Fatal("unknown flow should be safely ignored")
 	}
+}
+
+// The old TCP greeting writer shares its socket with the HEV UDP handoff.
+// Opening UDP before that writer exits could interleave the SOCKS replies.
+func TestHEVHandoffWaitsForOldSOCKSWriter(t *testing.T) {
+	tun := newQueueTestTunnel()
+	tun.udpFlows = make(map[uint32]*localUDPFlow)
+	app, local := net.Pipe()
+	defer app.Close()
+	defer local.Close()
+	writerDone := make(chan struct{})
+	st := &localStream{conn: local, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1), writerDone: writerDone}
+	tun.streams[1] = st
+	tun.nextID.Store(1)
+	finished := make(chan struct{})
+	go func() { defer close(finished); tun.handoffToUDP(1, st, local) }()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		raw := tun.takeUpload(1024)
+		if len(raw) > 0 {
+			if len(raw) != 9 || raw[4] != frameClose {
+				t.Fatalf("UDP started before old writer exited: %x", raw)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("old stream CLOSE not queued")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if raw := tun.takeUpload(1024); len(raw) != 0 {
+		t.Fatalf("UDP OPEN escaped writer barrier: %x", raw)
+	}
+	close(writerDone)
+	id, _ := waitQueuedFrame(t, tun, frameUDPOpen)
+	tun.closeUDPFlow(id, false)
+	<-finished
+	close(tun.done)
+	tun.streamWG.Wait()
 }

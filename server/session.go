@@ -290,7 +290,7 @@ func closeSessionState(id string, s *session) {
 		closeStream(s, streamID, false)
 	}
 	for _, id := range udpIDs {
-		closeUDPFlow(s, id, false)
+		closeUDPFlow(s, id, nil, false)
 	}
 	log.Printf("SESSION CLOSE %s", redactedSessionID(id))
 }

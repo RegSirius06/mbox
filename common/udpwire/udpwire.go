@@ -16,10 +16,11 @@ const (
 	Version = 1
 	// Fits the minimum IPv6 path MTU (1280 bytes) with an IPv6+UDP header.
 	// No IP/transport fragmentation is attempted in the first UDP milestone.
-	MaxPayload   = 1232
-	maxWireSize  = 1 + 4 + 1 + 16 + 2 + 2 + MaxPayload
-	hevMinHeader = 10
-	hevMaxHeader = 22
+	MaxPayload    = 1232
+	maxWireSize   = 1 + 4 + 1 + 16 + 2 + 2 + MaxPayload
+	MaxSOCKS5Size = 3 + 1 + 16 + 2 + MaxPayload
+	hevMinHeader  = 10
+	hevMaxHeader  = 22
 )
 
 var ErrMalformed = errors.New("invalid MBox UDP datagram")
@@ -197,4 +198,38 @@ func ReadHEV(r io.Reader) (netip.AddrPort, []byte, error) {
 		return netip.AddrPort{}, nil, ErrMalformed
 	}
 	return p, body[used:], nil
+}
+
+// MarshalSOCKS5 uses the same canonical IP:port encoding as MBox and HEV,
+// with the RFC 1928 UDP relay prefix: RSV(2), FRAG(1)=0, DST, payload.
+// Fragmentation and domain-name resolution are intentionally unsupported.
+func MarshalSOCKS5(peer netip.AddrPort, payload []byte) ([]byte, error) {
+	if len(payload) > MaxPayload {
+		return nil, ErrMalformed
+	}
+	address, err := encodeAddress(peer)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, 3+len(address)+len(payload))
+	out = append(out, 0, 0, 0)
+	out = append(out, address...)
+	return append(out, payload...), nil
+}
+
+// UnmarshalSOCKS5 refuses fragmented, noncanonical, truncated and oversized
+// datagrams. Its returned payload does not alias the caller's buffer.
+func UnmarshalSOCKS5(raw []byte) (netip.AddrPort, []byte, error) {
+	if len(raw) < 3+7 || len(raw) > MaxSOCKS5Size || raw[0] != 0 || raw[1] != 0 || raw[2] != 0 {
+		return netip.AddrPort{}, nil, ErrMalformed
+	}
+	peer, used, err := decodeAddress(raw[3:])
+	if err != nil {
+		return netip.AddrPort{}, nil, err
+	}
+	payload := raw[3+used:]
+	if len(payload) > MaxPayload {
+		return netip.AddrPort{}, nil, ErrMalformed
+	}
+	return peer, append([]byte(nil), payload...), nil
 }

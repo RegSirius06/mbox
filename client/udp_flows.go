@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	flowctl "../common/flowctl"
 	"../common/udpwire"
 )
 
@@ -19,7 +20,7 @@ const (
 
 type localUDPFlow struct {
 	conn      net.Conn
-	writeQ    *byteQueue
+	writeQ    *flowctl.ByteQueue
 	ready     chan struct{}
 	readyOnce sync.Once
 	readyOK   atomic.Bool
@@ -45,7 +46,7 @@ func (t *tunnel) closeUDPFlow(id uint32, notify bool) {
 	}
 	f.closed.Store(true)
 	f.signalReady(false)
-	f.writeQ.closeAndDrain()
+	f.writeQ.CloseAndDrain()
 	_ = f.conn.Close()
 	if notify {
 		_ = t.queue(id, frameClose, nil)
@@ -55,7 +56,7 @@ func (t *tunnel) closeUDPFlow(id uint32, notify bool) {
 func (t *tunnel) localUDPWriter(id uint32, f *localUDPFlow) {
 	defer t.streamWG.Done()
 	for {
-		payload, ok := f.writeQ.pop(t.done)
+		payload, ok := f.writeQ.Pop(t.done)
 		if !ok {
 			return
 		}
@@ -95,18 +96,34 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 		_ = t.queue(oldID, frameClose, nil)
 		return
 	}
-	f := &localUDPFlow{conn: conn, ready: make(chan struct{}), writeQ: newByteQueue(streamWriteQueueMaxBytes)}
+	f := &localUDPFlow{conn: conn, ready: make(chan struct{}), writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes)}
 	if t.udpFlows == nil {
 		t.udpFlows = make(map[uint32]*localUDPFlow)
 	}
 	t.udpFlows[id] = f
 	t.streamsMu.Unlock()
 	st.closed.Store(true)
-	st.writeQ.closeAndDrain()
+	st.writeQ.CloseAndDrain()
 	st.wakeCreditWaiters()
 	if err := t.queue(oldID, frameClose, nil); err != nil {
 		t.closeUDPFlow(id, false)
 		return
+	}
+	// The TCP stream and HEV UDP association share the local socket. A
+	// previously popped SOCKS greeting response can still be in flight;
+	// never interleave it with the HEV success reply or datagrams.
+	if st.writerDone != nil {
+		timer := time.NewTimer(clientUDPReadyTimeout)
+		defer timer.Stop()
+		select {
+		case <-st.writerDone:
+		case <-t.done:
+			t.closeUDPFlow(id, false)
+			return
+		case <-timer.C:
+			t.closeUDPFlow(id, false)
+			return
+		}
 	}
 	t.streamWG.Add(1)
 	go t.localUDPWriter(id, f)

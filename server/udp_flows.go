@@ -56,16 +56,18 @@ func (f *udpFlow) allowPacket() bool {
 	return true
 }
 
-func closeUDPFlow(s *session, id uint32, notify bool) {
+func closeUDPFlow(s *session, id uint32, expected *udpFlow, notify bool) {
 	s.mu.Lock()
-	f, ok := s.udpFlows[id]
-	if ok {
-		delete(s.udpFlows, id)
-	}
-	s.mu.Unlock()
-	if !ok {
+	f := s.udpFlows[id]
+	if f == nil || (expected != nil && f != expected) {
+		s.mu.Unlock()
 		return
 	}
+	if notify {
+		_ = appendFrameLocked(s, id, frameClose, nil, f)
+	}
+	delete(s.udpFlows, id)
+	s.mu.Unlock()
 	totalStreams.Add(-1)
 	f.enqueueMu.Lock()
 	f.closed.Store(true)
@@ -74,16 +76,12 @@ func closeUDPFlow(s *session, id uint32, notify bool) {
 	if f.assoc != nil {
 		f.assoc.Close()
 	}
-	// A single competing consumer removes each entry. The reader releases
-	// reservations for in-flight packets; the closer drains the remainder.
+	// The sender owns in-flight reservations; the closer drains the rest.
 	for {
 		select {
 		case item := <-f.queued:
 			releaseGlobalQueued(item.reserved)
 		default:
-			if notify {
-				_ = appendFrame(s, id, frameClose, nil)
-			}
 			return
 		}
 	}
@@ -135,8 +133,8 @@ func newUDPFlow(s *session, id uint32) error {
 func startUDPFlow(s *session, id uint32, f *udpFlow) {
 	assoc, err := dialSOCKSUDP(socksAddr)
 	if err != nil {
-		_ = appendFrame(s, id, frameError, []byte("UDP upstream unavailable"))
-		closeUDPFlow(s, id, false)
+		_ = appendFrame(s, id, frameError, []byte("UDP upstream unavailable"), f)
+		closeUDPFlow(s, id, f, false)
 		return
 	}
 	s.mu.Lock()
@@ -148,8 +146,8 @@ func startUDPFlow(s *session, id uint32, f *udpFlow) {
 	f.assoc = assoc
 	f.ready.Store(true)
 	s.mu.Unlock()
-	if err := appendFrame(s, id, frameUDPReady, nil); err != nil {
-		closeUDPFlow(s, id, false)
+	if err := appendFrame(s, id, frameUDPReady, nil, f); err != nil {
+		closeUDPFlow(s, id, f, false)
 		return
 	}
 	go udpFlowSender(s, id, f)
@@ -166,7 +164,7 @@ func udpFlowSender(s *session, id uint32, f *udpFlow) {
 			if !f.closed.Load() {
 				if err := f.assoc.Send(item.d.Peer, item.d.Data); err != nil {
 					releaseGlobalQueued(item.reserved)
-					closeUDPFlow(s, id, true)
+					closeUDPFlow(s, id, f, true)
 					return
 				}
 				f.touch()
@@ -190,7 +188,7 @@ func udpFlowReceiver(s *session, id uint32, f *udpFlow) {
 					continue
 				}
 			}
-			closeUDPFlow(s, id, true)
+			closeUDPFlow(s, id, f, true)
 			return
 		}
 		if f.closed.Load() {
@@ -199,11 +197,11 @@ func udpFlowReceiver(s *session, id uint32, f *udpFlow) {
 		f.touch()
 		out, err := udpwire.Marshal(udpwire.Datagram{FlowID: id, Peer: p, Data: data})
 		if err != nil {
-			closeUDPFlow(s, id, true)
+			closeUDPFlow(s, id, f, true)
 			return
 		}
-		if err := appendFrame(s, id, frameUDPData, out); err != nil {
-			closeUDPFlow(s, id, true)
+		if err := appendFrame(s, id, frameUDPData, out, f); err != nil {
+			closeUDPFlow(s, id, f, true)
 			return
 		}
 	}
@@ -224,7 +222,7 @@ func onUDPData(s *session, id uint32, raw []byte) error {
 		return fmt.Errorf("UDP flow not ready")
 	}
 	if !f.allowPacket() {
-		closeUDPFlow(s, id, true)
+		closeUDPFlow(s, id, f, true)
 		return nil
 	}
 	// Reservation is owned until the sender consumes it or close drains it.
@@ -245,7 +243,7 @@ func onUDPData(s *session, id uint32, raw []byte) error {
 	default:
 		f.enqueueMu.Unlock()
 		releaseGlobalQueued(reserved)
-		closeUDPFlow(s, id, true)
+		closeUDPFlow(s, id, f, true)
 		return nil
 	}
 }
@@ -257,5 +255,5 @@ func udpFlowMonitorControl(s *session, id uint32, f *udpFlow) {
 	// A SOCKS UDP ASSOCIATE control connection sends no further application
 	// bytes after the reply. Any bytes/EOF/error end the association.
 	_, _ = f.assoc.control.Read(b[:])
-	closeUDPFlow(s, id, true)
+	closeUDPFlow(s, id, f, true)
 }

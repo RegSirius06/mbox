@@ -22,7 +22,7 @@ const (
 	udpUpstreamHandshakeTimeout = 5 * time.Second
 	udpUpstreamWriteTimeout     = 250 * time.Millisecond
 	udpUpstreamReadTimeout      = 5 * time.Second
-	udpUpstreamMaxPacket        = 3 + 1 + 16 + 2 + udpwire.MaxPayload
+	udpUpstreamMaxPacket        = udpwire.MaxSOCKS5Size
 	maxUDPTrackedPeers          = 64
 	udpTrackedPeerTTL           = 2 * time.Minute
 )
@@ -130,91 +130,6 @@ func dialSOCKSUDP(upstream string) (*socksUDPAssociation, error) {
 	return &socksUDPAssociation{control: ctrl, udp: udp, allowed: make(map[netip.AddrPort]time.Time)}, nil
 }
 
-func socksUDPAddress(p netip.AddrPort) ([]byte, error) {
-	if !udpwire.ValidPeer(p) {
-		return nil, udpwire.ErrMalformed
-	}
-	addr := p.Addr().Unmap()
-	b := make([]byte, 0, 19)
-	if addr.Is4() {
-		a := addr.As4()
-		b = append(b, 1)
-		b = append(b, a[:]...)
-	} else if addr.Is6() {
-		a := addr.As16()
-		b = append(b, 4)
-		b = append(b, a[:]...)
-	} else {
-		return nil, udpwire.ErrMalformed
-	}
-	return binary.BigEndian.AppendUint16(b, p.Port()), nil
-}
-
-func parseSOCKSUDPAddress(raw []byte) (netip.AddrPort, int, error) {
-	if len(raw) < 1 {
-		return netip.AddrPort{}, 0, udpwire.ErrMalformed
-	}
-	var n int
-	var ip netip.Addr
-	switch raw[0] {
-	case 1:
-		n = 7
-		if len(raw) < n {
-			return netip.AddrPort{}, 0, udpwire.ErrMalformed
-		}
-		var b [4]byte
-		copy(b[:], raw[1:5])
-		ip = netip.AddrFrom4(b)
-	case 4:
-		n = 19
-		if len(raw) < n {
-			return netip.AddrPort{}, 0, udpwire.ErrMalformed
-		}
-		var b [16]byte
-		copy(b[:], raw[1:17])
-		ip = netip.AddrFrom16(b)
-		if ip.Is4In6() {
-			return netip.AddrPort{}, 0, udpwire.ErrMalformed
-		}
-	default:
-		return netip.AddrPort{}, 0, udpwire.ErrMalformed
-	}
-	p := netip.AddrPortFrom(ip, binary.BigEndian.Uint16(raw[n-2:n]))
-	if !udpwire.ValidPeer(p) {
-		return netip.AddrPort{}, 0, udpwire.ErrMalformed
-	}
-	return p, n, nil
-}
-
-func marshalSOCKSUDP(p netip.AddrPort, data []byte) ([]byte, error) {
-	if len(data) > udpwire.MaxPayload {
-		return nil, udpwire.ErrMalformed
-	}
-	a, err := socksUDPAddress(p)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 0, 3+len(a)+len(data))
-	out = append(out, 0, 0, 0)
-	out = append(out, a...)
-	return append(out, data...), nil
-}
-
-func unmarshalSOCKSUDP(raw []byte) (netip.AddrPort, []byte, error) {
-	if len(raw) < 3+7 || len(raw) > udpUpstreamMaxPacket || raw[0] != 0 || raw[1] != 0 || raw[2] != 0 {
-		return netip.AddrPort{}, nil, udpwire.ErrMalformed
-	}
-	p, n, err := parseSOCKSUDPAddress(raw[3:])
-	if err != nil {
-		return netip.AddrPort{}, nil, err
-	}
-	data := raw[3+n:]
-	if len(data) > udpwire.MaxPayload {
-		return netip.AddrPort{}, nil, udpwire.ErrMalformed
-	}
-	return p, append([]byte(nil), data...), nil
-}
-
 func (a *socksUDPAssociation) permittedPeer(p netip.AddrPort, register bool) bool {
 	a.allowedMu.Lock()
 	defer a.allowedMu.Unlock()
@@ -241,7 +156,7 @@ func (a *socksUDPAssociation) permittedPeer(p netip.AddrPort, register bool) boo
 // Send emits one SOCKS-wrapped datagram to loopback only. The outbound target
 // is encoded in the packet, not passed to net.DialUDP.
 func (a *socksUDPAssociation) Send(p netip.AddrPort, data []byte) error {
-	packet, err := marshalSOCKSUDP(p, data)
+	packet, err := udpwire.MarshalSOCKS5(p, data)
 	if err != nil {
 		return err
 	}
@@ -269,7 +184,7 @@ func (a *socksUDPAssociation) Receive() (netip.AddrPort, []byte, error) {
 	if n > udpUpstreamMaxPacket {
 		return netip.AddrPort{}, nil, udpwire.ErrMalformed
 	}
-	p, data, err := unmarshalSOCKSUDP(buf[:n])
+	p, data, err := udpwire.UnmarshalSOCKS5(buf[:n])
 	if err != nil {
 		return netip.AddrPort{}, nil, err
 	}

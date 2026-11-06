@@ -33,6 +33,7 @@ type localStream struct {
 	sendCredit    int
 	recvAllowance int
 	creditWake    chan struct{}
+	writerDone    chan struct{} // prevents old TCP writer racing the HEV UDP reply
 }
 
 type tunnel struct {
