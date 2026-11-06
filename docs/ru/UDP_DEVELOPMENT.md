@@ -69,3 +69,6 @@ RU VPS запрещены: UDP-сокет допустим только на loo
 `transport.enable_udp_lab=true` с последующим `systemctl restart mbox-server`.
 `mboxctl config set` пока не управляет этим лабораторным параметром:
 перегенерация runtime-конфигурации через mboxctl может его сбросить.
+
+Локальный debug APK дополнительно получает суффикс версии `-udp-lab`, чтобы
+его нельзя было спутать с опубликованной beta.3 в настройках Android.

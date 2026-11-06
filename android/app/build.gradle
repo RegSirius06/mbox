@@ -34,6 +34,13 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    buildTypes {
+        debug {
+            // Make the local UDP laboratory APK distinguishable from beta.3.
+            versionNameSuffix '-udp-lab'
+        }
+    }
 }
 
 dependencies {

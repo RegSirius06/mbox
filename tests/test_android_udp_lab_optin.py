@@ -14,3 +14,8 @@ def test_udp_lab_is_debug_only_and_not_imported_from_link():
     assert 'if (AppRuntime.udpLabEnabled(this))' in service
     # Imported link never chooses whether the client runs the UDP lab.
     assert 'dt.put("enable_udp_lab"' not in profile
+
+
+def test_debug_apk_is_visibly_marked_as_udp_lab():
+    gradle = (ROOT / "android/app/build.gradle").read_text()
+    assert "versionNameSuffix '-udp-lab'" in gradle
