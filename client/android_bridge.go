@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -298,11 +297,4 @@ func bridgeErrorCode(err error) string {
 		return be.Code
 	}
 	return "ERR_HTTP_REQUEST"
-}
-
-func withBridgeDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
-	if _, ok := ctx.Deadline(); ok {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, 20*time.Second)
 }

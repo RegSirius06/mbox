@@ -1,6 +1,8 @@
 package main
 
 import (
+	flowctl "../common/flowctl"
+	wire "../common/wire"
 	"bytes"
 	"encoding/binary"
 	"io"
@@ -48,7 +50,7 @@ func TestUploadIsChunkedAndRoundRobinFair(t *testing.T) {
 	}
 }
 func TestWindowCreditRejectsOverrun(t *testing.T) {
-	st := &localStream{writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	st := &localStream{writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 	_ = st.grantPeerAllowance(1024)
 	if st.consumePeerAllowance(1025) == nil {
 		t.Fatal("overrun accepted")
@@ -63,7 +65,7 @@ func TestSlowStreamWriterDoesNotBlockOtherStreams(t *testing.T) {
 	defer fl.Close()
 	defer fp.Close()
 	newst := func(c net.Conn) *localStream {
-		return &localStream{conn: c, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+		return &localStream{conn: c, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 	}
 	slow, fast := newst(sl), newst(fl)
 	p := bytes.Repeat([]byte{4}, 32*1024)
@@ -166,7 +168,7 @@ func TestFullDuplexSingleStream(t *testing.T) {
 	}
 
 	// The remote/server side grants credit for client->server DATA.
-	if err := tun.handleFrames(frame(1, frameWindow, encodeWindowCredit(streamInitialWindow))); err != nil {
+	if err := tun.handleFrames(frame(1, frameWindow, flowctl.EncodeWindowCredit(streamInitialWindow))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -297,7 +299,7 @@ func TestUploader504RetriesExactNoiseRecordAndSequence(t *testing.T) {
 	if !bytes.Equal(a.body, b.body) {
 		t.Fatal("retry body/ciphertext changed")
 	}
-	wire, err := decodeHTTPEnvelope(a.body)
+	wire, err := wire.DecodeHTTPEnvelope(a.body)
 	if err != nil {
 		t.Fatal(err)
 	}

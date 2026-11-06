@@ -1,6 +1,7 @@
 package main
 
 import (
+	flowctl "../common/flowctl"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ func grantPeerCredit(s *session, id uint32, st *stream, n int) error {
 	if err := st.grantPeerAllowance(n); err != nil {
 		return err
 	}
-	if err := appendFrame(s, id, frameWindow, encodeWindowCredit(n)); err != nil {
+	if err := appendFrame(s, id, frameWindow, flowctl.EncodeWindowCredit(n)); err != nil {
 		st.rollbackPeerAllowance(n)
 		return err
 	}
@@ -89,7 +90,7 @@ func closeStream(s *session, id uint32, notify bool) {
 		return
 	}
 	totalStreams.Add(-1)
-	if d := st.writeQ.closeAndDrain(); d > 0 {
+	if d := st.writeQ.CloseAndDrain(); d > 0 {
 		releaseGlobalQueued(d)
 	}
 	st.wakeCreditWaiters()
@@ -103,7 +104,7 @@ func closeStream(s *session, id uint32, notify bool) {
 
 func streamWriter(s *session, id uint32, st *stream) {
 	for {
-		payload, ok := st.writeQ.pop(s.done)
+		payload, ok := st.writeQ.Pop(s.done)
 		if !ok {
 			return
 		}
@@ -194,7 +195,7 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 			_ = appendFrame(s, streamID, frameError, []byte("connect upstream failed"))
 			return nil
 		}
-		st := &stream{conn: conn, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+		st := &stream{conn: conn, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -233,13 +234,13 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 		if !reserveGlobalQueued(len(payload)) {
 			return fmt.Errorf("global queue budget exhausted")
 		}
-		if !st.writeQ.tryPush(payload) {
+		if !st.writeQ.TryPush(payload) {
 			releaseGlobalQueued(len(payload))
 			return fmt.Errorf("stream write queue overflow")
 		}
 		return nil
 	case frameWindow:
-		credit, err := decodeWindowCredit(payload)
+		credit, err := flowctl.DecodeWindowCredit(payload)
 		if err != nil {
 			return err
 		}

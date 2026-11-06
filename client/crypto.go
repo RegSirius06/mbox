@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -336,23 +335,3 @@ func cryptoRecordCounter(record []byte, direction byte) (uint64, error) {
 	}
 	return n, nil
 }
-
-func noiseRecordSizeUpperBound(plain int) int {
-	if plain < 0 {
-		return 0
-	}
-	minChunk := camouflage.NoiseChunkMinBytes
-	if minChunk < 1024 {
-		minChunk = 1024
-	}
-	chunks := (plain + minChunk - 1) / minChunk
-	if chunks < 1 {
-		chunks = 1
-	}
-	if chunks > maxNoiseChunks {
-		chunks = maxNoiseChunks
-	}
-	return noiseRecordHeader + plain + chunks*(2+16)
-}
-
-func pskFingerprint(psk []byte) [32]byte { return sha256.Sum256(psk) }

@@ -1,8 +1,8 @@
 package main
 
 import (
+	wire "../common/wire"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -103,43 +103,11 @@ func padTransportPlaintext(plain []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	out := make([]byte, target)
-
-	binary.BigEndian.PutUint32(
-		out[:4],
-		uint32(len(plain)),
-	)
-
-	copy(out[4:], plain)
-
-	padding := out[4+len(plain):]
-
-	if len(padding) > 0 {
-		if _, err := rand.Read(padding); err != nil {
-			return nil, err
-		}
-	}
-
-	return out, nil
+	return wire.Pad(plain, target)
 }
 
 func unpadTransportPlaintext(padded []byte) ([]byte, error) {
-	if len(padded) < 4 {
-		return nil, fmt.Errorf("short padded plaintext")
-	}
-
-	n := uint64(
-		binary.BigEndian.Uint32(padded[:4]),
-	)
-
-	if n > uint64(len(padded)-4) {
-		return nil, fmt.Errorf(
-			"invalid padded plaintext length",
-		)
-	}
-
-	return padded[4 : 4+int(n)], nil
+	return wire.Unpad(padded)
 }
 
 func loadCamouflageConfig(path string) error {

@@ -2,46 +2,13 @@ package main
 
 import (
 	controlmeta "../common/controlmeta"
+	wire "../common/wire"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 )
-
-type httpEnvelope struct {
-	Version int    `json:"v"`
-	Data    string `json:"data"`
-}
-
-func encodeHTTPEnvelope(data []byte) ([]byte, error) {
-	env := httpEnvelope{
-		Version: 1,
-		Data:    base64.StdEncoding.EncodeToString(data),
-	}
-	return json.Marshal(env)
-}
-
-func decodeHTTPEnvelope(body []byte) ([]byte, error) {
-	var env httpEnvelope
-
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("invalid HTTP envelope")
-	}
-
-	if env.Version != 1 {
-		return nil, fmt.Errorf("unsupported HTTP envelope version")
-	}
-
-	data, err := base64.StdEncoding.DecodeString(env.Data)
-	if err != nil {
-		return nil, fmt.Errorf("invalid HTTP envelope data")
-	}
-
-	return data, nil
-}
 
 func writeCachedResponse(w http.ResponseWriter, status int, body []byte) {
 	applyResponseHeaders(w)
@@ -50,7 +17,7 @@ func writeCachedResponse(w http.ResponseWriter, status int, body []byte) {
 
 	if len(body) > 0 {
 		var err error
-		wireBody, err = encodeHTTPEnvelope(body)
+		wireBody, err = wire.EncodeHTTPEnvelope(body)
 		if err != nil {
 			camouflageNotFound(w)
 			return

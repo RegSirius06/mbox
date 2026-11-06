@@ -209,19 +209,6 @@ func buildPolicyAccountIndex(policies map[string]clientPolicy) map[string]map[st
 	return index
 }
 
-func cleanupRateStateForPolicies(policies map[string]clientPolicy) {
-	sessionsMu.Lock()
-	for id := range sessionOpenRates {
-		if id == "legacy" {
-			continue
-		}
-		if _, ok := policies[id]; !ok {
-			delete(sessionOpenRates, id)
-		}
-	}
-	sessionsMu.Unlock()
-}
-
 // applyCredentialEntries changes only the identities belonging to the old and
 // new accounts. Identity conflicts are checked before any mutation, making a
 // rejected credential transaction atomic. The in-place map is always accessed

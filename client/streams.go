@@ -1,6 +1,7 @@
 package main
 
 import (
+	flowctl "../common/flowctl"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -24,7 +25,7 @@ func (t *tunnel) grantPeerCredit(id uint32, st *localStream, n int) error {
 	if err := st.grantPeerAllowance(n); err != nil {
 		return err
 	}
-	if err := t.queue(id, frameWindow, encodeWindowCredit(n)); err != nil {
+	if err := t.queue(id, frameWindow, flowctl.EncodeWindowCredit(n)); err != nil {
 		st.rollbackPeerAllowance(n)
 		return err
 	}
@@ -41,7 +42,7 @@ func (t *tunnel) startLocalWriter(id uint32, st *localStream) {
 
 func (t *tunnel) localWriter(id uint32, st *localStream) {
 	for {
-		payload, ok := st.writeQ.pop(t.done)
+		payload, ok := st.writeQ.Pop(t.done)
 		if !ok {
 			return
 		}
@@ -98,14 +99,14 @@ func (t *tunnel) handleFrames(data []byte) error {
 			if err := st.consumePeerAllowance(len(payload)); err != nil {
 				return err
 			}
-			if !st.writeQ.tryPush(payload) {
+			if !st.writeQ.TryPush(payload) {
 				return fmt.Errorf("local stream write queue overflow")
 			}
 		case frameWindow:
 			if st == nil || st.closed.Load() {
 				continue
 			}
-			credit, err := decodeWindowCredit(payload)
+			credit, err := flowctl.DecodeWindowCredit(payload)
 			if err != nil {
 				return err
 			}
@@ -140,7 +141,7 @@ func (t *tunnel) closeLocal(id uint32, notify bool) {
 	if st == nil {
 		return
 	}
-	st.writeQ.closeAndDrain()
+	st.writeQ.CloseAndDrain()
 	st.wakeCreditWaiters()
 	if st.closed.CompareAndSwap(false, true) {
 		_ = st.conn.Close()
@@ -158,7 +159,7 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 		return
 	}
 	id := t.nextID.Add(1)
-	st := &localStream{conn: conn, writeQ: newByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
+	st := &localStream{conn: conn, writeQ: flowctl.NewByteQueue(streamWriteQueueMaxBytes), creditWake: make(chan struct{}, 1)}
 	t.streams[id] = st
 	t.streamsMu.Unlock()
 	t.startLocalWriter(id, st)

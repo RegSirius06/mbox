@@ -2,10 +2,9 @@ package main
 
 import (
 	controlmeta "../common/controlmeta"
+	wire "../common/wire"
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -130,44 +129,12 @@ func (t *tunnel) requestRaw(method, rawURL string, body []byte, traceOpen bool) 
 	return data, resp.StatusCode, nil
 }
 
-type httpEnvelope struct {
-	Version int    `json:"v"`
-	Data    string `json:"data"`
-}
-
-func encodeHTTPEnvelope(data []byte) ([]byte, error) {
-	env := httpEnvelope{
-		Version: 1,
-		Data:    base64.StdEncoding.EncodeToString(data),
-	}
-	return json.Marshal(env)
-}
-
-func decodeHTTPEnvelope(body []byte) ([]byte, error) {
-	var env httpEnvelope
-
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("invalid HTTP envelope")
-	}
-
-	if env.Version != 1 {
-		return nil, fmt.Errorf("unsupported HTTP envelope version")
-	}
-
-	data, err := base64.StdEncoding.DecodeString(env.Data)
-	if err != nil {
-		return nil, fmt.Errorf("invalid HTTP envelope data")
-	}
-
-	return data, nil
-}
-
 func (t *tunnel) request(method, url string, body []byte) ([]byte, int, error) {
 	wireBody := body
 
 	if body != nil {
 		var err error
-		wireBody, err = encodeHTTPEnvelope(body)
+		wireBody, err = wire.EncodeHTTPEnvelope(body)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -180,7 +147,7 @@ func (t *tunnel) request(method, url string, body []byte) ([]byte, int, error) {
 
 	// All successful MBox responses carrying a body use the envelope.
 	if status == http.StatusOK && len(data) > 0 {
-		data, err = decodeHTTPEnvelope(data)
+		data, err = wire.DecodeHTTPEnvelope(data)
 		if err != nil {
 			return nil, status, err
 		}
@@ -193,7 +160,7 @@ func (t *tunnel) requestOpen(method, url string, body []byte) ([]byte, int, erro
 	wireBody := body
 	if body != nil {
 		var err error
-		wireBody, err = encodeHTTPEnvelope(body)
+		wireBody, err = wire.EncodeHTTPEnvelope(body)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -203,7 +170,7 @@ func (t *tunnel) requestOpen(method, url string, body []byte) ([]byte, int, erro
 		return nil, status, err
 	}
 	if status == http.StatusOK && len(data) > 0 {
-		data, err = decodeHTTPEnvelope(data)
+		data, err = wire.DecodeHTTPEnvelope(data)
 		if err != nil {
 			return nil, status, err
 		}

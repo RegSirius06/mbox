@@ -1,6 +1,7 @@
 package main
 
 import (
+	wire "../common/wire"
 	"bytes"
 	"testing"
 
@@ -15,7 +16,7 @@ func FuzzHTTPEnvelopeParser(f *testing.F) {
 		if len(data) > maxRequestBody {
 			t.Skip()
 		}
-		_, _ = decodeHTTPEnvelope(data)
+		_, _ = wire.DecodeHTTPEnvelope(data)
 	})
 }
 

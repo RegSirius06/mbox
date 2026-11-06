@@ -2,6 +2,7 @@ package main
 
 import (
 	controlmeta "../common/controlmeta"
+	wire "../common/wire"
 	"crypto/sha256"
 	"io"
 	"log"
@@ -70,7 +71,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		camouflageNotFound(w)
 		return
 	}
-	body, err = decodeHTTPEnvelope(body)
+	body, err = wire.DecodeHTTPEnvelope(body)
 	if err != nil {
 		camouflageNotFound(w)
 		return
@@ -95,7 +96,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s := &session{clientID: cryptoState.clientID, accountID: cryptoState.accountID, deviceID: cryptoState.deviceID, streams: make(map[uint32]*stream), crypto: cryptoState, upCache: make(map[uint64]cachedUpResponse), downReady: make(chan struct{}, 1), downReplay: make(map[uint64]cachedDownResponse), downReqSeen: make(map[uint64]struct{}), done: make(chan struct{}), lastSeen: time.Now()}
-	openReply, err := encodeHTTPEnvelope(noiseReply)
+	openReply, err := wire.EncodeHTTPEnvelope(noiseReply)
 	if err != nil {
 		camouflageNotFound(w)
 		return
@@ -144,7 +145,7 @@ func handleUp(w http.ResponseWriter, r *http.Request) {
 		camouflageNotFound(w)
 		return
 	}
-	body, err = decodeHTTPEnvelope(body)
+	body, err = wire.DecodeHTTPEnvelope(body)
 	if err != nil {
 		camouflageNotFound(w)
 		return

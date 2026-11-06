@@ -1,6 +1,7 @@
 package main
 
 import (
+	flowctl "../common/flowctl"
 	"net"
 	"net/http"
 	"sync"
@@ -23,7 +24,7 @@ var (
 
 type localStream struct {
 	conn          net.Conn
-	writeQ        *byteQueue
+	writeQ        *flowctl.ByteQueue
 	closed        atomic.Bool
 	creditMu      sync.Mutex
 	sendCredit    int
