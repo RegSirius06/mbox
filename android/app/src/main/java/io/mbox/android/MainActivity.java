@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     private Button connectButton;
     private Button disconnectButton;
     private Button udpLabButton;
+    private Button quicLabButton;
     private String uiMessage = "";
 
     @Override
@@ -127,6 +128,19 @@ public class MainActivity extends Activity {
             udpLabButton.setText("UDP Lab: STUN through VPN");
             udpLabButton.setOnClickListener(v -> runUdpProbe());
             root.addView(udpLabButton);
+            if (QuicLabTransport.configured(this)) {
+                quicLabButton = new Button(this);
+                quicLabButton.setOnClickListener(v -> {
+                    if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
+                        uiMessage = "Disconnect the VPN before switching transport";
+                    } else {
+                        boolean selected = QuicLabTransport.toggle(this);
+                        uiMessage = selected ? "QUIC lab selected; connect to test" : "HTTPS selected; connect to test";
+                    }
+                    refreshUi();
+                });
+                root.addView(quicLabButton);
+            }
         }
         root.addView(clipboardButton);
         root.addView(manualLabel);
@@ -277,6 +291,12 @@ public class MainActivity extends Activity {
                 break;
         }
 
+        if (quicLabButton != null) {
+            quicLabButton.setText(QuicLabTransport.enabled(this)
+                    ? "Transport: QUIC laboratory (tap to select HTTPS)"
+                    : "Transport: HTTPS (tap to select QUIC laboratory)");
+            quicLabButton.setEnabled(vpnState == MBoxVpnService.State.STOPPED);
+        }
         connectButton.setEnabled(hasProfile && vpnState != MBoxVpnService.State.CONNECTING &&
                 vpnState != MBoxVpnService.State.RECOVERING &&
                 vpnState != MBoxVpnService.State.CONNECTED);

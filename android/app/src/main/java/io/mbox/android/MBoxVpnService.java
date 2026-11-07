@@ -59,6 +59,7 @@ public class MBoxVpnService extends VpnService {
     private Process mbox;
     private ParcelFileDescriptor tun;
     private CronetBridge cronetBridge;
+    private QuicLabTransport quicLabTransport;
     private ConnectivityManager connectivityManager;
     private UnderlyingNetworkMonitor networkMonitor;
 
@@ -359,12 +360,13 @@ public class MBoxVpnService extends VpnService {
         String endpointHost = ProfileStore.transportHost(this);
         String endpointUrl = ProfileStore.transportUrl(this);
         boolean networkDebug = ProfileStore.networkDebug(this);
+        boolean quicLabMode = QuicLabTransport.enabled(this);
         String httpStack = ProfileStore.androidHttpStack(this);
-        if (!"cronet".equals(httpStack)) {
+        if (!quicLabMode && !"cronet".equals(httpStack)) {
             throw new SecurityException("Android VPN requires Cronet fail-closed transport; Go HTTP is diagnostic-only");
         }
         List<String> endpointAddresses = new ArrayList<>();
-        if (networkDebug) {
+        if (networkDebug && !quicLabMode) {
             endpointAddresses = resolveEndpointAddresses(endpointHost);
             MBoxDnsDiagnostics.logDnsResult(endpointHost, endpointAddresses, true);
         } else {
@@ -377,14 +379,16 @@ public class MBoxVpnService extends VpnService {
                 ? networkMonitor.currentNetwork()
                 : connectivityManager.getActiveNetwork();
         if (underlyingNetwork == null) {
-            throw new Exception("No physical network available for Cronet transport");
+            throw new Exception("No physical network available for encrypted transport");
         }
-        cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
+        if (quicLabMode) quicLabTransport = new QuicLabTransport(this, underlyingNetwork);
+        else cronetBridge = CronetBridge.start(this, endpointUrl, underlyingNetwork, networkDebug);
 
         CountDownLatch coreReady = new CountDownLatch(1);
         // Persisted PSK stays Keystore-encrypted; plaintext exists only until
         // the core loads it. try-with-resources covers every failure path.
         try (ProfileStore.RuntimeMaterialization runtimeProfile = ProfileStore.materializeRuntimeConfig(this)) {
+            if (quicLabMode) QuicLabTransport.rewriteRuntimeConfig(runtimeProfile.configFile);
             ProcessBuilder processBuilder = new ProcessBuilder(
                     mboxBinary, "-config", runtimeProfile.configFile.getAbsolutePath())
                     .redirectErrorStream(true);
@@ -395,6 +399,9 @@ public class MBoxVpnService extends VpnService {
             if (!endpointAddresses.isEmpty()) {
                 processBuilder.environment().put("MBOX_CONNECT_ADDRS", String.join(",", endpointAddresses));
                 processBuilder.environment().put("MBOX_CONNECT_IP", endpointAddresses.get(0));
+            }
+            if (quicLabTransport != null) {
+                processBuilder.environment().put("MBOX_QUIC_UNIX", quicLabTransport.unixPath());
             }
             if (cronetBridge != null) {
                 processBuilder.environment().put("MBOX_HTTP_BRIDGE_ADDR", cronetBridge.address());
@@ -578,6 +585,11 @@ public class MBoxVpnService extends VpnService {
                 } catch (Throwable error) {
                     Log.w(TAG, "Cronet bridge stop failed", error);
                 }
+            }
+            if (quicLabTransport != null) {
+                try { quicLabTransport.close(); }
+                catch (Throwable error) { Log.w(TAG, "QUIC laboratory stop failed", error); }
+                quicLabTransport = null;
             }
         } finally {
             cleaning = false;

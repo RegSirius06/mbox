@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -162,24 +163,30 @@ func localHTTPClient() *http.Client {
 	tr := &http.Transport{Proxy: nil, MaxIdleConns: 32, MaxIdleConnsPerHost: 32, IdleConnTimeout: 30 * time.Second}
 	return &http.Client{Transport: tr, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
-func quicHTTPClient(caFile string) (*http.Client, *http3.Transport, error) {
+func systemAndExtraRoots(caFile string) (*x509.CertPool, error) {
 	pool, err := x509.SystemCertPool()
-	if err != nil {
-		return nil, nil, err
-	}
-	if pool == nil {
+	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
 	}
 	if caFile != "" {
 		pem, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, nil, errors.New("invalid CA PEM")
+			return nil, errors.New("invalid CA PEM")
 		}
 	}
-	h3 := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool}}
+	return pool, nil
+}
+func quicHTTPClient(caFile string) (*http.Client, *http3.Transport, error) {
+	return quicHTTPClientWithProtection(caFile, "", "")
+}
+func quicHTTPClientWithProtection(caFile, path, token string) (*http.Client, *http3.Transport, error) {
+	h3, err := quicProtectedClient(caFile, path, token)
+	if err != nil {
+		return nil, nil, err
+	}
 	return &http.Client{Transport: h3, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, h3, nil
 }
 func serveLocalHTTP(addr string, handler http.Handler) error {
@@ -192,4 +199,34 @@ func serveLocalHTTP(addr string, handler http.Handler) error {
 	}
 	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 21 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	return srv.Serve(ln)
+}
+
+// An app-private Unix listener avoids exposing an unauthenticated loopback
+// HTTP proxy to other Android applications.
+func serveLocalHTTPUnix(path string, handler http.Handler) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("invalid Unix listener path")
+	}
+	parent, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	if !parent.IsDir() || parent.Mode().Perm()&0o077 != 0 {
+		return errors.New("Unix HTTP listener requires a private owner-only directory")
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return errors.New("Unix listener already exists")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(path)
+	defer ln.Close()
+	if err := os.Chmod(path, 0600); err != nil {
+		return err
+	}
+	return (&http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 21 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}).Serve(ln)
 }

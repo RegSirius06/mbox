@@ -1,6 +1,7 @@
 // mbox-native-quic: optional HTTP/3 transport, NOT a replacement for REG.RU HTTPS.
 // This stage carries the existing authenticated MBox HTTP records over native
-// QUIC UDP streams. It does not yet use QUIC DATAGRAM or Android socket protection.
+// QUIC UDP streams. QUIC DATAGRAM is not enabled in this stage.
+// On Android, outbound UDP sockets must be explicitly bound via the FD broker.
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -58,6 +60,9 @@ func run(args []string) error {
 	case "client":
 		fs := flag.NewFlagSet("client", flag.ContinueOnError)
 		bind := fs.String("bind", "127.0.0.1:18451", "loopback HTTP proxy for MBox client")
+		unixListen := fs.String("unix-listen", "", "app-private Unix HTTP socket (Android)")
+		protectPath := fs.String("protect-socket", "", "Android protected-UDP socket bridge")
+		protectToken := fs.String("protect-token", "", "socket protection session token")
 		remote := fs.String("remote", "", "required https://host:port to MBox QUIC VPS")
 		ca := fs.String("ca", "", "optional trusted CA / self-signed root PEM")
 		serverConfig := fs.String("server-config", "", "MBox server JSON for allowlisted paths")
@@ -65,12 +70,22 @@ func run(args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		if err := localListen(*bind); err != nil {
-			return err
+		if *unixListen == "" {
+			if err := localListen(*bind); err != nil {
+				return err
+			}
 		}
 		remoteURL, err := remoteURL(*remote)
 		if err != nil {
 			return err
+		}
+		if runtime.GOOS == "android" {
+			if *unixListen == "" || *protectPath == "" || len(*protectToken) < 32 {
+				return errors.New("Android QUIC requires Unix HTTP and protected UDP")
+			}
+			if err := requireNumericRemoteOnAndroid(remoteURL.Host); err != nil {
+				return err
+			}
 		}
 		var paths originPaths
 		if *serverConfig != "" {
@@ -88,12 +103,15 @@ func run(args []string) error {
 				return errors.New("invalid --paths")
 			}
 		}
-		c, transport, err := quicHTTPClient(*ca)
+		c, transport, err := quicHTTPClientWithProtection(*ca, *protectPath, *protectToken)
 		if err != nil {
 			return err
 		}
 		defer transport.Close()
 		log.Printf("MBox QUIC client on %s -> %s (HTTPS path remains independent)", *bind, remoteURL.Host)
+		if *unixListen != "" {
+			return serveLocalHTTPUnix(*unixListen, makeClientHandler(remoteURL, paths, c))
+		}
 		return serveLocalHTTP(*bind, makeClientHandler(remoteURL, paths, c))
 	default:
 		return fmt.Errorf("unknown mode %q", args[0])

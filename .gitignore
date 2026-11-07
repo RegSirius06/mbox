@@ -45,3 +45,8 @@ __pycache__/
 
 # Release binaries
 dist/
+
+# Local Android QUIC lab trust material and endpoint (public but device-specific)
+android/app/src/debug/assets/mbox-quic-remote.txt
+android/app/src/debug/assets/mbox-quic-ca.pem
+android/app/src/debug/jniLibs/

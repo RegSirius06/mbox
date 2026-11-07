@@ -319,6 +319,16 @@ func newHTTPClient(baseURL string) (*http.Client, error) {
 		return nil, fmt.Errorf("invalid transport base URL %q", baseURL)
 	}
 
+	quicUnix, usingQUIC, err := androidQUICUnixFromEnv(u)
+	if err != nil {
+		return nil, err
+	}
+	if usingQUIC {
+		log.Printf("NET stage=HTTP code=HTTP_STACK stack=quic-local")
+		return &http.Client{Transport: quicUnix, Timeout: 20 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+	}
+
 	transport, bridged, err := androidBridgeFromEnv(u)
 	if err != nil {
 		return nil, err
