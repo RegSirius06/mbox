@@ -7,7 +7,6 @@ import android.net.NetworkCapabilities;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.security.SecureRandom;
@@ -16,6 +15,11 @@ import java.util.Arrays;
 /** A debug-only STUN probe, forced onto Android's VPN Network, never physical. */
 final class UdpLabProbe {
     private static final int STUN_PORT = 19302;
+    // Public Google STUN IPv4 endpoint. Use a literal IP in this narrow lab
+    // probe: HEV Mapped DNS produces 100.64/10 fake IPs and the experimental
+    // MBox UDP wire intentionally rejects domain and private destinations.
+    // This does NOT change the regular VPN DNS path.
+    private static final byte[] STUN_IPV4 = {74, 125, (byte) 250, (byte) 129};
     private static final int MAGIC = 0x2112A442;
     private static final SecureRandom RNG = new SecureRandom();
 
@@ -24,6 +28,7 @@ final class UdpLabProbe {
                 MBoxVpnService.getState() != MBoxVpnService.State.CONNECTED) {
             return "UDP LAB: VPN not connected or debug mode unavailable";
         }
+        String stage = "VPN network lookup";
         try {
             ConnectivityManager manager = (ConnectivityManager)
                     context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -44,17 +49,10 @@ final class UdpLabProbe {
             if (vpn == null) {
                 return "UDP LAB: no VPN Network (refusing physical network)";
             }
-            InetAddress target = null;
-            // Resolve through the VPN network as well, not the system DNS.
-            for (InetAddress address : vpn.getAllByName("stun.l.google.com")) {
-                if (address instanceof Inet4Address) {
-                    target = address;
-                    break;
-                }
-            }
-            if (target == null) {
-                return "UDP LAB: no IPv4 STUN address via VPN DNS";
-            }
+            // Avoid HEV fake-DNS addresses (100.64.0.0/10) for this test.
+            // DNS-based UDP is a separate feature and remains unverified.
+            InetAddress target = InetAddress.getByAddress(STUN_IPV4);
+            stage = "UDP socket / VPN bind";
             try (DatagramSocket socket = new DatagramSocket()) {
                 vpn.bindSocket(socket);
                 socket.setSoTimeout(6000);
@@ -70,10 +68,13 @@ final class UdpLabProbe {
                 RNG.nextBytes(transaction);
                 System.arraycopy(transaction, 0, request, 8, 12);
                 long started = System.nanoTime();
+                stage = "UDP send";
                 socket.send(new DatagramPacket(request, request.length));
+                stage = "UDP receive";
                 byte[] raw = new byte[1024];
                 DatagramPacket reply = new DatagramPacket(raw, raw.length);
                 socket.receive(reply);
+                stage = "STUN response validation";
                 String mapped = mappedIPv4(raw, reply.getLength(), transaction);
                 long rttMs = (System.nanoTime() - started) / 1_000_000L;
                 return "UDP PASS via VPN: STUN mapped IP " + mapped +
@@ -81,7 +82,8 @@ final class UdpLabProbe {
             }
         } catch (Exception error) {
             // Do not retry through an unbound or physical socket.
-            return "UDP LAB failed (no fallback): " + error.getClass().getSimpleName();
+            return "UDP LAB failed (no fallback) at " + stage + ": " +
+                    error.getClass().getSimpleName();
         }
     }
 
