@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -103,5 +104,43 @@ func TestBoundedAndURLValidation(t *testing.T) {
 	}
 	if _, err := remoteURL("https://quic.example:7443"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadSecretAllowsMBoxPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "origin-hmac.key")
+	key := bytes.Repeat([]byte{0xa5}, 32)
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		mode  os.FileMode
+		allow bool
+	}{
+		{0600, true}, {0640, true}, {0644, false}, {0660, false}, {0641, false},
+	} {
+		t.Run(fmt.Sprintf("%04o", tc.mode), func(t *testing.T) {
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readSecret(path)
+			if tc.allow {
+				if err != nil || !bytes.Equal(got, key) {
+					t.Fatalf("mode %04o: key=%x err=%v", tc.mode, got, err)
+				}
+			} else if err == nil {
+				t.Fatalf("mode %04o must fail", tc.mode)
+			}
+		})
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "secret-link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSecret(link); err == nil {
+		t.Fatal("symlink must fail")
 	}
 }

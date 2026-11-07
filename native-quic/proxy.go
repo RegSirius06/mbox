@@ -143,8 +143,10 @@ func readSecret(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("origin HMAC key must be regular and owner-only")
+	// Match mboxctl and mbox-server: root:mbox 0640 is an intentional
+	// permission model. Deny group write/execute and any other access.
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o037 != 0 {
+		return nil, errors.New("origin HMAC key must be regular; group write/execute and other access forbidden")
 	}
 	b, err := io.ReadAll(io.LimitReader(f, 129))
 	if err != nil {
