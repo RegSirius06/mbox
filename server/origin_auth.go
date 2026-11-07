@@ -1,9 +1,9 @@
 package main
 
 import (
+	originauth "../common/originauth"
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -32,14 +32,11 @@ var (
 )
 
 func originAuthMessage(method, requestPath, rawQuery, ts, nonce string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	return []byte(method + "\n" + requestPath + "\n" + rawQuery + "\n" + ts + "\n" + nonce + "\n" + hex.EncodeToString(h[:]))
+	return originauth.Message(method, requestPath, rawQuery, ts, nonce, body)
 }
 
 func originSignature(secret []byte, method, requestPath, rawQuery, ts, nonce string, body []byte) []byte {
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write(originAuthMessage(method, requestPath, rawQuery, ts, nonce, body))
-	return mac.Sum(nil)
+	return originauth.Signature(secret, method, requestPath, rawQuery, ts, nonce, body)
 }
 
 func pruneOriginNoncesLocked(now time.Time) {
@@ -103,7 +100,7 @@ func originAuthPreflight(r *http.Request, now time.Time) error {
 		return fmt.Errorf("bad origin nonce")
 	}
 	sig, err := hex.DecodeString(sigText)
-	if err != nil || len(sig) != sha256.Size {
+	if err != nil || len(sig) != 32 {
 		return fmt.Errorf("bad origin signature")
 	}
 	return nil
@@ -117,7 +114,7 @@ func verifyOriginRequest(r *http.Request, body []byte, now time.Time) error {
 	nonce := r.Header.Get(originNonceHeader)
 	sig, _ := hex.DecodeString(r.Header.Get(originSignatureHeader))
 	expected := originSignature(originAuthSecret, r.Method, r.URL.Path, r.URL.RawQuery, tsText, nonce, body)
-	if !hmac.Equal(sig, expected) {
+	if subtle.ConstantTimeCompare(sig, expected) != 1 {
 		return fmt.Errorf("origin authentication failed")
 	}
 	// Only authenticated requests consume nonce-cache memory. This prevents an

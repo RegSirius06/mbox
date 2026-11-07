@@ -1,13 +1,10 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
+	originauth "../common/originauth"
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -41,30 +38,13 @@ func loadOriginSecret(path string) ([]byte, error) {
 }
 
 func originAuthMessage(method, requestPath, rawQuery, ts, nonce string, body []byte) []byte {
-	h := sha256.Sum256(body)
-	return []byte(method + "\n" + requestPath + "\n" + rawQuery + "\n" + ts + "\n" + nonce + "\n" + hex.EncodeToString(h[:]))
+	return originauth.Message(method, requestPath, rawQuery, ts, nonce, body)
 }
 
 func originSignature(secret []byte, method, requestPath, rawQuery, ts, nonce string, body []byte) string {
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write(originAuthMessage(method, requestPath, rawQuery, ts, nonce, body))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func newOriginNonce() (string, error) {
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(nonce[:]), nil
+	return hex.EncodeToString(originauth.Signature(secret, method, requestPath, rawQuery, ts, nonce, body))
 }
 
 func signOriginRequest(secret []byte, method, requestPath, rawQuery string, body []byte, now time.Time) (ts, nonce, signature string, err error) {
-	nonce, err = newOriginNonce()
-	if err != nil {
-		return "", "", "", err
-	}
-	ts = strconv.FormatInt(now.Unix(), 10)
-	signature = originSignature(secret, method, requestPath, rawQuery, ts, nonce, body)
-	return ts, nonce, signature, nil
+	return originauth.SignRequest(secret, method, requestPath, rawQuery, body, now)
 }
