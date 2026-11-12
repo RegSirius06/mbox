@@ -2,6 +2,15 @@
 
 [Русская версия](CHANGELOG.ru.md)
 
+## Unreleased: 1.0.0-beta.4 (draft)
+
+- Forward application UDP through MBox, including UDP-over-HTTPS/TCP via REG.RU.
+- Add a direct native QUIC/HTTP3 gateway (HTTP/3 streams, not QUIC DATAGRAM).
+- Add Android Auto selection and QUIC → HTTPS fallback on reconnection.
+- Harden the QUIC systemd unit with DynamicUser/NoNewPrivileges and validate reconnection.
+- Field-test HTTPS, QUIC and Wi-Fi/LTE transition; report one successful MegaFon test.
+- **Before publication:** include QUIC in the signed release APK and verify the installed release build. Root cause of the 2026-11-12 FastCGI failure remains unknown.
+
 ## 1.0.0-beta.3 — 2026-11-05 (experimental prerelease)
 
 - **Breaking change vs published beta.2.1:** with strict `cmac` enabled on origin, the published beta.2.1 Android APK cannot authenticate HTTP UP/DOWN/CLOSE control requests. Noise records and PSK profiles are unchanged; beta.2.2 builds with `cmac` remain compatible.

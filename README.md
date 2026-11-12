@@ -2,9 +2,24 @@
 
 [Русская версия](README.ru.md) | English
 
+<!-- BETA4-DOCS-START -->
+## Beta 4 development — UDP and native QUIC (not yet published)
+
+The beta 4 development build adds application UDP forwarding through the existing **Cronet HTTPS/TCP + FastCGI** route and a separate **direct native QUIC/HTTP3-over-UDP** gateway. Android **Auto** chooses QUIC when available and falls back to HTTPS after connection failure. This is connection-level failover, **not** a transparent multipath VPN. The published beta 3 artifact remains the reference for the older, TCP-only release.
+
+- [Transport diagrams and exact limitations](docs/BETA_4_TRANSPORTS.md) ([RU](docs/ru/BETA_4_TRANSPORTS.md))
+- [Field testing, known FastCGI incident and bug reports](docs/BETA_4_FIELD_TESTING.md) ([RU](docs/ru/BETA_4_FIELD_TESTING.md))
+- [Beta 4 release notes — draft](docs/BETA_4_RELEASE_NOTES.md) ([RU](docs/ru/BETA_4_RELEASE_NOTES.md))
+- [Linux/Windows/macOS roadmap](docs/PLATFORM_ROADMAP.md) ([RU](docs/ru/PLATFORM_ROADMAP.md))
+- [Contributing and GitHub Issues / PRs](CONTRIBUTING.md) ([RU](CONTRIBUTING.ru.md))
+
+**Beta 4 is not release-ready solely because the debug APK works:** signed release packaging must include native QUIC, and physical leak testing / long-term stability are not yet independently demonstrated.
+<!-- BETA4-DOCS-END -->
+
+
 > **Current experimental prerelease: `1.0.0-beta.3`.** Published beta.2.1 Android builds are incompatible with origin configured to require `cmac`; Noise records and PSK profiles have not changed. The updated Android/origin path worked in one mobile allow-list field test (2026-11-05). **No verified leak-proof, long-soak, or universal DPI guarantee.** See [release notes](RELEASE_NOTES.md) and [qualification status](docs/BETA_3_RELEASE_STATUS.md).
 
-MBox is an experimental encrypted multiplexed TCP transport designed to work through HTTP intermediaries that buffer complete requests/responses and therefore cannot carry an ordinary long-lived streaming tunnel.
+MBox is an experimental encrypted multiplexed transport for application TCP and, in the beta 4 development branch, UDP. Its HTTPS mode works through HTTP intermediaries that buffer complete request/response bodies rather than a long-lived streaming tunnel; native QUIC is a separate direct mode.
 
 This repository contains the server, client core, Android VPN wrapper, REG.RU FastCGI relay, installer, and the `mboxctl` administration CLI.
 
@@ -38,7 +53,7 @@ The current implementation includes:
 - optional server-side bursty cover traffic through the public frontend while no real MBox session is active;
 - exponential transport recovery and fail-fast;
 - Android `VpnService` + HEV TUN-to-SOCKS integration;
-- Android bundled Chromium Cronet outer HTTPS stack with HTTP/2 enabled and QUIC disabled for the first rollout;
+- Android bundled Chromium Cronet outer HTTPS stack with HTTP/2 enabled (its separate native QUIC/HTTP3 route is introduced in beta 4 development);
 - Android underlying-network monitor restricted to non-VPN Internet networks, dual-stack TUN routing and wait-for-network handover recovery;
 - stable per-installation `device_id` authenticated inside Noise OPEN so a reconnect can supersede only stale sessions from the same device;
 - Android automatic reconnect supervisor with persisted desired VPN state;
@@ -56,7 +71,7 @@ The current implementation includes:
 
 Be precise about these limitations when reviewing the project:
 
-- MBox currently transports TCP through its SOCKS endpoint; it is not a general UDP tunnel.
+- The published beta 3 APK carries TCP only. Beta 4 development adds application UDP forwarding over both HTTPS/TCP and native QUIC/HTTP3; it is not QUIC DATAGRAM or multipath.
 - Android defaults to a bundled Cronet HTTPS stack, so the public TLS/ALPN/HTTP implementation is Chromium-derived instead of Go. This substantially reduces the obvious `Go crypto/tls + net/http` implementation fingerprint, but it is **not** a claim of exact Chrome browser impersonation or DPI bypass on every operator; see `docs/FINGERPRINT_BASELINE.md`.
 - Server-side cover traffic is optional and disabled by default. It changes the traffic history seen by the shared frontend, but it does **not** hide the absence of traffic on a particular client ISP/mobile link.
 - Noise adds an ephemeral-ephemeral DH and forward secrecy after ephemeral key destruction, but the complete MBox integration has not received an independent security audit. See `docs/SECURITY.md`.
@@ -916,7 +931,7 @@ On Android, the default public HTTPS stack is bundled Chromium Cronet. Noise/MUX
 
 This means the public connection no longer exposes the straightforward Go `crypto/tls` / `net/http` network implementation used by the released beta.2 Android path. For an external provider/DPI this is a much more browser-like Chromium-derived networking persona. It is still **not** a promise that the traffic is byte-for-byte Chrome, that JA4/HTTP2 settings equal Chrome in every build, or that a carrier cannot classify the flow using other signals.
 
-For A/B troubleshooting, provisioning can select `--android-http-stack go`; the Go stack remains available because it exposes explicit per-IP connection attempts. Use `--deterministic-transport` for timing/size-comparable captures. QUIC is intentionally disabled in the first Cronet rollout so carrier testing changes one major variable at a time. See `docs/FINGERPRINT_BASELINE.md`.
+For A/B troubleshooting, provisioning can select `--android-http-stack go`; the Go stack remains available because it exposes explicit per-IP connection attempts. Use `--deterministic-transport` for timing/size-comparable captures. Cronet HTTPS is distinct from the beta 4 native QUIC/HTTP3 route. QUIC was disabled in the first Cronet rollout so carrier testing changed one variable at a time. See `docs/FINGERPRINT_BASELINE.md`.
 
 ## Timing camouflage
 

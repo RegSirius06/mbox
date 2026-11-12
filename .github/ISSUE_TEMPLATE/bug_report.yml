@@ -1,0 +1,66 @@
+name: Bug report / Сообщить об ошибке
+description: Report a reproducible or intermittent MBox issue / Ошибка MBox
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing MBox. Before posting, **redact all private data**: no `mbox://` links, PSKs, passwords, HMAC keys, private frontend paths, unredacted logs or traffic contents.
+        Спасибо за тестирование. **Не прикладывайте секреты**, включая ссылки профилей, ключи и полные логи.
+  - type: input
+    id: version
+    attributes:
+      label: MBox version / Версия
+      placeholder: "1.0.0-beta.4 (debug/release?)"
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport / Транспорт
+      options: ["Auto", "HTTPS / Cronet", "Native QUIC / HTTP3", "Unknown / Неизвестно"]
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS, device, network / ОС, устройство, сеть
+      description: Include Android version, Wi-Fi/LTE/5G/carrier and region only if comfortable; never share a precise location.
+      placeholder: "Android 16; Wi-Fi or LTE; carrier if relevant"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps / Как воспроизвести
+      description: Intermittent issues are welcome; say if they cannot be reproduced on demand.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected / Ожидалось
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual / Произошло
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs and time / Очищенные логи и время
+      description: Include date/time with time zone. Do not upload raw logs or secret paths.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Security / Безопасность
+      options:
+        - label: I checked that this report contains no provisioning links, credentials, private keys or other secrets / Я удалил секреты из отчёта
+          required: true
