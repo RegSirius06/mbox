@@ -2,6 +2,17 @@
 
 [Русская версия](CHANGELOG.ru.md)
 
+## 1.0.0-beta.4 — Android beta / 2026-11-13
+
+- Direct QUIC/HTTP3 (external UDP to a VPS gateway), with MBox records inside HTTP/3 streams rather than QUIC DATAGRAM.
+- Auto prefers QUIC and reconnects via HTTPS/Cronet on failure or network change; no multipath or seamless flow migration.
+- Application UDP carried through authenticated/encrypted MBox frames on both HTTPS/TCP and QUIC paths; production `enable_udp` no longer depends on developer mode.
+- Release Android ARM64 APK with a simplified UI, per-profile `transport.quic_url` + `transport.quic_ca_pem`, and pinned permanent signing identity.
+- 110 Python tests passed, signed APK was built and installed. Wi-Fi QUIC and restricted MTS/MegaFon HTTPS verified on debug; comprehensive signed-APK field testing, Tele2, packet capture, and long soak remain open.
+- The test QUIC certificate expires 2026-12-07; operator renewal and client trust updates required.
+
+See [beta 4 release notes](RELEASE_NOTES.md).
+
 ## Unreleased: 1.0.0-beta.4 (draft)
 
 - Forward application UDP through MBox, including UDP-over-HTTPS/TCP via REG.RU.

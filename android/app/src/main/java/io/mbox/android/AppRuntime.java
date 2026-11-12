@@ -16,8 +16,8 @@ final class AppRuntime {
     static final String MAP_NETWORK = "100.64.0.0";
     static final String MAP_NETMASK = "255.192.0.0";
 
-    // Laboratory UDP is permitted only in a debuggable APK; production APKs
-    // retain the default fail-closed UDP policy.
+    // Diagnostic STUN controls remain restricted to debug builds.
+    // Release UDP forwarding uses authenticated MBox frames and is separate.
     static boolean udpLabEnabled(android.content.Context context) {
         return (context.getApplicationInfo().flags &
                 android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
@@ -38,10 +38,9 @@ final class AppRuntime {
                 "  address: " + SOCKS_HOST + "\n" +
                 "  port: " + SOCKS_PORT + "\n" +
                 // Fail closed: HEV must never open a physical UDP relay socket.
-                // Its TCP relay mode keeps any attempted UDP relay on the local
-                // SOCKS TCP connection; unsupported UDP therefore fails instead
-                // of escaping the MBox transport. Native MBox datagrams remain
-                // a future authenticated/encrypted protocol extension.
+                // TCP relay mode keeps UDP in the local HEV/SOCKS connection;
+                // production MBox UDP forwarding is authenticated and encrypted.
+                // Unsupported destinations fail closed, without direct fallback.
                 "  udp: 'tcp'\n" +
                 "\n" +
                 "mapdns:\n" +

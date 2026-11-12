@@ -1,5 +1,9 @@
 # Physical-device Android fail-closed test gate
 
+<!-- MBOX-BETA4-CURRENT-DOCS -->
+> **Version context:** Some details below describe earlier beta.2/beta.3 implementations or historical observations. In **beta 4**, native QUIC/HTTP3 and application UDP are supported, and HTTPS/Cronet is the fallback. See [current Android guide](ANDROID_BETA4.md), [transport model](BETA_4_TRANSPORTS.md), and [security limits](SECURITY.md). The signed APK has been built and installed, but comprehensive physical leak testing remains incomplete.
+
+
 This is a **manual acceptance gate**: the unit tests and ADB-only checks below
 cannot establish the absence of physical egress. Do not assert P0 closure
 without a packet capture covering the actual Wi-Fi/cellular interfaces.

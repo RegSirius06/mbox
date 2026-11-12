@@ -17,10 +17,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
-import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -49,9 +47,11 @@ public class MBoxVpnService extends VpnService {
 
     private static volatile State state = State.STOPPED;
     private static volatile String lastError = "";
+    private static volatile String activeTransport = "";
 
     private final AtomicBoolean stoppedLogged = new AtomicBoolean(true);
     private final AtomicLong underlyingChangeGeneration = new AtomicLong();
+    private final TransportPolicy transportPolicy = new TransportPolicy();
 
     private volatile boolean desiredRunning;
     private volatile boolean cleaning;
@@ -69,6 +69,10 @@ public class MBoxVpnService extends VpnService {
 
     public static String getLastError() {
         return lastError;
+    }
+
+    public static String getActiveTransport() {
+        return activeTransport;
     }
 
     @Override
@@ -159,17 +163,23 @@ public class MBoxVpnService extends VpnService {
                     break;
                 }
                 long attemptNetworkGeneration = underlyingChangeGeneration.get();
+                TransportPolicy.Mode requestedMode = QuicLabTransport.mode(this);
+                TransportPolicy.Path path = transportPolicy.select(requestedMode,
+                        attemptNetworkGeneration, SystemClock.elapsedRealtime());
+                activeTransport = path.name();
+                Log.i(TAG, "TRANSPORT mode=" + requestedMode + " selected=" + path);
+                boolean immediateHttpsFallback = false;
 
                 updateState(hasConnected ? State.RECOVERING : State.CONNECTING, "");
                 updateNotification(hasConnected ? "Recovering…" : "Connecting…");
 
                 try {
-                    Process process = startCoreTransport();
+                    Process process = startCoreTransport(path);
                     hasConnected = true;
                     long connectedAt = SystemClock.elapsedRealtime();
 
                     updateState(State.CONNECTED, "");
-                    updateNotification("Connected: " + ProfileStore.profileName(this));
+                    updateNotification("Connected via " + path + ": " + ProfileStore.profileName(this));
                     Log.i(TAG, "VPN CONNECTED");
 
                     int code = process.waitFor();
@@ -193,6 +203,8 @@ public class MBoxVpnService extends VpnService {
                         break;
                     }
                     updateState(State.RECOVERING, "MBox core завершился: " + code);
+                    immediateHttpsFallback = transportPolicy.failed(requestedMode, path,
+                            attemptNetworkGeneration, SystemClock.elapsedRealtime());
                 } catch (InterruptedException interrupted) {
                     Thread.currentThread().interrupt();
                     break;
@@ -204,6 +216,8 @@ public class MBoxVpnService extends VpnService {
                     Log.w(TAG, "VPN transport attempt failed: " + MBoxLogSanitizer.sanitize(message));
                     updateState(State.RECOVERING, MBoxLogSanitizer.sanitize(message));
                     cleanupCoreTransport();
+                    immediateHttpsFallback = transportPolicy.failed(requestedMode, path,
+                            attemptNetworkGeneration, SystemClock.elapsedRealtime());
                 }
 
                 if (!desiredRunning) {
@@ -220,6 +234,14 @@ public class MBoxVpnService extends VpnService {
                         break;
                     }
                     Log.i(TAG, "RECONNECT reason=underlying_network immediate=true");
+                    continue;
+                }
+
+                if (immediateHttpsFallback) {
+                    reconnectDelay = RECONNECT_MIN_MS;
+                    Log.i(TAG, "TRANSPORT mode=AUTO code=QUIC_FAILED failover=HTTPS cooldown_ms="
+                            + TransportPolicy.QUIC_RETRY_MS);
+                    updateNotification("Recovering via HTTPS (REG.RU)…");
                     continue;
                 }
 
@@ -343,7 +365,7 @@ public class MBoxVpnService extends VpnService {
         lastError = MBoxLogSanitizer.sanitize(error);
     }
 
-    private synchronized Process startCoreTransport() throws Exception {
+    private synchronized Process startCoreTransport(TransportPolicy.Path path) throws Exception {
         cleanupCoreTransport();
 
         if (!desiredRunning) {
@@ -360,7 +382,10 @@ public class MBoxVpnService extends VpnService {
         String endpointHost = ProfileStore.transportHost(this);
         String endpointUrl = ProfileStore.transportUrl(this);
         boolean networkDebug = ProfileStore.networkDebug(this);
-        boolean quicLabMode = QuicLabTransport.enabled(this);
+        boolean quicLabMode = path == TransportPolicy.Path.QUIC;
+        if (quicLabMode && !QuicLabTransport.configured(this)) {
+            throw new SecurityException("QUIC is not configured in the imported profile");
+        }
         String httpStack = ProfileStore.androidHttpStack(this);
         if (!quicLabMode && !"cronet".equals(httpStack)) {
             throw new SecurityException("Android VPN requires Cronet fail-closed transport; Go HTTP is diagnostic-only");
@@ -420,43 +445,10 @@ public class MBoxVpnService extends VpnService {
     }
 
     private List<String> resolveEndpointAddresses(String host) throws Exception {
-        ConnectivityManager manager = connectivityManager != null
-                ? connectivityManager
+        ConnectivityManager manager = connectivityManager != null ? connectivityManager
                 : (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         Network network = networkMonitor != null ? networkMonitor.currentNetwork() : manager.getActiveNetwork();
-        if (network == null) {
-            Log.e(TAG, "NET stage=DNS code=ERR_DNS_NO_NETWORK");
-            throw new Exception("ERR_DNS: нет активной физической сети");
-        }
-
-        final InetAddress[] answers;
-        long started = System.nanoTime();
-        try {
-            answers = network.getAllByName(host);
-        } catch (Exception error) {
-            Log.e(TAG, "NET stage=DNS code=ERR_DNS host=" + host + " error=" + safeMessage(error));
-            throw new Exception("ERR_DNS: " + safeMessage(error), error);
-        }
-        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-        LinkedHashSet<String> unique = new LinkedHashSet<>();
-        for (InetAddress answer : answers) {
-            String ip = answer.getHostAddress();
-            int zone = ip.indexOf('%');
-            if (zone >= 0) {
-                ip = ip.substring(0, zone);
-            }
-            if (!ip.isEmpty()) {
-                unique.add(ip);
-            }
-            if (unique.size() >= 16) {
-                break;
-            }
-        }
-        if (unique.isEmpty()) {
-            Log.e(TAG, "NET stage=DNS code=ERR_DNS_EMPTY host=" + host + " time=" + elapsedMs + "ms");
-            throw new Exception("ERR_DNS: DNS не вернул адрес для " + host);
-        }
-        return new ArrayList<>(unique);
+        return MBoxDnsDiagnostics.resolveEndpointAddresses(network, host);
     }
 
     private static String safeMessage(Throwable error) {
@@ -612,6 +604,7 @@ public class MBoxVpnService extends VpnService {
         } catch (Exception ignored) {
         }
         tun = null;
+        activeTransport = "";
     }
 
     private void logStoppedOnce() {

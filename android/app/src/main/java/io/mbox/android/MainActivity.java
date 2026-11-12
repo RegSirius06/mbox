@@ -17,6 +17,8 @@ import android.text.InputType;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.view.Gravity;
+import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -41,6 +43,7 @@ public class MainActivity extends Activity {
     private Button disconnectButton;
     private Button udpLabButton;
     private Button quicLabButton;
+    private boolean compactUi;
     private String uiMessage = "";
 
     @Override
@@ -71,6 +74,9 @@ public class MainActivity extends Activity {
     }
 
     private void buildUi() {
+        // Debug and release must have the same user-facing home screen.
+        // Laboratory actions, if available, live behind Settings.
+        compactUi = true;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
 
@@ -118,50 +124,144 @@ public class MainActivity extends Activity {
         importButton.setText("Import pasted link");
         importButton.setOnClickListener(v -> importLink(link.getText().toString()));
 
-        root.addView(title);
-        root.addView(profile);
-        root.addView(status);
-        root.addView(connectButton);
-        root.addView(disconnectButton);
-        if (AppRuntime.udpLabEnabled(this)) {
-            udpLabButton = new Button(this);
-            udpLabButton.setText("UDP Lab: STUN through VPN");
-            udpLabButton.setOnClickListener(v -> runUdpProbe());
-            root.addView(udpLabButton);
-            if (QuicLabTransport.configured(this)) {
-                quicLabButton = new Button(this);
-                quicLabButton.setOnClickListener(v -> {
-                    if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
-                        uiMessage = "Disconnect the VPN before switching transport";
-                    } else {
-                        boolean selected = QuicLabTransport.toggle(this);
-                        uiMessage = selected ? "QUIC lab selected; connect to test" : "HTTPS selected; connect to test";
-                    }
-                    refreshUi();
-                });
-                root.addView(quicLabButton);
-            }
-        }
-        root.addView(clipboardButton);
-        root.addView(manualLabel);
-        root.addView(link);
-        root.addView(importButton);
+        if (compactUi) {
+            // Public UI: one connection action and one settings button.
+            root.setGravity(Gravity.CENTER_HORIZONTAL);
+            title.setTextSize(36);
+            title.setPadding(0, dp(60), 0, dp(16));
+            profile.setGravity(Gravity.CENTER);
+            profile.setTextSize(14);
+            status.setGravity(Gravity.CENTER);
+            status.setTextSize(21);
+            status.setPadding(0, dp(28), 0, dp(32));
 
+            root.addView(title);
+            root.addView(profile);
+            root.addView(status);
+            root.addView(connectButton, new LinearLayout.LayoutParams(-1, dp(56)));
+            root.addView(disconnectButton, new LinearLayout.LayoutParams(-1, dp(56)));
+
+            Button settings = new Button(this);
+            settings.setText("Settings");
+            settings.setOnClickListener(v -> showSettings());
+            LinearLayout.LayoutParams settingsLayout = new LinearLayout.LayoutParams(-1, dp(48));
+            settingsLayout.topMargin = dp(14);
+            root.addView(settings, settingsLayout);
+        } else {
+            root.addView(title);
+            root.addView(profile);
+            root.addView(status);
+            root.addView(connectButton);
+            root.addView(disconnectButton);
+            if (AppRuntime.udpLabEnabled(this)) {
+                udpLabButton = new Button(this);
+                udpLabButton.setText("UDP Lab: STUN through VPN");
+                udpLabButton.setOnClickListener(v -> runUdpProbe());
+                root.addView(udpLabButton);
+                if (QuicLabTransport.configured(this)) {
+                    quicLabButton = new Button(this);
+                    quicLabButton.setOnClickListener(v -> {
+                        if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
+                            uiMessage = "Disconnect the VPN before switching transport";
+                        } else {
+                            TransportPolicy.Mode selected = QuicLabTransport.cycleMode(this);
+                            uiMessage = selected == TransportPolicy.Mode.AUTO
+                                    ? "Auto: prefer QUIC, fall back to HTTPS via REG.RU"
+                                    : selected == TransportPolicy.Mode.HTTPS
+                                    ? "HTTPS only: REG.RU relay"
+                                    : "QUIC only: direct VPS UDP";
+                        }
+                        refreshUi();
+                    });
+                    root.addView(quicLabButton);
+                }
+            }
+            root.addView(clipboardButton);
+            root.addView(manualLabel);
+            root.addView(link);
+            root.addView(importButton);
+        }
         scroll.addView(root);
         setContentView(scroll);
         refreshUi();
     }
 
+    private void showSettings() {
+        final boolean hasQuic = QuicLabTransport.configured(this);
+        final boolean debugLab = AppRuntime.udpLabEnabled(this);
+        java.util.ArrayList<String> options = new java.util.ArrayList<>();
+        options.add("Import from clipboard");
+        options.add("Paste profile link");
+        if (hasQuic) options.add("Transport mode");
+        if (debugLab) options.add("UDP Lab: STUN through VPN");
+        new AlertDialog.Builder(this)
+                .setTitle("MBox settings")
+                .setItems(options.toArray(new String[0]), (dialog, choice) -> {
+                    if (choice == 0) importFromClipboard();
+                    else if (choice == 1) showImportDialog();
+                    else if (choice == 2 && hasQuic) showTransportDialog();
+                    else if (debugLab && choice == (hasQuic ? 3 : 2)) runUdpProbe();
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private void showImportDialog() {
+        EditText input = new EditText(this);
+        input.setHint("mbox://…");
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        input.setMaxLines(5);
+        input.setInputType(InputType.TYPE_CLASS_TEXT |
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        new AlertDialog.Builder(this)
+                .setTitle("Import MBox profile")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Review", (d, w) -> importLink(input.getText().toString()))
+                .show();
+    }
+
+    private void showTransportDialog() {
+        if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
+            new AlertDialog.Builder(this)
+                    .setMessage("Disconnect the VPN before changing transport mode.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        TransportPolicy.Mode[] modes = {
+                TransportPolicy.Mode.AUTO, TransportPolicy.Mode.HTTPS, TransportPolicy.Mode.QUIC};
+        TransportPolicy.Mode current = QuicLabTransport.mode(this);
+        int selected = current == modes[0] ? 0 : current == modes[1] ? 1 : 2;
+        new AlertDialog.Builder(this)
+                .setTitle("Transport mode")
+                .setSingleChoiceItems(new String[]{"Auto (recommended)", "HTTPS", "QUIC"},
+                        selected, (dialog, which) -> {
+                            // Reuse the existing persisted selection API, no second preference.
+                            for (int attempt = 0;
+                                    attempt < 3 && QuicLabTransport.mode(this) != modes[which];
+                                    attempt++) {
+                                QuicLabTransport.cycleMode(this);
+                            }
+                            refreshUi();
+                            dialog.dismiss();
+                        })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
     private void runUdpProbe() {
-        if (udpLabButton == null ||
+        if (!AppRuntime.udpLabEnabled(this) ||
                 MBoxVpnService.getState() != MBoxVpnService.State.CONNECTED) {
             return;
         }
-        udpLabButton.setEnabled(false);
+        if (udpLabButton != null) udpLabButton.setEnabled(false);
         new Thread(() -> {
             String result = UdpLabProbe.run(getApplicationContext());
             handler.post(() -> {
-                udpLabButton.setEnabled(true);
+                if (udpLabButton != null) udpLabButton.setEnabled(true);
                 new AlertDialog.Builder(this)
                         .setTitle("MBox UDP laboratory")
                         .setMessage(result + "\n\nA successful STUN response is not a leak audit.")
@@ -207,10 +307,11 @@ public class MainActivity extends Activity {
     private void importLink(String value) {
         try {
             ProfileStore.Candidate candidate = ProfileStore.parseLink(value);
-            String message = "Profile: " + candidate.name + "\nClient: " + candidate.clientId + "\nEndpoint: " + candidate.endpoint + "\n\nServer key SHA-256:\n" + candidate.serverFingerprint + "\n\nVerify this fingerprint over a trusted channel before replacing the active profile.";
+            String message = "Profile: " + candidate.name + "\nClient: " + candidate.clientId + "\nEndpoint: " + candidate.endpoint + "\n\nServer key SHA-256:\n" + candidate.serverFingerprint + "\n\nVerify this fingerprint over a trusted channel before replacing the active profile." +
+                    (candidate.quicUrl.isEmpty() ? "" : "\n\nQUIC: " + candidate.quicUrl + "\nQUIC certificate SHA-256: " + candidate.quicCertificateFingerprint);
             Runnable commit = () -> {
                 try { String name = ProfileStore.commitCandidate(this, candidate); link.setText(""); uiMessage = "Imported: " + name; }
-                catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); }
+                catch (Exception error) { showImportError(error); }
                 refreshUi();
             };
             AlertDialog.Builder confirm = new AlertDialog.Builder(this).setTitle("Confirm MBox profile").setMessage(message).setNegativeButton("Cancel", null);
@@ -225,7 +326,22 @@ public class MainActivity extends Activity {
                 confirm.setPositiveButton("Replace profile", (dialog, which) -> commit.run());
             }
             confirm.show();
-        } catch (Exception error) { uiMessage = "Import error: " + error.getMessage(); refreshUi(); }
+        } catch (Exception error) { showImportError(error); }
+    }
+
+    private void showImportError(Exception error) {
+        // A persistent status message can be hidden by CONNECTING/FAILED states.
+        // Show the failure without printing the secret provisioning link.
+        String explanation = error.getMessage();
+        if (explanation == null || explanation.trim().isEmpty()) explanation = "Unknown import error";
+        explanation = MBoxLogSanitizer.sanitize(explanation);
+        uiMessage = "Import error: " + explanation;
+        refreshUi();
+        new AlertDialog.Builder(this)
+                .setTitle("Profile import failed")
+                .setMessage(explanation)
+                .setPositiveButton("OK", null)
+                .show();
     }
 
     private void requestVpn() {
@@ -274,7 +390,7 @@ public class MainActivity extends Activity {
                 status.setText("Reconnecting…" + (MBoxVpnService.getLastError().isEmpty() ? "" : "\n" + MBoxVpnService.getLastError()));
                 break;
             case CONNECTED:
-                status.setText("Connected");
+                status.setText("Connected via " + MBoxVpnService.getActiveTransport());
                 break;
             case FAILED:
                 status.setText("Error: " + MBoxVpnService.getLastError());
@@ -292,9 +408,12 @@ public class MainActivity extends Activity {
         }
 
         if (quicLabButton != null) {
-            quicLabButton.setText(QuicLabTransport.enabled(this)
-                    ? "Transport: QUIC laboratory (tap to select HTTPS)"
-                    : "Transport: HTTPS (tap to select QUIC laboratory)");
+            TransportPolicy.Mode selected = QuicLabTransport.mode(this);
+            quicLabButton.setText(selected == TransportPolicy.Mode.AUTO
+                    ? "Transport: AUTO (QUIC → HTTPS via REG.RU) · tap for HTTPS"
+                    : selected == TransportPolicy.Mode.HTTPS
+                    ? "Transport: HTTPS via REG.RU · tap for QUIC"
+                    : "Transport: QUIC direct to VPS · tap for AUTO");
             quicLabButton.setEnabled(vpnState == MBoxVpnService.State.STOPPED);
         }
         connectButton.setEnabled(hasProfile && vpnState != MBoxVpnService.State.CONNECTING &&
@@ -305,6 +424,16 @@ public class MainActivity extends Activity {
                 vpnState == MBoxVpnService.State.RECOVERING ||
                 vpnState == MBoxVpnService.State.CONNECTED ||
                 vpnState == MBoxVpnService.State.FAILED);
+        if (compactUi) {
+            // Never display both connection actions together in the public UI.
+            boolean running = vpnState == MBoxVpnService.State.DISCONNECTED ||
+                    vpnState == MBoxVpnService.State.CONNECTING ||
+                    vpnState == MBoxVpnService.State.RECOVERING ||
+                    vpnState == MBoxVpnService.State.CONNECTED ||
+                    vpnState == MBoxVpnService.State.FAILED;
+            connectButton.setVisibility(running ? View.GONE : View.VISIBLE);
+            disconnectButton.setVisibility(running ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void maybeRequestNotificationPermission() {

@@ -1,5 +1,11 @@
 # Traffic camouflage status and roadmap
 
+<!-- MBOX-BETA4-CURRENT-DOCS -->
+> **Version context:** Some details below describe earlier beta.2/beta.3 implementations or historical observations. In **beta 4**, native QUIC/HTTP3 and application UDP are supported, and HTTPS/Cronet is the fallback. See [current Android guide](ANDROID_BETA4.md), [transport model](BETA_4_TRANSPORTS.md), and [security limits](SECURITY.md). The signed APK has been built and installed, but comprehensive physical leak testing remains incomplete.
+
+
+
+
 [Русская версия](ru/STEALTH.md)
 
 The public frontend is a real HTTPS site on shared hosting. Invalid transport probes return ordinary HTTP failures rather than an MBox banner. API paths are inside TLS and are deployment flexibility, not a last-mile DPI bypass by themselves.

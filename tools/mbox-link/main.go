@@ -1,20 +1,27 @@
 package main
 
 import (
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Transport struct {
-	URL string `json:"url"`
+	URL       string `json:"url"`
+	QUICURL   string `json:"quic_url,omitempty"`
+	QUICCAPEM string `json:"quic_ca_pem,omitempty"`
 }
 
 type LinkCrypto struct {
@@ -32,8 +39,10 @@ type LinkConfig struct {
 }
 
 type DiskTransport struct {
-	Listen string `json:"listen"`
-	URL    string `json:"url"`
+	Listen    string `json:"listen"`
+	URL       string `json:"url"`
+	QUICURL   string `json:"quic_url,omitempty"`
+	QUICCAPEM string `json:"quic_ca_pem,omitempty"`
 }
 
 type DiskCrypto struct {
@@ -125,6 +134,36 @@ func validateLink(c *LinkConfig) error {
 
 	if err := validBaseURL(c.Transport.URL); err != nil {
 		return err
+	}
+
+	if (c.Transport.QUICURL == "") != (c.Transport.QUICCAPEM == "") {
+		return errors.New("quic_url and quic_ca_pem must appear together")
+	}
+	if c.Transport.QUICURL != "" {
+		u, err := url.Parse(c.Transport.QUICURL)
+		if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+			(u.Path != "" && u.Path != "/") || u.Port() == "" || net.ParseIP(u.Hostname()) == nil ||
+			net.ParseIP(u.Hostname()).To4() == nil {
+			return errors.New("QUIC URL must be https://numeric-IPv4:port")
+		}
+		port, err := strconv.Atoi(u.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return errors.New("QUIC port out of range")
+		}
+		if len(c.Transport.QUICCAPEM) > 16384 {
+			return errors.New("QUIC certificate PEM too large")
+		}
+		block, _ := pem.Decode([]byte(c.Transport.QUICCAPEM))
+		if block == nil || block.Type != "CERTIFICATE" {
+			return errors.New("invalid QUIC certificate PEM")
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil || time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
+			return errors.New("invalid or expired QUIC certificate")
+		}
+		if err := cert.VerifyHostname(u.Hostname()); err != nil {
+			return errors.New("QUIC certificate does not match endpoint IP")
+		}
 	}
 
 	for name, value := range map[string]string{
@@ -242,7 +281,9 @@ func doExport(args []string) error {
 		Name:     *name,
 		ClientID: disk.Crypto.ClientID,
 		Transport: Transport{
-			URL: disk.Transport.URL,
+			URL:       disk.Transport.URL,
+			QUICURL:   disk.Transport.QUICURL,
+			QUICCAPEM: disk.Transport.QUICCAPEM,
 		},
 		Crypto: LinkCrypto{
 			PSK:             psk,
@@ -306,8 +347,10 @@ func doImport(args []string) error {
 	disk := DiskConfig{
 		Camouflage: c.Camouflage,
 		Transport: DiskTransport{
-			Listen: *listen,
-			URL:    c.Transport.URL,
+			Listen:    *listen,
+			URL:       c.Transport.URL,
+			QUICURL:   c.Transport.QUICURL,
+			QUICCAPEM: c.Transport.QUICCAPEM,
 		},
 		Crypto: DiskCrypto{
 			ClientID:            c.ClientID,

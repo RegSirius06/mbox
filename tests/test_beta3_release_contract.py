@@ -12,8 +12,12 @@ def test_release_does_not_package_debug_apk():
     assert 'app-debug.apk' not in script
 
 def test_release_notes_and_readmes_are_consistent():
-    assert (ROOT/'VERSION').read_text().strip()=='1.0.0-beta.3'
-    for filename in ('README.md','README.ru.md','RELEASE_NOTES.md','RELEASE_NOTES.ru.md',
-                     'RELEASE_CHECKLIST.md','RELEASE_CHECKLIST.ru.md','CHANGELOG.md',
-                     'CHANGELOG.ru.md','docs/STATUS.md','docs/ru/STATUS.md'):
-        assert '1.0.0-beta.3' in (ROOT/filename).read_text(), filename
+    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4'
+    # Historical beta.3 notes remain historical; the new status docs are the
+    # authoritative description of beta.4 until a signed release is published.
+    for filename in ('docs/BETA4_RELEASE_STATUS.md',
+                     'docs/ru/BETA4_RELEASE_STATUS.md'):
+        assert '1.0.0-beta.4' in (ROOT / filename).read_text(), filename
+    for filename in ('README.md', 'README.ru.md'):
+        text = (ROOT / filename).read_text()
+        assert 'MBOX-BETA4-RELEASE-STATUS' in text, filename

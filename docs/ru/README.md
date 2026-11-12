@@ -1,25 +1,9 @@
-# MBox — документация на русском
+# Документация MBox — 1.0.0-beta.4
 
-[English documentation](../)
+[English](../README.md) · [Главная страница](../../README.ru.md)
 
-Основные документы:
+**Пользователям:** [Android](ANDROID_BETA4.md), [примечания к релизу](../../RELEASE_NOTES.ru.md), [транспорты](BETA_4_TRANSPORTS.md), [архитектура](ARCHITECTURE.md), [безопасность](SECURITY.md), [тестирование](TESTING.md), [статус](STATUS.md).
 
-- [ADMIN.md](ADMIN.md) — администрирование;
-- [ARCHITECTURE.md](ARCHITECTURE.md) — архитектура;
-- [REG_RU_SHARED_HOSTING.md](REG_RU_SHARED_HOSTING.md) — frontend на shared hosting REG.RU;
-- [NETWORK_COMPATIBILITY.md](NETWORK_COMPATIBILITY.md) — операторы/БС;
-- [OPERATOR_TEST.md](OPERATOR_TEST.md) — `.fun` vs `.ru`;
-- [NETWORK_DIAGNOSTICS.md](NETWORK_DIAGNOSTICS.md) — диагностика по стадиям;
-- [FINGERPRINT_BASELINE.md](FINGERPRINT_BASELINE.md) — Cronet/fingerprint;
-- [STEALTH.md](STEALTH.md) — camouflage/stealth;
-- [SECURITY.md](SECURITY.md) — безопасность;
-- [NOISE.md](NOISE.md) — Noise wire;
-- [RESOURCES.md](RESOURCES.md) — лимиты/маленький VPS;
-- [SINGBOX.md](SINGBOX.md) — handoff в sing-box;
-- [COVER.md](COVER.md) — server cover traffic;
-- [TESTING.md](TESTING.md) — тесты;
-- [STATUS.md](STATUS.md) — состояние ветки;
-- [CODE_LAYOUT.md](CODE_LAYOUT.md) — структура исходников;
-- [TECHNICAL_AUDIT_2026-11-02.md](TECHNICAL_AUDIT_2026-11-02.md) — краткая русская сводка аудита.
+**Разработчикам и администраторам:** [сборка release APK](ANDROID_RELEASE_ENGINEERING.md), [администрирование сервера](ADMIN.md), [REG.RU](REG_RU_SHARED_HOSTING.md), [совместимость сетей](NETWORK_COMPATIBILITY.md), [полевые испытания](BETA_4_FIELD_TESTING.md), [чек-лист](../../RELEASE_CHECKLIST.ru.md).
 
-Главная русская инструкция: [`../../README.ru.md`](../../README.ru.md).
+Датированные аудиты и документы прежних beta сохранены как история проекта. Они могут описывать TCP-only реализацию до beta 4 и **не** заменяют актуальную схему Android.

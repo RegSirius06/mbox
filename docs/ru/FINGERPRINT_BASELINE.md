@@ -1,5 +1,11 @@
 # Fingerprint и Cronet
 
+<!-- MBOX-BETA4-CURRENT-DOCS -->
+> **Версионный контекст:** ниже могут быть исторические наблюдения beta.2/beta.3. В **beta 4** работают прямой QUIC/HTTP3, UDP приложений и резервный HTTPS/Cronet. Актуальные сведения: [Android](ANDROID_BETA4.md), [транспорты](BETA_4_TRANSPORTS.md), [границы безопасности](SECURITY.md). Подписанный APK уже собран и установлен, но физический аудит утечек ещё не завершён.
+
+
+
+
 [English](../FINGERPRINT_BASELINE.md)
 
 В beta.2 внешний HTTPS делал Go. В текущей ветке:

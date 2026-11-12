@@ -23,7 +23,7 @@ APKSIGNER=$(find_android_tool apksigner)
 ZIPALIGN=$(find_android_tool zipalign)
 [[ "$MBOX_RELEASE_SIGNER_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Expected 64-character certificate SHA-256 pin' >&2; exit 1; }
 VERSION="$(cat "$ROOT/VERSION")"
-[[ "$VERSION" == 1.0.0-beta.3 ]] || { echo "Unexpected version: $VERSION" >&2; exit 1; }
+[[ "$VERSION" == 1.0.0-beta.4 ]] || { echo "Unexpected version: $VERSION" >&2; exit 1; }
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}"
 export PATH="$JAVA_HOME/bin:$PATH"
 umask 077
@@ -31,6 +31,18 @@ umask 077
 (cd "$ROOT/android" && ./gradlew assembleRelease)
 UNSIGNED="$ROOT/android/app/build/outputs/apk/release/app-release-unsigned.apk"
 [[ -s "$UNSIGNED" ]] || { echo "Missing unsigned release APK: $UNSIGNED" >&2; exit 1; }
+# Fail closed before signing: native QUIC must exist and personal debug
+# endpoints/certificates must NOT be shipped in the public APK.
+python3 - "$UNSIGNED" <<'PYAPK'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as apk:
+    names=set(apk.namelist())
+    for n in ('lib/arm64-v8a/libmbox.so', 'lib/arm64-v8a/libmboxquic.so'):
+        if n not in names: raise SystemExit('FAIL: required native binary missing: '+n)
+    for n in ('assets/mbox-quic-remote.txt', 'assets/mbox-quic-ca.pem'):
+        if n in names: raise SystemExit('FAIL: debug-only QUIC asset in release: '+n)
+print('PASS: release contains core and QUIC; no debug endpoint assets')
+PYAPK
 OUT="$ROOT/dist/release"
 mkdir -p "$OUT"
 TMP="$(mktemp -d "$OUT/.mbox-sign.XXXXXXXX")"

@@ -1,6 +1,10 @@
 package io.mbox.android;
 
 import android.util.Log;
+import android.net.Network;
+import java.net.InetAddress;
+import java.util.LinkedHashSet;
+import java.util.concurrent.TimeUnit;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -37,6 +41,38 @@ final class MBoxDnsDiagnostics {
         } catch (Exception ignored) {
             return "ip#redacted";
         }
+    }
+
+    /** Diagnostic mode only; all lookups use the selected physical Network. */
+    static List<String> resolveEndpointAddresses(Network network, String host) throws Exception {
+        if (network == null) {
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS_NO_NETWORK");
+            throw new Exception("ERR_DNS: нет активной физической сети");
+        }
+        final InetAddress[] answers;
+        long started = System.nanoTime();
+        try {
+            answers = network.getAllByName(host);
+        } catch (Exception error) {
+            String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+            message = message.substring(0, Math.min(180, message.length()));
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS host=" + host + " error=" + MBoxLogSanitizer.sanitize(message));
+            throw new Exception("ERR_DNS: " + message, error);
+        }
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (InetAddress answer : answers) {
+            String ip = answer.getHostAddress();
+            int zone = ip.indexOf('%');
+            if (zone >= 0) ip = ip.substring(0, zone);
+            if (!ip.isEmpty()) unique.add(ip);
+            if (unique.size() >= 16) break;
+        }
+        if (unique.isEmpty()) {
+            Log.e(TAG, "NET stage=DNS code=ERR_DNS_EMPTY host=" + host + " time=" + elapsedMs + "ms");
+            throw new Exception("ERR_DNS: DNS не вернул адрес для " + host);
+        }
+        return new ArrayList<>(unique);
     }
 
     private MBoxDnsDiagnostics() { }

@@ -210,7 +210,7 @@ func (t *tunnel) handleLocal(conn net.Conn) {
 	// switch; never let an upstream SOCKS server interpret UDP/BIND here.
 	if err := guardSOCKSConnectWithUDP(conn, func(p []byte) error {
 		return t.forwardLocalData(id, st, p)
-	}, enableUDPLabClient); err != nil {
+	}, enableUDPClient); err != nil {
 		if errors.Is(err, errHEVForwardUDPRequested) {
 			t.handoffToUDP(id, st, conn)
 			return

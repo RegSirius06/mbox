@@ -15,10 +15,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
 
-/** Debug-only QUIC path for comparison with the existing HTTPS transport. */
+/** Protected native QUIC gateway; debug assets are permitted only in debug APKs. */
 final class QuicLabTransport implements Closeable {
     private static final String PREFS = "mbox-transport-lab";
-    private static final String ENABLED = "quic-enabled";
+    private static final String ENABLED = "quic-enabled"; // legacy two-state preference
+    private static final String MODE = "mode-v1";
     private static final String REMOTE_ASSET = "mbox-quic-remote.txt";
     private static final String CA_ASSET = "mbox-quic-ca.pem";
 
@@ -28,6 +29,8 @@ final class QuicLabTransport implements Closeable {
     private final Process process;
 
     static boolean configured(Context c) {
+        try { if (ProfileStore.hasProfile(c) && ProfileStore.quicConfig(c)!=null) return true; }
+        catch (Exception invalid) { return false; }
         if (!AppRuntime.udpLabEnabled(c)) return false;
         try (InputStream u = c.getAssets().open(REMOTE_ASSET);
              InputStream cert = c.getAssets().open(CA_ASSET)) {
@@ -35,13 +38,29 @@ final class QuicLabTransport implements Closeable {
         } catch (Exception missing) { return false; }
     }
 
-    static boolean enabled(Context c) {
-        return configured(c) && c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(ENABLED, false);
+    static TransportPolicy.Mode mode(Context c) {
+        if (!configured(c)) return TransportPolicy.Mode.HTTPS;
+        android.content.SharedPreferences prefs = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String selected = prefs.getString(MODE, null);
+        if (selected != null) {
+            try { return TransportPolicy.Mode.valueOf(selected); }
+            catch (IllegalArgumentException ignored) { return TransportPolicy.Mode.HTTPS; }
+        }
+        // Preserve a user's explicit old laboratory selection on upgrade.
+        if (prefs.contains(ENABLED)) return prefs.getBoolean(ENABLED, false)
+                ? TransportPolicy.Mode.QUIC : TransportPolicy.Mode.HTTPS;
+        return TransportPolicy.Mode.AUTO;
     }
 
-    static boolean toggle(Context c) {
-        boolean next = !enabled(c);
-        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(ENABLED, next).apply();
+    static TransportPolicy.Mode cycleMode(Context c) {
+        TransportPolicy.Mode current = mode(c);
+        TransportPolicy.Mode next = current == TransportPolicy.Mode.AUTO ? TransportPolicy.Mode.HTTPS
+                : current == TransportPolicy.Mode.HTTPS ? TransportPolicy.Mode.QUIC
+                : TransportPolicy.Mode.AUTO;
+        if (!c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(MODE, next.name()).commit()) {
+            throw new IllegalStateException("Cannot persist transport selection");
+        }
         return next;
     }
 
@@ -57,44 +76,40 @@ final class QuicLabTransport implements Closeable {
     String unixPath() { return socketFile.getAbsolutePath(); }
 
     QuicLabTransport(Context context, Network network) throws Exception {
-        if (!enabled(context)) throw new IllegalStateException("QUIC debug mode disabled");
+        if (!configured(context)) throw new IllegalStateException("QUIC not configured in profile");
         workDir = Files.createTempDirectory(context.getCacheDir().toPath(), "mbox-quic-").toFile();
         socketFile = new File(workDir, "http.sock");
         QuicSocketProtector broker = null;
         Process child = null;
         try {
             File ca = new File(workDir, "ca.pem");
-            try (InputStream in = context.getAssets().open(CA_ASSET);
-                 FileOutputStream out = new FileOutputStream(ca)) {
+            ProfileStore.QuicConfig profileQuic = ProfileStore.quicConfig(context);
+            String remote;
+            if (profileQuic != null) {
+                // Public certificate and destination come from the imported profile,
+                // not from an APK-wide developer endpoint.
+                remote = profileQuic.url;
+                Files.write(ca.toPath(), profileQuic.caPem.getBytes(StandardCharsets.US_ASCII));
+            } else {
+                if (!AppRuntime.udpLabEnabled(context)) throw new SecurityException("Profile has no QUIC configuration");
+                try (InputStream in = context.getAssets().open(CA_ASSET);
+                     FileOutputStream out = new FileOutputStream(ca)) {
                     byte[] buffer = new byte[4096];
                     int n;
                     while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
                 }
-            String remote;
-            try (InputStream in = context.getAssets().open(REMOTE_ASSET)) {
-                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-                byte[] buffer = new byte[1024];
-                int n;
-                while ((n = in.read(buffer)) != -1) {
-                    if (bytes.size() + n > 512) throw new SecurityException("QUIC endpoint too long");
-                    bytes.write(buffer, 0, n);
+                try (InputStream in = context.getAssets().open(REMOTE_ASSET)) {
+                    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+                    byte[] buffer = new byte[1024];
+                    int n;
+                    while ((n = in.read(buffer)) != -1) {
+                        if (bytes.size() + n > 512) throw new SecurityException("QUIC endpoint too long");
+                        bytes.write(buffer, 0, n);
+                    }
+                    remote = bytes.toString(StandardCharsets.UTF_8.name()).trim();
                 }
-                remote = bytes.toString(StandardCharsets.UTF_8.name()).trim();
             }
-            URI uri = URI.create(remote);
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getPort() < 1 ||
-                    uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null ||
-                    !uri.getPath().isEmpty() && !"/".equals(uri.getPath())) {
-                throw new SecurityException("Invalid QUIC remote asset");
-            }
-            // No Java DNS lookup outside the VPN. The stage-1 lab only
-            // permits numeric IPv4; the Go gateway enforces this too.
-            String[] parts = uri.getHost().split("\\.");
-            if (parts.length != 4) throw new SecurityException("QUIC lab requires numeric IPv4");
-            for (String part : parts) {
-                if (!part.matches("[0-9]{1,3}") || Integer.parseInt(part) > 255)
-                    throw new SecurityException("Invalid QUIC lab IPv4 address");
-            }
+            ProfileStore.validateQuicURL(remote);
             // Public routing metadata only; never give the QUIC gateway MBox keys.
             JSONObject original = new JSONObject(new String(Files.readAllBytes(ProfileStore.configFile(context).toPath()), StandardCharsets.UTF_8));
             JSONObject routes = new JSONObject();
@@ -132,7 +147,7 @@ final class QuicLabTransport implements Closeable {
             if (!socketFile.exists() || !child.isAlive()) throw new Exception("QUIC gateway failed to start");
             protector = broker;
             process = child;
-            Log.i("MBox", "QUIC Android laboratory gateway ready");
+            Log.i("MBox", "QUIC Android gateway ready");
         } catch (Exception failure) {
             if (child != null) child.destroyForcibly();
             if (broker != null) broker.close();

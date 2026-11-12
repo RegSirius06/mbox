@@ -59,14 +59,18 @@ final class QuicSocketProtector implements Closeable {
                         // This is a pre-connect UDP socket. Bind only to a monitored physical Network.
                         physicalNetwork.bindSocket(fds[0]);
                         status = 0;
+                        android.util.Log.i("MBox", "QUIC_DIAG stage=ANDROID_BIND code=OK");
                     }
-                } catch (IOException ignored) {
+                } catch (IOException failure) {
                     // Fail closed: the Go client will close its socket on NACK.
+                    android.util.Log.w("MBox", "QUIC_DIAG stage=ANDROID_BIND code=FAIL reason="
+                            + failure.getClass().getSimpleName() + ": " + failure.getMessage());
                 } finally {
                     if (fds != null) for (FileDescriptor fd : fds) {
                         try { Os.close(fd); } catch (Exception ignored) { }
                     }
                 }
+                if (status != 0) android.util.Log.w("MBox", "QUIC_DIAG stage=ANDROID_BIND code=REJECT");
                 incoming.getOutputStream().write(status);
             } catch (IOException failure) {
                 if (!closed) android.util.Log.w("MBox", "QUIC socket protection unavailable");

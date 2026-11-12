@@ -1,23 +1,21 @@
-# Архитектура
+# Архитектура MBox (beta 4)
 
-[English](../ARCHITECTURE.md)
+[English](../ARCHITECTURE.md) · [Транспорты](BETA_4_TRANSPORTS.md)
 
 ```text
-Android apps
- -> dual-stack VpnService/TUN
- -> HEV
- -> MBox SOCKS 127.0.0.1:10890
- -> Go Noise/MUX
- -> authenticated localhost bridge
- -> Chromium Cronet HTTPS
- -> REG.RU shared hosting/FastCGI
- -> MBox server 127.0.0.1:18449
- -> sing-box mixed 127.0.0.1:2080
- -> direct/chain exit
+Приложения Android -> VpnService/TUN -> HEV -> локальный MBox SOCKS -> Noise/MUX
+                                                                |
+                               +--> QUIC/HTTP3 через UDP -------+--> QUIC gateway VPS --> origin --> sing-box --> выход
+                               |
+                               +--> Cronet HTTPS/HTTP2/TCP --> shared hosting FastCGI --> origin
 ```
 
-Shared hosting, origin и final exit — независимые слои.
+**Веб-фронтенд**, **origin** и **выход** могут находиться у разных провайдеров и в разных странах. REG.RU shared hosting обслуживает сайт и FastCGI relay, **но не является RU VPS**. Прямой QUIC обходит FastCGI. Последний участок может идти через другой сервер с sing-box.
 
-DOWN надёжен через request sequence + contiguous ACK + exact encrypted replay. UP bounded/chunked, per-stream WINDOW/queues/backpressure.
+**UDP приложений:** передаётся внутри аутентифицированных MBox-записей. На HTTPS внешняя сеть видит TCP; на QUIC внешний UDP, но внутри HTTP/3 используются streams. Это не QUIC DATAGRAM и не прямой UDP приложения мимо туннеля.
 
-Android monitor смотрит только `INTERNET + NOT_VPN`. При hard loss ждёт сеть. `device_id` внутри Noise OPEN позволяет server supersession stale-сессии того же телефона.
+**Auto:** пробует QUIC при наличии его настроек, при ошибке переключается на HTTPS, при смене физической сети переоценивает транспорт. Активные соединения могут оборваться: это не multipath и не бесшовная миграция потоков.
+
+**Профиль:** `mbox://` содержит секреты доступа. Пара `transport.quic_url` + `transport.quic_ca_pem` обязательна для QUIC и отсутствует у HTTPS-only профилей. В APK нет персонального адреса или сертификата VPS.
+
+**Защита и устойчивость:** Noise, DOWN replay/ACK, лимиты очередей, Android VpnService/Lockdown; всё это не заменяет независимый аудит, packet capture и проверку известных ограничений.

@@ -1,5 +1,9 @@
 # MBox: поддержка платформ и планы
 
+<!-- MBOX-BETA4-RELEASE-STATUS -->
+> **Исходники beta 4 готовы к приёмке:** пользовательский UDP передаётся внутри зашифрованного MBox по HTTPS/TCP либо прямому QUIC/HTTP3 (streams). QUIC endpoint и публичный TLS-сертификат задаются **в импортируемом профиле**, не в APK. Auto — failover с реконнектом, не multipath. Подписанный release APK, его испытания и физический leak-test ещё не завершены. См. [актуальное состояние beta 4](BETA4_RELEASE_STATUS.md).
+
+
 [English](../PLATFORM_ROADMAP.md)
 
 ## Что существует сейчас

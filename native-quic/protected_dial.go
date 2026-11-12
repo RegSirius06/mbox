@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"runtime"
 	"syscall"
@@ -35,14 +36,19 @@ func protectedQUICDial(protectPath, token string) func(context.Context, string, 
 			return nil, err
 		}
 		if err = protectPacketSocket(packet, protectPath, token); err != nil {
+			log.Printf("QUIC_DIAG stage=PROTECT code=FAIL error=%q", err)
 			packet.Close()
 			return nil, err
 		}
+		log.Printf("QUIC_DIAG stage=PROTECT code=OK")
+		start := time.Now()
 		conn, err := quic.Dial(ctx, packet, dest, tlsCfg, cfg)
 		if err != nil {
+			log.Printf("QUIC_DIAG stage=HANDSHAKE code=FAIL elapsed_ms=%d error=%q", time.Since(start).Milliseconds(), err)
 			packet.Close()
 			return nil, err
 		}
+		log.Printf("QUIC_DIAG stage=HANDSHAKE code=OK elapsed_ms=%d", time.Since(start).Milliseconds())
 		go func() { <-conn.Context().Done(); packet.Close() }()
 		return conn, nil
 	}

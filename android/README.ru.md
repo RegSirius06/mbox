@@ -1,73 +1,29 @@
-# MBox Android
+# Android-клиент MBox 1.0.0-beta.4
 
-Русский | [English](README.md)
+[English](README.md) · [Руководство](../docs/ru/ANDROID_BETA4.md) · [Подпись и сборка](../docs/ru/ANDROID_RELEASE_ENGINEERING.md)
 
-Android-обёртка вокруг общего Go core MBox и HEV tun2socks.
+**Android 10+ (API 29), ARM64.** Один обычный интерфейс у debug и release; в debug дополнительные лабораторные функции находятся в настройках. Статус показывает подключение и текущий транспорт.
 
-## Схема
+- **Auto:** предпочтительно QUIC, при ошибке fallback на HTTPS, при смене Wi-Fi/мобильной сети попытки переоцениваются.
+- **QUIC:** прямой внешний UDP/HTTP3 к endpoint из импортированного профиля. Внутри QUIC применяются streams, не DATAGRAM.
+- **HTTPS:** Cronet HTTP/2/TCP через frontend/FastCGI, UDP приложений внутри Noise/MBox поверх TCP.
 
-```text
-Android apps -> VpnService/TUN -> HEV -> MBox SOCKS
-    -> authenticated localhost bridge -> Chromium Cronet HTTPS
-    -> shared-host frontend -> MBox server
-```
+## Установка
 
-В normal `cronet` mode внешний DNS/TCP/TLS/ALPN/HTTP2 делает bundled Chromium Cronet. Go отвечает за Noise/MUX/replay/ACK. В `go` mode остаётся явный A/AAAA fallback для диагностики.
+Скачайте подписанный APK из GitHub Releases. Если раньше стояла debug-сборка с другим сертификатом, Android выдаст `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. **Сначала** сохраните приватный профиль, после чего можно удалить старую debug-сборку и установить release. Обычные обновления со стабильным сертификатом выполняются без удаления данных.
 
-Underlying network monitor подписан только на `INTERNET + NOT_VPN`, поэтому собственный MBox VPN не вызывает self-reconnect. При полном исчезновении связи supervisor ждёт `UNDERLYING_AVAILABLE`, а не долбит сеть вслепую.
-
-**Текущая экспериментальная версия:** `1.0.0-beta.3` (`versionCode=6`). Для раздачи нужен APK, подписанный release-ключом и прошедший `tools/check-production-apk.sh`. Debug APK допустим только для локальных испытаний. Официальный beta.2.1 клиент несовместим с обязательным `cmac`.
+Для работы QUIC необходима пара полей профиля `transport.quic_url`, `transport.quic_ca_pem`. Старые HTTPS-only профили сохраняют возможность подключения. Настройки сервера **не зашиваются** в release APK.
 
 ## Сборка на Arch
 
 ```bash
-sudo pacman -S --needed jdk17-openjdk
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
-export PATH="$JAVA_HOME/bin:$PATH"
-hash -r
-
-./tools/build-debug.sh
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+cd ~/src/mbox-main
+./android/tools/build-debug.sh
+# Для подписанного выпуска (keystore и пароль никогда не коммитятся):
+export MBOX_RELEASE_KEYSTORE="$HOME/.local/share/mbox-signing/mbox-release.p12"
+export MBOX_RELEASE_KEY_ALIAS=mbox-release
+export MBOX_RELEASE_SIGNER_SHA256=17fd9f930b8356beca8251dd215220771a3d020e56fb6a703b526c35cccd7586
+./tools/build-release-apk.sh
 ```
 
-Текущий APK ARM64-only. HEV AAR проверяется по SHA-256.
-
-## Provisioning
-
-Профиль содержит `client_id`, PSK и public key сервера. Перед заменой приложение показывает endpoint/client ID и SHA-256 fingerprint public key. Проверяйте fingerprint по независимому доверенному каналу.
-
-Новые HTTPS App Links несут секретный профиль во fragment `#profile=...`, чтобы он не попадал в обычный HTTP request/query log. Старый query-формат всё ещё импортируется.
-
-## Handover и жёсткий обрыв
-
-Реальным тестом проверены Wi-Fi/mobile смена и airplane-mode:
-
-```text
-UNDERLYING_LOST
-WAIT_UNDERLYING
-...
-UNDERLYING_AVAILABLE
-RECONNECT reason=underlying_network immediate=true
-HTTP_OK h2
-NOISE_OK
-TUNNEL_ESTABLISHED
-VPN STARTED
-```
-
-Установка приложения хранит стабильный случайный `device_id`. Он передаётся внутри аутентифицированного Noise OPEN, поэтому новая сессия supersede'ит stale-сессию этого же телефона и не ждёт пяти минут server cleanup.
-
-## Fingerprint
-
-Cronet убирает очевидный Go TLS/HTTP fingerprint и даёт цельный Chromium-derived app network stack. Это не точная эмуляция Chrome. QUIC пока выключен; HTTP/2 включён. Для сравнения:
-
-```bash
-sudo mboxctl user link USER --android-http-stack cronet --network-debug
-sudo mboxctl user link USER --android-http-stack go --network-debug
-```
-
-## Ограничения
-
-- TCP transport; нативный UDP tunnel не реализован;
-- ARM64-only;
-- один активный профиль;
-- Android-клиент использует full-route TUN без исключения UID приложения и Cronet с привязкой к физической сети. Always-on заявлен в манифесте; lockdown должен включаться пользователем в настройках ОС. Отсутствие утечек при падении процесса и смене сети ещё требует packet-capture приёмки (см. `../docs/ANDROID_FAIL_CLOSED_TEST_PLAN.md`).
+VPN работает через `VpnService`/TUN/HEV и локальный Go core. Для защиты при обрыве включите системные Always-on и Lockdown, затем проверьте их. Полный аудит DNS/IPv4/IPv6 утечек не завершён.

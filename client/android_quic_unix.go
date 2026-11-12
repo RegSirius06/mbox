@@ -18,8 +18,11 @@ func androidQUICUnixFromEnv(origin *url.URL) (http.RoundTripper, bool, error) {
 	if path == "" {
 		return nil, false, nil
 	}
-	if !developerModeEnabled() || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return nil, false, errors.New("Android QUIC local socket requires developer mode and absolute path")
+	// This is a local, app-provisioned Unix socket, not permission to dial
+	// an arbitrary remote endpoint. Regular signed releases must use it.
+	// Keep strict socket-path, loopback-origin, and bridge-exclusion checks.
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return nil, false, errors.New("Android QUIC local socket requires a clean absolute path")
 	}
 	if os.Getenv("MBOX_HTTP_BRIDGE_ADDR") != "" || origin == nil || origin.Scheme != "http" || !loopbackHost(origin.Hostname()) {
 		return nil, false, errors.New("Android QUIC Unix transport requires loopback HTTP and no Cronet bridge")

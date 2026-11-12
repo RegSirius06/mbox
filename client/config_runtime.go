@@ -12,6 +12,7 @@ import (
 type runtimeTransportConfig struct {
 	Listen       string `json:"listen"`
 	URL          string `json:"url"`
+	EnableUDP    bool   `json:"enable_udp,omitempty"`
 	EnableUDPLab bool   `json:"enable_udp_lab,omitempty"`
 }
 
@@ -38,7 +39,7 @@ var (
 	deviceID               string
 	networkDebug           bool
 	deterministicTransport bool
-	enableUDPLabClient     bool
+	enableUDPClient        bool
 )
 
 func runtimeArgEnabled(name string) bool {
@@ -145,7 +146,9 @@ func loadRuntimeConfig(path string) error {
 	if cfg.Transport.EnableUDPLab && !developerModeEnabled() {
 		return fmt.Errorf("UDP lab transport requires developer mode and device leak testing")
 	}
-	enableUDPLabClient = cfg.Transport.EnableUDPLab
+	// Unlike diagnostic network logging, authenticated MBox UDP forwarding is
+	// supported in release builds. The old lab switch retains its developer gate.
+	enableUDPClient = cfg.Transport.EnableUDP || cfg.Transport.EnableUDPLab
 	listen = cfg.Transport.Listen
 	base = cfg.Transport.URL
 	clientID = cfg.Crypto.ClientID

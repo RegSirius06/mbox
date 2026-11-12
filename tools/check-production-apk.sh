@@ -46,14 +46,14 @@ if [[ $(grep -Ec 'Signer #[0-9]+ certificate DN:' <<< "$signature_info") -ne 1 ]
     echo 'FAIL: APK must have exactly one signer' >&2
     exit 1
 fi
+if grep -Eiq 'Android Debug|CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signature_info"; then
+    echo 'FAIL: APK is signed with the Android debug certificate' >&2
+    exit 1
+fi
 signer_sha=$(sed -nE 's/^Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\1/p' <<< "$signature_info")
 signer_sha=${signer_sha,,}
 if [[ "$signer_sha" != "$expected_signer" ]]; then
     echo 'FAIL: signer certificate SHA-256 does not match the release pin' >&2
-    exit 1
-fi
-if grep -Eiq 'Android Debug|CN[[:space:]]*=[[:space:]]*Android Debug' <<< "$signature_info"; then
-    echo 'FAIL: APK is signed with the Android debug certificate' >&2
     exit 1
 fi
 if ! package_info=$($aapt dump badging "$apk" 2>&1); then
@@ -65,8 +65,8 @@ if ! grep -q "package: name='io.mbox.android'" <<< "$package_info"; then
     exit 1
 fi
 # Refuse a signed APK with a stale version masquerading as the new release.
-if ! grep -q "versionCode='6' versionName='1.0.0-beta.3'" <<< "$package_info"; then
-    echo 'FAIL: APK manifest version does not match beta.3' >&2
+if ! grep -q "versionCode='7' versionName='1.0.0-beta.4'" <<< "$package_info"; then
+    echo 'FAIL: APK manifest version does not match beta.4' >&2
     exit 1
 fi
 if grep -Eqi 'application-debuggable|debuggable[=: ]+true' <<< "$package_info"; then

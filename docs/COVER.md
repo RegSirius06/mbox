@@ -1,5 +1,9 @@
 # Server cover traffic
 
+<!-- MBOX-BETA4-CURRENT-DOCS -->
+> **Version context:** Some details below describe earlier beta.2/beta.3 implementations or historical observations. In **beta 4**, native QUIC/HTTP3 and application UDP are supported, and HTTPS/Cronet is the fallback. See [current Android guide](ANDROID_BETA4.md), [transport model](BETA_4_TRANSPORTS.md), and [security limits](SECURITY.md). The signed APK has been built and installed, but comprehensive physical leak testing remains incomplete.
+
+
 [Русская версия](ru/COVER.md)
 
 MBox includes an optional server-originated cover traffic engine.

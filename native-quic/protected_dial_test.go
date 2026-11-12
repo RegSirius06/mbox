@@ -34,7 +34,7 @@ func TestProtectPacketSocketRequiresBrokerAndAck(t *testing.T) {
 		defer conn.Close()
 		buf := make([]byte, 128)
 		control := make([]byte, 128)
-		n, _, _, _, err := conn.ReadMsgUnix(buf, control)
+		n, oobn, _, _, err := conn.ReadMsgUnix(buf, control)
 		if err != nil {
 			outcome <- err
 			return
@@ -43,7 +43,7 @@ func TestProtectPacketSocketRequiresBrokerAndAck(t *testing.T) {
 			outcome <- syscall.EINVAL
 			return
 		}
-		messages, err := syscall.ParseSocketControlMessage(control)
+		messages, err := syscall.ParseSocketControlMessage(control[:oobn])
 		if err != nil {
 			outcome <- err
 			return

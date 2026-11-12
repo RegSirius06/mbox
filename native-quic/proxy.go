@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
@@ -110,6 +109,15 @@ func makeProxyHandler(target *url.URL, paths originPaths, secret []byte, client 
 		}
 		resp, err := client.Do(out)
 		if err != nil {
+			// Debugging a 502 must not require guessing whether socket
+			// protection, TLS, or the QUIC handshake actually failed.
+			// *url.Error can contain request URLs and query metadata.
+			cause := err
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				cause = urlErr.Err
+			}
+			fmt.Fprintf(os.Stderr, "QUIC_DIAG stage=UPSTREAM code=FAIL cause=%q\n", cause)
 			http.Error(w, "transport unavailable", http.StatusBadGateway)
 			return
 		}

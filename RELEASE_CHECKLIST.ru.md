@@ -1,19 +1,53 @@
-# Памятка публикации `1.0.0-beta.3`
+# Выпуск MBox v1.0.0-beta.4
 
-[Полные команды и проверки на английском](RELEASE_CHECKLIST.md)
+[English](RELEASE_CHECKLIST.md) · [Release notes](RELEASE_NOTES.ru.md)
 
-**Схема:** исходники, патчи, Go-тесты, Gradle и `gh` — на Arch; origin на RU VPS под `root`; сайт/relay на REG.RU shared hosting отдельно. Публичная beta.2.1 несовместима с сервером со строгим `cmac`.
+**Здесь не выполняется автоматический деплой на RU VPS, REG.RU или в GitHub.** Команды выполняются на Arch после проверки актуального локального дерева.
 
-## Перед тегом
+## 1. Согласованность дерева
 
-1. Исходники beta.3: `VERSION`, `mboxctl`, Android `versionName=1.0.0-beta.3`, `versionCode=6`; чистый git; Go vet/race, Python tests, secret scan, CI.
-2. Пересобрать и установить debug APK на **свой** Android, проверить reconnect, Telegram, автозапуск и работу через REG.RU. Для **этого экспериментального prerelease beta.3** допускается явно названный debug-signed APK — не обозначать его production-signed.
-3. RU VPS: собрать сервер на Arch, выполнить `tools/deploy-origin-root.sh --host root@RU_IP` и затем `--apply`. Проверить `mboxctl doctor`, SHA-256 процесса и `auth.require_authenticated_control=true`. REG.RU не менять при этой версии.
-4. Для выбранного экспериментального prerelease скопировать `app-debug.apk` как `dist/release/MBox-1.0.0-beta.3-android-arm64-debug.apk` и создать `.sha256`. **Не** переименовывать debug-файл в обычный release APK. Для будущего полноценного релиза использовать `tools/build-release-apk.sh` и постоянный release keystore.
-5. Push отдельной ветки, Pull Request в `main`, дождаться CI, merge; **только после merge** аннотированный тег `v1.0.0-beta.3` на итоговом `main`; затем `gh release create ... --prerelease --notes-file RELEASE_NOTES.ru.md` с debug-signed APK и `.sha256`. Полные команды в английском чеклисте.
+```bash
+cd ~/src/mbox-main
+cat VERSION
+# Ожидается 1.0.0-beta.4
+git diff --check
+python3 -m pytest -q tests
+(cd client && GO111MODULE=off go test -race ./... && GO111MODULE=off go vet ./...)
+(cd server && GO111MODULE=off go test -race ./... && GO111MODULE=off go vet ./...)
+(cd native-quic && go test -race ./... && go vet ./...)
+./tools/secret-scan.sh
+```
 
-Если на телефоне был debug-signed APK, release-signed другой подписью не установится поверх него. До удаления приложения экспортировать/сохранить профиль и только затем удалять. Один и тот же release-key используйте для последующих обновлений.
+Если `secret-scan` находит **литералы** `mbox://` в README/тестах, проверить находки отдельно; не объявлять это автоматически утечкой, но и не пропускать реальные ссылки с ключами.
 
-## Нельзя заявлять как проверенное
+## 2. Проверить собранный APK
 
-Полное отсутствие TCP/DNS/UDP/IPv6 утечек, Always-on/Lockdown при аварийном завершении, нативный UDP, универсальный обход DPI, долгий 24/7 soak, защищённый одноразовый enrollment и закрытие всех 55 пунктов ТЗ. 05.11.2026 зафиксирован успешный полевой тест **одной** связки Android–REG.RU–RU VPS во время активных БС. Публичная beta.3 — *experimental prerelease*, не security certification.
+```bash
+APK=dist/release/MBox-1.0.0-beta.4-android-arm64.apk
+sha256sum "$APK"
+export MBOX_RELEASE_SIGNER_SHA256=17fd9f930b8356beca8251dd215220771a3d020e56fb6a703b526c35cccd7586
+./tools/check-production-apk.sh "$APK"
+```
+
+SHA-256 файла должен быть `c3b1cbcb1b4b472aba35237657c2834a2aa8f032d861cbf817f5a5b9f18b43e1` **только если APK не пересобирался**. В случае другого хеша заново проверить APK и заменить хеш во всех release notes, GitHub Release и `.sha256`.
+
+## 3. Смоук-тест release на физическом Android
+
+Импорт профиля и новый UI; ручной QUIC на Wi-Fi, ручной HTTPS, Auto Wi-Fi↔мобильная сеть; DNS, HTTPS и Telegram; при возможности UDP/STUN и второй оператор Tele2; Always-on/Lockdown. Записывать **реально сделанные** проверки, не подменять debug результатами. Отсутствие полного физического leak-теста указать как ограничение.
+
+## 4. Коммит, тег, GitHub
+
+Убедись, что итоговый код и документы уже находятся в `main` (при необходимости сперва слей рабочую ветку через PR с зелёными CI). Сначала проверь `git status --short` и внимательно посмотри `git diff --cached --stat`; нельзя коммитить `.p12`, `mbox://`, production-конфигурации. Не делай `git add -A` вслепую. После коммита и чистого дерева:
+
+```bash
+test "$(git branch --show-current)" = main || { echo "Сначала слей изменения в main"; exit 1; }
+git tag -a v1.0.0-beta.4 -m 'MBox 1.0.0-beta.4 Android prerelease'
+git push origin main
+git push origin v1.0.0-beta.4
+sha256sum "$APK" > "$APK.sha256"
+gh release create v1.0.0-beta.4 "$APK" "$APK.sha256" --verify-tag --prerelease --latest=false --draft --title 'MBox 1.0.0-beta.4 — Android beta' --notes-file docs/GITHUB_RELEASE_BODY.md
+# После проверки черновика:
+gh release edit v1.0.0-beta.4 --draft=false
+```
+
+Внимание: `gh` требует авторизацию и права записи в репозиторий. Не создавать тег до завершения тестов; опубликованные теги и бинарники не заменять молча.

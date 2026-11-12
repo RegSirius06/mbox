@@ -1,5 +1,9 @@
 # MBox platform support and roadmap
 
+<!-- MBOX-BETA4-RELEASE-STATUS -->
+> **Beta 4 source candidate:** application UDP now runs through authenticated MBox frames over HTTPS/TCP or direct native QUIC/HTTP3 streams. Android QUIC endpoint and its public TLS trust are **per imported profile**, never APK-wide assets. Auto performs reconnect failover, not multipath. Signed release APK/device tests and physical leak verification remain outstanding. Read [current beta 4 status](BETA4_RELEASE_STATUS.md).
+
+
 [Русский](ru/PLATFORM_ROADMAP.md)
 
 ## Today

@@ -1,5 +1,11 @@
 # sing-box routing handoff
 
+<!-- MBOX-BETA4-CURRENT-DOCS -->
+> **Version context:** Some details below describe earlier beta.2/beta.3 implementations or historical observations. In **beta 4**, native QUIC/HTTP3 and application UDP are supported, and HTTPS/Cronet is the fallback. See [current Android guide](ANDROID_BETA4.md), [transport model](BETA_4_TRANSPORTS.md), and [security limits](SECURITY.md). The signed APK has been built and installed, but comprehensive physical leak testing remains incomplete.
+
+
+
+
 [Русская версия](ru/SINGBOX.md)
 
 MBox is a transport from the client device to the MBox server. It deliberately does **not** decide where Internet traffic leaves after it reaches the server.
@@ -76,4 +82,4 @@ Keep the mixed inbound on loopback unless another host genuinely needs to reach 
 
 ## What MBox transports
 
-MBox currently multiplexes TCP streams. The `mixed` inbound is therefore used as a local TCP proxy handoff. UDP/QUIC is not a native MBox transport yet; applications may fall back to TCP depending on their own behavior.
+Earlier MBox betas only multiplexed TCP streams via the local `mixed` handoff. Beta 4 development supports application UDP forwarding through the same sing-box integration (including HTTPS/TCP encapsulation and direct QUIC/HTTP3 ingress). This does not imply QUIC DATAGRAM or full physical-interface leak verification.

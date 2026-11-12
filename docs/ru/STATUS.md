@@ -1,34 +1,11 @@
-# Статус MBox
+# Статус MBox — 1.0.0-beta.4
 
-[English](../STATUS.md)
+[English](../STATUS.md) · [Примечания](../../RELEASE_NOTES.ru.md) · [Android](ANDROID_BETA4.md)
 
-## Текущая версия: `1.0.0-beta.3` (экспериментальный prerelease, 05.11.2026)
+**Актуальная версия исходников:** `1.0.0-beta.4`, Android `versionCode=7`. Разработчик собрал и установил подписанный release-кандидат ARM64; проверены подпись, манифест и наличие нативных библиотек. SHA-256 указан в release notes. Публикация GitHub и независимая проверка безопасности — **отдельные этапы**.
 
-- Проверена одна цепочка Android → REG.RU FastCGI → root-managed RU VPS. Во время действующих ограничений мобильного Интернета соединение и Telegram работали.
-- Публичная beta.2.1 не отправляет `cmac`, поэтому несовместима с origin при `auth.require_authenticated_control=true`. Noise/PSK формат сохранён; клиент beta.2.2 с `cmac` совместим.
-- Cronet HTTPS/H2, TCP через Noise, полный IPv4/IPv6 TUN; UDP ASSOCIATE/BIND блокируются, нативного UDP нет.
-- Ещё не доказано packet capture отсутствие DNS/TCP/UDP/IPv6 утечек; не закончены crash/Lockdown, soak, нагрузочные тесты REG.RU, signed enrollment, сравнение сетевого поведения с Chrome.
-- В публичный GitHub release не выкладывать debug APK. Только подписанный release-ключом APK с проверенным SHA-256 сертификата и checksum.
+**Полевые проверки debug:** QUIC через Wi-Fi; HTTPS при ограничениях МТС/МегаФон; Auto, переподключения, Telegram. **Проверки подписанного APK:** установился, версия подтверждена; полная приёмка транспортов именно на нём пока не зафиксирована. Проверка Tele2 на другом телефоне, длительные soak-тесты и независимый физический packet capture остаются открытыми.
 
-См. `RELEASE_NOTES.ru.md`, `docs/BETA_3_RELEASE_STATUS.ru.md` и план сетевых испытаний.
+**Безопасность:** Noise и системный Android VPN — полезные границы защиты, но не доказательство полного отсутствия утечек и не невидимость для DPI. Пользователю нужны Always-on/Lockdown и контрольное испытание. Тестовый QUIC-сертификат истекает **07.12.2026**.
 
----
-
-## Исторический статус beta.2.1 (02.11.2026)
-
-# Статус MBox
-
-[English](../STATUS.md)
-
-`1.0.0-beta.2.1` — историческая версия/кандидат на тег. Это совместимый с beta.2 hardening-релиз: Noise-wire и credentials beta.2 сохранены, добавлены Cronet, диагностика, dual-stack/handover, wait-for-network, same-device session supersession, pre-auth limits и модульность кода. `v1.0.0-beta.2` остаётся предыдущим тегированным baseline.
-
-На реальном Android подтверждены Cronet+h2, Noise/tunnel, Telegram/Instagram/video, Wi-Fi/mobile handover и airplane-mode recovery.
-
-Ещё не закрыто:
-
-- текущая ветка в активных БС MTS/T2/MegaFon;
-- `.fun` vs `.ru` на одном backend;
-- Chrome vs Cronet packet fingerprint;
-- signed provisioning/trust anchor;
-- Always-on/lockdown;
-- длинный soak/load и внешний security audit.
+Исторические данные beta.2/beta.3 остаются в Git и датированных аудитах. Старые статусные документы не являются контрактом для beta 4.

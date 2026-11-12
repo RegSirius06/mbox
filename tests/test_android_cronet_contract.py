@@ -71,7 +71,7 @@ def test_android_vpn_is_fail_closed_during_connect_and_recovery():
     assert 'android:value="true"' in manifest
     assert "SUPPORTS_ALWAYS_ON" in manifest
     assert "ensureFailClosedVpnInterface();" in service
-    assert service.index("ensureFailClosedVpnInterface();") < service.index("startCoreTransport();")
+    assert service.index("ensureFailClosedVpnInterface();") < service.index("startCoreTransport(path);")
     assert "cleanupCoreTransport();" in service
     assert "cleanupAllTransport();" in service
     assert "TProxyService.TProxyStopService()" in service
