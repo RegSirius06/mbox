@@ -18,6 +18,9 @@ def test_release_notes_and_readmes_are_consistent():
     for filename in ('docs/BETA4_RELEASE_STATUS.md',
                      'docs/ru/BETA4_RELEASE_STATUS.md'):
         assert '1.0.0-beta.4' in (ROOT / filename).read_text(), filename
-    for filename in ('README.md', 'README.ru.md'):
+    for filename, target in (
+        ('README.md', 'docs/BETA4_RELEASE_STATUS.md'),
+        ('README.ru.md', 'docs/ru/BETA4_RELEASE_STATUS.md'),
+    ):
         text = (ROOT / filename).read_text()
-        assert 'MBOX-BETA4-RELEASE-STATUS' in text, filename
+        assert f']({target})' in text, filename
