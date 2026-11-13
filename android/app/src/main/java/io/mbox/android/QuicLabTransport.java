@@ -74,6 +74,7 @@ final class QuicLabTransport implements Closeable {
     }
 
     String unixPath() { return socketFile.getAbsolutePath(); }
+    boolean isAlive() { return process.isAlive(); }
 
     QuicLabTransport(Context context, Network network) throws Exception {
         if (!configured(context)) throw new IllegalStateException("QUIC not configured in profile");

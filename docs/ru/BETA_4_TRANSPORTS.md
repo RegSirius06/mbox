@@ -1,3 +1,5 @@
+> Историческое поведение beta.4; см. [beta.4.1](BETA4_1_STATUS.md).
+
 # Транспорты beta 4: QUIC, HTTPS и UDP
 
 [English](../BETA_4_TRANSPORTS.md) · [Android](ANDROID_BETA4.md)

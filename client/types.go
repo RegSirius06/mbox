@@ -70,4 +70,9 @@ type tunnel struct {
 	// the local SOCKS listener alive would make Android keep a dead VPN route.
 	failOnce sync.Once
 	fatalErr chan error
+
+	healthMu sync.Mutex
+	healthNonce [16]byte
+	healthReply chan struct{}
+	healthWake chan struct{}
 }

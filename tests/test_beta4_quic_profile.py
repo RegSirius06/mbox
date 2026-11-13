@@ -57,5 +57,5 @@ def test_per_profile_quic_wiring_is_release_specific():
     assert 'ProfileStore.quicConfig(context)' in quic
     assert 'AppRuntime.udpLabEnabled(context)' in quic
     assert 'app/src/main/jniLibs/arm64-v8a/libmboxquic.so' in build
-    assert "versionName '1.0.0-beta.4'" in gradle
-    assert 'versionCode 7' in gradle
+    assert "versionName '1.0.0-beta.4.1'" in gradle
+    assert 'versionCode 8' in gradle

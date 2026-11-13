@@ -1,14 +1,13 @@
-# Network compatibility — beta 4
+# Network compatibility — beta.4.1
 
-[Русский](ru/NETWORK_COMPATIBILITY.md) · [Field testing](BETA_4_FIELD_TESTING.md)
+[Русский](ru/NETWORK_COMPATIBILITY.md) · [Testing](TESTING.md)
 
-| Network | Observed behavior | Evidence level |
+These are **deployment-specific observations**, not guarantees for every carrier, network, DNS or mobile plan.
+
+| Source | Scenario | Evidence |
 |---|---|---|
-| Unrestricted Wi-Fi | Direct QUIC and Auto with reconnect work | Debug APK, maintainer device |
-| MTS restricted network | HTTPS/Cronet works, Telegram accessible | Debug APK, maintainer device |
-| MegaFon restricted network | HTTPS/Cronet works, Telegram accessible | Debug APK, maintainer device |
-| Tele2 / T2 | Not yet checked on second device with beta 4 release APK | Pending |
+| beta.4 maintainer debug tests | QUIC over unrestricted Wi-Fi, HTTPS/Cronet on restricted MTS/MegaFon, Telegram | Historical maintainer observations, not beta.4.1 acceptance |
+| beta.4.1 maintainer report | Normal connect, screen-off idle, underlying-network handover, total network outage, Auto | Reported passed (5/5); device model, operator, elapsed time, precise fallback condition and log unavailable |
+| beta.4.1 final production-signed APK | Same complete matrix, T2/Tele2 on second phone, physical leak capture, long soak | Not yet verified |
 
-These are observations of one deployment, not blanket compatibility guarantees. Network policy varies by carrier, area, APN, hostname, time and subscriber profile. The signed release APK was installed; complete transport test results from that APK are not yet recorded. The old `.fun` vs `.ru` hostname hypothesis belongs to earlier field history and is **not** proof of an operator bypass.
-
-Collect sanitized stage logs (DNS → TCP/UDP reachability → TLS/QUIC → MBox/Noise → TUN → app requests). Never upload full profiles or keys.
+Auto *being selected* does not prove QUIC→HTTPS fallback unless UDP was blocked and HTTPS remained reachable. QUIC direct VPS uses UDP and never goes through the REG.RU frontend. HTTPS uses Cronet HTTP/2 and can traverse shared hosting. Preserve sanitized stage logs and conditions when filing issues; never publish a full `mbox://` link.

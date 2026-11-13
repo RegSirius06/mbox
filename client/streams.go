@@ -156,6 +156,7 @@ func (t *tunnel) handleFrames(data []byte) error {
 			t.closeLocal(id, false)
 			t.closeUDPFlow(id, false)
 		case framePing:
+			t.acceptHealthPong(id, payload)
 		case frameOpen, frameUDPOpen:
 			return fmt.Errorf("server-initiated OPEN is not supported")
 		default:

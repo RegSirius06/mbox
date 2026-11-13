@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import shlex
 import subprocess
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / 'tools/check-production-apk.sh'
@@ -11,7 +12,9 @@ def run_gate(tmp_path, signer_output, manifest_output, signer_exit=0, pinned=Tru
     bindir = tmp_path / 'bin'
     bindir.mkdir()
     apk = tmp_path / 'release.apk'
-    apk.write_bytes(b'fake-apk-for-script-test')
+    with zipfile.ZipFile(apk, 'w') as archive:
+        archive.writestr('lib/arm64-v8a/libmbox.so', b'fake-core')
+        archive.writestr('lib/arm64-v8a/libmboxquic.so', b'fake-quic')
     signer = bindir / 'apksigner'
     # Use printf instead of echo: /bin/sh is bash on Arch but dash on Ubuntu.
     # Their echo implementations disagree about interpreting \n escapes.
@@ -32,7 +35,7 @@ def run_gate(tmp_path, signer_output, manifest_output, signer_exit=0, pinned=Tru
 
 
 SIGNATURE = 'Signer #1 certificate DN: CN=MBox Release, O=Example\nSigner #1 certificate SHA-256 digest: ' + 'a'*64
-MANIFEST = "package: name='io.mbox.android' versionCode='7' versionName='1.0.0-beta.4'"
+MANIFEST = "package: name='io.mbox.android' versionCode='8' versionName='1.0.0-beta.4.1'"
 
 
 def test_accepted_signed_release(tmp_path):
@@ -86,8 +89,8 @@ def test_release_multiple_signers_rejected(tmp_path):
 
 
 def test_release_wrong_version_rejected(tmp_path):
-    assert "versionCode='7'" in MANIFEST
-    wrong_manifest = MANIFEST.replace("versionCode='7'", "versionCode='6'")
+    assert "versionCode='8'" in MANIFEST
+    wrong_manifest = MANIFEST.replace("versionCode='8'", "versionCode='7'")
     assert wrong_manifest != MANIFEST
     r = run_gate(tmp_path, SIGNATURE, wrong_manifest)
     assert r.returncode != 0
@@ -95,8 +98,8 @@ def test_release_wrong_version_rejected(tmp_path):
 
 
 def test_release_wrong_version_name_rejected(tmp_path):
-    assert "versionName='1.0.0-beta.4'" in MANIFEST
-    wrong_manifest = MANIFEST.replace("versionName='1.0.0-beta.4'", "versionName='1.0.0-beta.3'")
+    assert "versionName='1.0.0-beta.4.1'" in MANIFEST
+    wrong_manifest = MANIFEST.replace("versionName='1.0.0-beta.4.1'", "versionName='1.0.0-beta.4'")
     assert wrong_manifest != MANIFEST
     r = run_gate(tmp_path, SIGNATURE, wrong_manifest)
     assert r.returncode != 0

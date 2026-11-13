@@ -11,8 +11,8 @@ android {
         applicationId 'io.mbox.android'
         minSdk 29
         targetSdk 36
-        versionCode 7
-        versionName '1.0.0-beta.4'
+        versionCode 8
+        versionName '1.0.0-beta.4.1'
 
         manifestPlaceholders = [mboxProvisioningHost: providers.gradleProperty('mboxProvisioningHost').orElse('provision.invalid').get()]
 

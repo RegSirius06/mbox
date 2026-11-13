@@ -65,8 +65,8 @@ if ! grep -q "package: name='io.mbox.android'" <<< "$package_info"; then
     exit 1
 fi
 # Refuse a signed APK with a stale version masquerading as the new release.
-if ! grep -q "versionCode='7' versionName='1.0.0-beta.4'" <<< "$package_info"; then
-    echo 'FAIL: APK manifest version does not match beta.4' >&2
+if ! grep -q "versionCode='8' versionName='1.0.0-beta.4.1'" <<< "$package_info"; then
+    echo 'FAIL: APK manifest version does not match beta.4.1' >&2
     exit 1
 fi
 if grep -Eqi 'application-debuggable|debuggable[=: ]+true' <<< "$package_info"; then
@@ -74,5 +74,6 @@ if grep -Eqi 'application-debuggable|debuggable[=: ]+true' <<< "$package_info"; 
     exit 1
 fi
 
+python3 "$(dirname "$0")/check-unsigned-apk.py" "$apk"
 echo 'PASS: APK signature valid; pinned signer matched; manifest non-debuggable'
 sha256sum "$apk"

@@ -23,7 +23,7 @@ APKSIGNER=$(find_android_tool apksigner)
 ZIPALIGN=$(find_android_tool zipalign)
 [[ "$MBOX_RELEASE_SIGNER_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Expected 64-character certificate SHA-256 pin' >&2; exit 1; }
 VERSION="$(cat "$ROOT/VERSION")"
-[[ "$VERSION" == 1.0.0-beta.4 ]] || { echo "Unexpected version: $VERSION" >&2; exit 1; }
+[[ "$VERSION" == 1.0.0-beta.4.1 ]] || { echo "Unexpected version: $VERSION" >&2; exit 1; }
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}"
 export PATH="$JAVA_HOME/bin:$PATH"
 umask 077

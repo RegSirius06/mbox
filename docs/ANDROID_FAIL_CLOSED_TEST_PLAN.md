@@ -1,3 +1,8 @@
+> The beta.4.1 candidate has NOT passed this physical no-leak acceptance plan. See [candidate status](BETA4_1_STATUS.md).
+
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Current beta.4.1 context:** The client checks authenticated Noise session health and can recover QUIC without restarting the VPN; see [current status](BETA4_1_STATUS.md), [transport/camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md), and [test evidence](TESTING.md). Older beta.2/3/4 observations in this document are historical, not proof of current P0 leak safety.
+
 # Physical-device Android fail-closed test gate
 
 <!-- MBOX-BETA4-CURRENT-DOCS -->

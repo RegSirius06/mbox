@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	// Register before the first handshake so an early wake signal cannot terminate startup.
+	probeSigCh := make(chan os.Signal, 1)
+	signal.Notify(probeSigCh, syscall.SIGUSR1)
+	defer signal.Stop(probeSigCh)
 	if err := loadRuntimeConfig(runtimeConfigPath("/etc/mbox/client.json")); err != nil {
 		log.Fatalf("CONFIG: %v", err)
 	}
@@ -23,6 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	log.Printf("NET stage=PROCESS code=CORE_PID pid=%d", os.Getpid())
 	log.Printf(
 		"MBox client SOCKS listening on %s session=%s",
 		listen,
@@ -33,6 +38,19 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
+	// Android asks for one immediate authenticated probe on wake/Doze exit.
+	go func() {
+		for {
+			select {
+			case <-probeSigCh:
+				t.pokeHealth()
+			case <-t.done:
+				return
+			case <-shutdown:
+				return
+			}
+		}
+	}()
 
 	go func() {
 		select {

@@ -1,17 +1,13 @@
-# Stealth / camouflage
+# Маскировка трафика MBox beta.4.1
 
-<!-- MBOX-BETA4-CURRENT-DOCS -->
-> **Версионный контекст:** ниже могут быть исторические наблюдения beta.2/beta.3. В **beta 4** работают прямой QUIC/HTTP3, UDP приложений и резервный HTTPS/Cronet. Актуальные сведения: [Android](ANDROID_BETA4.md), [транспорты](BETA_4_TRANSPORTS.md), [границы безопасности](SECURITY.md). Подписанный APK уже собран и установлен, но физический аудит утечек ещё не завершён.
+[English](../STEALTH.md) · [Подробные ограничения](TRAFFIC_CAMOUFLAGE_LIMITS.md) · [Fingerprint](FINGERPRINT_BASELINE.md)
 
+## Текущая архитектура без заявлений об идентичности браузеру
 
+- **HTTPS:** Android выводит внешний TLS/HTTP через Chromium Cronet и HTTP/2/TCP; обычный сайт на REG.RU shared hosting/FastCGI может выступать публичным frontend. Это убирает стандартный Go TLS fingerprint на участке клиент→frontend, но Cronet-приложение необязательно идентично Chrome или Firefox.
+- **QUIC:** прямой native QUIC/HTTP3 через UDP до VPS из профиля. Сайт-обёртка REG.RU **не участвует** в этом маршруте.
+- **Внутри обоих транспортов:** Noise шифрует и аутентифицирует сессию. Настраиваемые пути/заголовки, padding и варьирование размеров и таймингов уменьшают жёсткость шаблона, но не доказывают невидимость для статистического DPI.
 
+Узел, терминирующий HTTPS на shared hosting, видит внешние HTTP-метаданные; от frontend до origin на VPS существует отдельное соединение. Noise-секреты FastCGI не передаются. Защита от активного probing, категоризации доменов, блокировок IP, политики провайдера и корреляции потоков требует измерений. Независимого аудита маскировки не было.
 
-[English](../STEALTH.md)
-
-MBox использует обычный HTTPS frontend на shared hosting, generic HTTP failures для invalid probes, случайные batch/padding/Noise chunk boundaries и jitter/backoff.
-
-В текущей Android-ветке внешний HTTPS делает Chromium Cronet, а не Go TLS/HTTP. Это убирает очевидный Go implementation fingerprint и делает сетевой профиль более browser-like, но не гарантирует точную идентичность Chrome и не обещает проход любого DPI.
-
-В прежней beta QUIC был выключен; в beta 4 есть отдельный QUIC/HTTP3 путь, а HTTPS использует HTTP/2. Go stack оставлен только для A/B/per-IP диагностики.
-
-Текущая Cronet-ветка ещё не проходила полевой тест в БС; MegaFon неизвестен, `.ru` — тестовая гипотеза.
+**Не подтверждено:** точное совпадение браузерного TLS/JA4 и HTTP2 fingerprint, защита от активных проверок, независимый захват физического трафика, работа во всех ограниченных сетях, долгий soak. См. [тесты fingerprint](FINGERPRINT_BASELINE.md) и [ограничения](TRAFFIC_CAMOUFLAGE_LIMITS.md).

@@ -1,5 +1,8 @@
 # Network diagnostics
 
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Current beta.4.1 context:** The client checks authenticated Noise session health and can recover QUIC without restarting the VPN; see [current status](BETA4_1_STATUS.md), [transport/camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md), and [test evidence](TESTING.md). Older beta.2/3/4 observations in this document are historical, not proof of current P0 leak safety.
+
 [Русская версия](ru/NETWORK_DIAGNOSTICS.md)
 
 MBox 1.0.0-beta.2+ can emit stage-oriented connection diagnostics without logging provisioning secrets, PSKs, private keys, request bodies, or full URLs.

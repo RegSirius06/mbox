@@ -1,3 +1,5 @@
+> Здесь описана beta.4; для кандидата beta.4.1 см. [автовосстановление](ANDROID_BETA4_1.md).
+
 # MBox beta 4 на Android — руководство
 
 [English](../ANDROID_BETA4.md) · [Транспорты](BETA_4_TRANSPORTS.md) · [Сообщить об ошибке](https://github.com/RegSirius06/mbox/issues)

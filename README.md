@@ -1,37 +1,38 @@
 # MBox
 
-[Русский](README.ru.md) · [Android](docs/ANDROID_BETA4.md) · [Changelog](CHANGELOG.md) · [Beta 4 notes](RELEASE_NOTES.md)
+[Русский](README.ru.md) · [Android](docs/ANDROID_BETA4_1.md) · [Security](docs/SECURITY.md) · [Changelog](CHANGELOG.md) · [Release notes](RELEASE_NOTES.md)
 
-**Current version: `1.0.0-beta.4` (Android ARM64, Android 10+).** MBox is an experimental encrypted VPN transport with application UDP support and selectable outer transports. A beta is **not** an independently audited security product and is not guaranteed to work on every network.
+**Current release candidate: `1.0.0-beta.4.1`** — Android 10+ / ARM64 / `io.mbox.android`. This is an experimental encrypted VPN client, not an independently audited security or censorship-resistance product. GitHub release publication and final production-signed APK checks are separate steps.
 
-## Android: three steps
+## Get connected
 
-1. Obtain `MBox-1.0.0-beta.4-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases). Check its SHA-256 and APK signing certificate against the [release notes](RELEASE_NOTES.md).
-2. Install MBox and import your private `mbox://` profile from **Settings → Paste profile link** or **Import from clipboard**. The link contains credentials: never post it in an issue.
-3. Select **Auto** and press **Connect**. Native QUIC requires the pair `transport.quic_url` and `transport.quic_ca_pem` in your profile. HTTPS-only profiles remain supported.
+1. Download the **production-signed** `MBox-1.0.0-beta.4.1-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **after the prerelease has been published**. Verify its actual SHA-256 and the signing-certificate fingerprint against the published release notes.
+2. Import your private `mbox://` profile in Settings. Never publish or transmit that URL in an issue: it contains reusable credentials.
+3. Choose **Auto** and tap **Connect**. The UI shows connection stages, the active transport, Noise verification, recovery and relevant failures. HTTPS-only beta.4 profiles remain supported.
 
-[Complete Android guide](docs/ANDROID_BETA4.md) · [Debug/release installation](android/README.md)
-
-## Traffic paths
+## Transport and recovery
 
 ```text
-                       +-- QUIC/HTTP3 over UDP --> QUIC gateway --+
-Android VpnService --> |                                          +--> MBox origin --> sing-box --> exit
-Noise/MBox client -----+-- Cronet HTTPS/HTTP2 --> frontend/FastCGI +
+Android VpnService / TUN / HEV -> MBox Go core / authenticated Noise
+                               +-- QUIC/HTTP3/UDP -> native gateway -> MBox origin
+                               +-- HTTPS/HTTP2/TCP -> Cronet -> optional REG.RU FastCGI -> MBox origin
 ```
 
-- **QUIC** uses external UDP but carries MBox over HTTP/3 **streams**, not QUIC DATAGRAM.
-- **HTTPS** uses TLS/HTTP2/TCP, optionally through REG.RU shared hosting/FastCGI. Application UDP is encapsulated in MBox records over this TCP path; it is **not** direct external UDP.
-- **Auto** tries QUIC first, then reconnects over HTTPS on failure. This is neither multipath nor seamless flow migration nor continuous latency racing.
+- **QUIC:** direct UDP to the profile's VPS address. MBox application UDP travels through reliable HTTP/3 **streams**, not QUIC DATAGRAM.
+- **HTTPS:** Cronet HTTP/2 over TLS/TCP through the configured endpoint (optionally shared-hosting FastCGI). Application UDP stays inside authenticated MBox records **over TCP**.
+- **Auto:** prefers QUIC at connection time; falls back to HTTPS after confirmed failure. This is not multipath or seamless stream migration. Established connections may reset on transport replacement. There is no claim of continuous non-disruptive QUIC reprobe while HTTPS is healthy.
+- **Liveness:** a session-specific authenticated Noise ping/pong is required for CONNECTED. The core also probes periodically (30 s with active streams, 90 s idle, jittered); Android requests an additional probe after wake/Doze exit and monitors the QUIC gateway and HEV.
 
-## Security limitations
+## Security and test status
 
-The Android client uses `VpnService`. Enabling Android **Always-on VPN** and **Block connections without VPN** (Lockdown) is recommended. Independent physical-interface DNS/IPv4/IPv6 leak tests, crash tests and long-duration soak tests are still incomplete. Signed binaries do not establish the absence of vulnerabilities. Private `mbox://` links contain reusable credentials.
+The maintainer reports passing connection, screen-off idle, Wi-Fi/mobile handover, total network outage and Auto checks on a beta.4.1 build. Go client/server and native QUIC race tests passed on Arch, and a debug APK built. **This does not prove the same matrix on the final production-signed APK**, nor that the original idle hang's physical root cause has been identified.
 
-See [security model](docs/SECURITY.md), [testing](docs/TESTING.md), and [known limits](docs/BETA4_RELEASE_STATUS.md). A deployment's test QUIC certificate expires **December 7, 2026**; its operator must renew the certificate and update client trust before that date.
+**P0 is not closed:** independent physical-interface IPv4/IPv6/DNS/TCP/UDP leak capture, Android Lockdown testing, controlled gateway failure, long soak and complete signed-APK acceptance are still pending. Always-on helps persistence; **Android Lockdown** is needed for OS-enforced traffic blocking when the VPN service itself is gone. No absolute no-leak, exact-browser-fingerprint or DPI-bypass guarantee is made.
 
-## Operators and contributors
+The operator's test QUIC certificate expires **December 7, 2026**. TLS rotation tooling is supplied but **not deployed**; a one-time authenticated migration from pinned self-signed leaf to trusted CA may be necessary. Never turn off certificate verification.
 
-[Architecture](docs/ARCHITECTURE.md) · [Operations](docs/ADMIN.md) · [REG.RU FastCGI](docs/REG_RU_SHARED_HOSTING.md) · [Transports](docs/BETA_4_TRANSPORTS.md) · [Android release engineering](docs/ANDROID_RELEASE_ENGINEERING.md) · [Contributing](CONTRIBUTING.md)
+See: [Android guide](docs/ANDROID_BETA4_1.md) · [Current status](docs/BETA4_1_STATUS.md) · [Test matrix](docs/TESTING.md) · [Camouflage limits](docs/TRAFFIC_CAMOUFLAGE_LIMITS.md) · [TLS rotation](docs/QUIC_TLS_ROTATION.md) · [Operations](docs/ADMIN.md).
 
-Field reports: [GitHub Issues](https://github.com/RegSirius06/mbox/issues). Never attach credentials, full provisioning links, private host configuration, bearer tokens, or unsanitized packet captures.
+Historical: [beta.4 release status](docs/BETA4_RELEASE_STATUS.md) is retained as an archive and does not describe this candidate.
+
+Please report reproducible issues with sanitized diagnostic stages only; never provide a full `mbox://`, private keys or raw sensitive logs.

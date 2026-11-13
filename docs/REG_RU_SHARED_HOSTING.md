@@ -1,5 +1,8 @@
 # REG.RU shared-hosting frontend guide
 
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Current beta.4.1 context:** The client checks authenticated Noise session health and can recover QUIC without restarting the VPN; see [current status](BETA4_1_STATUS.md), [transport/camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md), and [test evidence](TESTING.md). Older beta.2/3/4 observations in this document are historical, not proof of current P0 leak safety.
+
 <!-- MBOX-BETA4-CURRENT-DOCS -->
 > **Version context:** Some details below describe earlier beta.2/beta.3 implementations or historical observations. In **beta 4**, native QUIC/HTTP3 and application UDP are supported, and HTTPS/Cronet is the fallback. See [current Android guide](ANDROID_BETA4.md), [transport model](BETA_4_TRANSPORTS.md), and [security limits](SECURITY.md). The signed APK has been built and installed, but comprehensive physical leak testing remains incomplete.
 

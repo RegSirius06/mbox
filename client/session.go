@@ -56,9 +56,11 @@ func newTunnel() (*tunnel, error) {
 	log.Printf("NET stage=NOISE code=NOISE_OK")
 	log.Printf("NET stage=TUNNEL code=TUNNEL_ESTABLISHED session=%s handshake=Noise_NKpsk0_25519_AESGCM_SHA256 record=v%d", redactedSessionID(t.sid), cryptoRecordVersion)
 
+	t.healthWake = make(chan struct{}, 1)
 	go t.downDeliveryLoop()
 	go t.uploader()
 	go t.downloader()
+	go t.healthLoop()
 
 	return t, nil
 }
