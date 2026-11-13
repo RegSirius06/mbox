@@ -189,18 +189,19 @@ public class MainActivity extends Activity {
     private void showSettings() {
         final boolean hasQuic = QuicLabTransport.configured(this);
         final boolean debugLab = AppRuntime.udpLabEnabled(this);
+        final boolean manualTransport = debugLab && hasQuic;
         java.util.ArrayList<String> options = new java.util.ArrayList<>();
         options.add("Import from clipboard");
         options.add("Paste profile link");
-        if (hasQuic) options.add("Transport mode");
+        if (manualTransport) options.add("Transport mode");
         if (debugLab) options.add("UDP Lab: STUN through VPN");
         new AlertDialog.Builder(this)
                 .setTitle("MBox settings")
                 .setItems(options.toArray(new String[0]), (dialog, choice) -> {
                     if (choice == 0) importFromClipboard();
                     else if (choice == 1) showImportDialog();
-                    else if (choice == 2 && hasQuic) showTransportDialog();
-                    else if (debugLab && choice == (hasQuic ? 3 : 2)) runUdpProbe();
+                    else if (choice == 2 && manualTransport) showTransportDialog();
+                    else if (debugLab && choice == (manualTransport ? 3 : 2)) runUdpProbe();
                 })
                 .setNegativeButton("Close", null)
                 .show();
@@ -224,6 +225,7 @@ public class MainActivity extends Activity {
     }
 
     private void showTransportDialog() {
+        if (!AppRuntime.udpLabEnabled(this)) return;
         if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
             new AlertDialog.Builder(this)
                     .setMessage("Disconnect the VPN before changing transport mode.")

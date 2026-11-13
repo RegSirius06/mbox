@@ -11,6 +11,8 @@
 - Explicit VERIFYING/RECOVERING and finer connection stages in the app/notification. Native QUIC race CI and TLS integration tests added, release APK structural gates improved.
 - Operator-only QUIC CA/leaf rotation tooling and documentation supplied; **not automatically installed on VPS**.
 
+**Production UI:** no manual transport selector. Auto is enforced for QUIC-enabled profiles even if a prior debug build saved a manual choice; HTTPS-only profiles remain HTTPS-only. Manual transport selection is debug-only.
+
 **Compatibility:** no MBox Noise/wire change; beta.4 server, existing HTTPS-only and QUIC profiles remain supported subject to the existing certificate lifetime. Auto may break existing streams; it does not do seamless QUIC↔HTTPS migration. QUIC uses HTTP/3 reliable streams, not DATAGRAM; app UDP over HTTPS still travels over TCP.
 
 ## Evidence and known limits

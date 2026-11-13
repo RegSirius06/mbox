@@ -8,7 +8,7 @@
 
 1. Download the **production-signed** `MBox-1.0.0-beta.4.1-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **after the prerelease has been published**. Verify its actual SHA-256 and the signing-certificate fingerprint against the published release notes.
 2. Import your private `mbox://` profile in Settings. Never publish or transmit that URL in an issue: it contains reusable credentials.
-3. Choose **Auto** and tap **Connect**. The UI shows connection stages, the active transport, Noise verification, recovery and relevant failures. HTTPS-only beta.4 profiles remain supported.
+3. Tap **Connect**. Production APKs automatically prefer QUIC with HTTPS fallback when both are configured; HTTPS-only profiles continue to use HTTPS. Manual transport selection is available only in debug builds. The UI shows connection stages, the active transport, Noise verification, recovery and relevant failures.
 
 ## Transport and recovery
 

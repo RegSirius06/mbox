@@ -2,6 +2,7 @@
 
 - Authenticated Noise framePing/pong liveness with a deadline; Android VERIFYING and RECOVERING stages, gateway/HEV watchdog and TUN-preserving reconnect.
 - Same server wire protocol and HTTPS-only profiles as beta.4; native QUIC CI and TLS tests. Operator TLS rotation tooling provided but not installed.
+- Production APK uses Auto without exposing manual transport selection; old debug-mode overrides are ignored.
 - Maintainer reported five passing connection/recovery scenarios; independent physical leak capture, signed-APK acceptance and long soak remain pending.
 
 ## 1.0.0-beta.4 — Android beta / 2026-11-13

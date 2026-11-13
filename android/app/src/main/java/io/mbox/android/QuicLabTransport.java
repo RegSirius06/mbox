@@ -40,6 +40,8 @@ final class QuicLabTransport implements Closeable {
 
     static TransportPolicy.Mode mode(Context c) {
         if (!configured(c)) return TransportPolicy.Mode.HTTPS;
+        // Public APK ignores all old laboratory/manual transport preferences.
+        if (!AppRuntime.udpLabEnabled(c)) return TransportPolicy.Mode.AUTO;
         android.content.SharedPreferences prefs = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String selected = prefs.getString(MODE, null);
         if (selected != null) {
@@ -53,6 +55,9 @@ final class QuicLabTransport implements Closeable {
     }
 
     static TransportPolicy.Mode cycleMode(Context c) {
+        if (!AppRuntime.udpLabEnabled(c)) {
+            throw new SecurityException("Manual transport mode requires debug build");
+        }
         TransportPolicy.Mode current = mode(c);
         TransportPolicy.Mode next = current == TransportPolicy.Mode.AUTO ? TransportPolicy.Mode.HTTPS
                 : current == TransportPolicy.Mode.HTTPS ? TransportPolicy.Mode.QUIC
