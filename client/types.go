@@ -71,8 +71,8 @@ type tunnel struct {
 	failOnce sync.Once
 	fatalErr chan error
 
-	healthMu sync.Mutex
+	healthMu    sync.Mutex
 	healthNonce [16]byte
 	healthReply chan struct{}
-	healthWake chan struct{}
+	healthWake  chan struct{}
 }
