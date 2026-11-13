@@ -50,3 +50,6 @@ dist/
 android/app/src/debug/assets/mbox-quic-remote.txt
 android/app/src/debug/assets/mbox-quic-ca.pem
 android/app/src/debug/jniLibs/
+
+# Local diagnostic logs
+*.log
