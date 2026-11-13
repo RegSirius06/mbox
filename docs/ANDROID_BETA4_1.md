@@ -1,0 +1,17 @@
+# Android MBox beta.4.1: reconnect and status
+
+> **Field status (maintainer report):** five connectivity scenarios passed on beta.4.1; the exact production-signed prerelease and physical leak/Lockdown capture are still pending. See [evidence](BETA4_1_STATUS.md).
+
+**Not published; technical candidate only.** Min Android API 29, ARM64. Import existing HTTPS-only profiles normally. QUIC profiles still require a numeric IPv4 endpoint and valid `quic_ca_pem` trust. Signing identity must match the existing production signing key for an in-place update.
+
+Status states: `CONNECTING` builds the transport and authenticates Noise; `VERIFYING` waits for a fresh Noise Ping echo from the server (not the local SOCKS listening log); `CONNECTED` means at least one recent authenticated ping was confirmed; `RECOVERING` means a failed attempt is being restarted; `DISCONNECTED` means no available physical network; `FAILED` means unrecoverable local VPN setup; `STOPPED` means user/system stop. A device may briefly still display CONNECTED until the next bounded check completes. Foreground notification and in-app state are updated together through service state/notification calls.
+
+A periodic authenticated ping every 30 seconds with active streams or 90 seconds idle (jittered), plus an immediate wake/Doze-exit prompt monitor the existing MBox Noise session without pinging unrelated websites. At timeout, the Go core exits, so Android's supervisor can restart the same selected transport (or Auto HTTPS fallback). If the native QUIC gateway dies while the core stays alive, the Android supervisor notices directly. TUN and HEV remain installed on normal reconnect; TCP/UDP flows in progress can be interrupted. No seamless handover is promised. Android power limits mean a strict 30-second guarantee after deep sleep is impossible.
+
+Modes: Auto prefers QUIC, falls back to HTTPS after QUIC failure, and retries QUIC after cooldown only on subsequent reconnect/network change; it does **not** disrupt a healthy HTTPS session merely to test QUIC. Manual QUIC never switches to HTTPS; manual HTTPS never switches to QUIC. Application UDP inside HTTPS is encrypted MBox UDP over TCP, **not** direct UDP. QUIC uses HTTP/3 reliable streams, not DATAGRAM, so application-level head-of-line blocking characteristics are different but not eliminated everywhere. DNS, IPv6, packet loss, RTT and battery must be measured on real devices.
+
+Always-on VPN helps recovery if Android restarts the service, but is **not required** for recovery of a live but stuck QUIC session. Android's **Block connections without VPN** (Lockdown) is the OS mechanism for protection when the VPN service is not running; MBox does not replace Lockdown. It is not valid to claim physical no-leak guarantees without capturing the outgoing physical-interface packets.
+
+**Operator note:** the test QUIC certificate expires December 7, 2026. See [TLS rotation](QUIC_TLS_ROTATION.md) and migrate self-signed leaf profiles explicitly to a dedicated CA. Never bypass certificate or Noise verification.
+
+Manual acceptance: long Doze sleep, gateway process death, UDP block with TCP available, both pathways down, handover Wi-Fi→LTE→Wi-Fi, reboot/killed service, HEV death, Lockdown on/off, Always-on on/off, physical packet capture on a separate router. The maintainer reports that connection, screen-off idle, network switching, total network outage and Auto passed on a beta.4.1 build; the other listed controlled scenarios remain pending. Logs must be sanitized; do not share full `mbox://` links.

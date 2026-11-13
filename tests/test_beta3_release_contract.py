@@ -12,7 +12,7 @@ def test_release_does_not_package_debug_apk():
     assert 'app-debug.apk' not in script
 
 def test_release_notes_and_readmes_are_consistent():
-    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4'
+    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4.1'
     # Historical beta.3 notes remain historical; the new status docs are the
     # authoritative description of beta.4 until a signed release is published.
     for filename in ('docs/BETA4_RELEASE_STATUS.md',

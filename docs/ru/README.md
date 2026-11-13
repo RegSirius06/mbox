@@ -1,9 +1,11 @@
-# Документация MBox — 1.0.0-beta.4
+# Документация MBox — 1.0.0-beta.4.1
 
-[English](../README.md) · [Главная страница](../../README.ru.md)
+[English](../README.md) · [Главный README](../../README.ru.md)
 
-**Пользователям:** [Android](ANDROID_BETA4.md), [примечания к релизу](../../RELEASE_NOTES.ru.md), [транспорты](BETA_4_TRANSPORTS.md), [архитектура](ARCHITECTURE.md), [безопасность](SECURITY.md), [тестирование](TESTING.md), [статус](STATUS.md).
+**Актуально:** [Android](ANDROID_BETA4_1.md) · [Примечания к выпуску](../../RELEASE_NOTES.ru.md) · [Статус и доказательства](BETA4_1_STATUS.md) · [Тестирование](TESTING.md) · [Безопасность](SECURITY.md) · [Ограничения маскировки](TRAFFIC_CAMOUFLAGE_LIMITS.md).
 
-**Разработчикам и администраторам:** [сборка release APK](ANDROID_RELEASE_ENGINEERING.md), [администрирование сервера](ADMIN.md), [REG.RU](REG_RU_SHARED_HOSTING.md), [совместимость сетей](NETWORK_COMPATIBILITY.md), [полевые испытания](BETA_4_FIELD_TESTING.md), [чек-лист](../../RELEASE_CHECKLIST.ru.md).
+**Администратору:** [REG.RU shared hosting](REG_RU_SHARED_HOSTING.md) · [Origin/VPS](ADMIN.md) · [Ротация TLS-сертификатов](QUIC_TLS_ROTATION.md) · [Подпись Android](ANDROID_RELEASE_ENGINEERING.md) · [Релизный чек-лист](../../RELEASE_CHECKLIST.ru.md).
 
-Датированные аудиты и документы прежних beta сохранены как история проекта. Они могут описывать TCP-only реализацию до beta 4 и **не** заменяют актуальную схему Android.
+**Устройство системы:** [Архитектура](ARCHITECTURE.md) · [Транспорты](BETA_4_TRANSPORTS.md) · [TLS fingerprint](FINGERPRINT_BASELINE.md) · [Совместимость сетей](NETWORK_COMPATIBILITY.md) · [Проверка утечек](ANDROID_FAIL_CLOSED_TEST_PLAN.md) · [Проект QUIC DATAGRAM — не реализован](QUIC_DATAGRAM_DESIGN.md).
+
+Материалы с пометкой beta.2, beta.3, beta.4 и датированные аудиты — **история**, а не описание текущих гарантий beta.4.1. Русские и английские документы остаются раздельными; ссылка на перевод ведёт в отдельный файл.

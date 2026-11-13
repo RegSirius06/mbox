@@ -1,6 +1,8 @@
-# MBox Android 1.0.0-beta.4
+# MBox Android 1.0.0-beta.4.1
 
-[Русский](README.ru.md) · [User guide](../docs/ANDROID_BETA4.md) · [Release engineering](../docs/ANDROID_RELEASE_ENGINEERING.md)
+> **beta.4.1:** Verify the final production-signed APK from the exact release commit. Do not reuse the beta.4 file checksum. Source/device tests are not a physical leak audit.
+
+[Русский](README.ru.md) · [User guide](../docs/ANDROID_BETA4_1.md) · [Release engineering](../docs/ANDROID_RELEASE_ENGINEERING.md)
 
 **Android 10+ (API 29), ARM64.** Debug and release share a simplified main screen. Debug-only laboratory diagnostics remain in Settings.
 

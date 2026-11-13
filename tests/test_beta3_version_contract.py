@@ -7,9 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_beta4_version_matches_android_and_mboxctl():
     version = (ROOT / 'VERSION').read_text().strip()
-    assert version == '1.0.0-beta.4'
+    assert version == '1.0.0-beta.4.1'
     gradle = (ROOT / 'android/app/build.gradle').read_text()
-    assert re.search(r"\bversionName\s+'1\.0\.0-beta\.4'", gradle)
-    assert re.search(r'\bversionCode\s+7\b', gradle)
+    assert re.search(r"\bversionName\s+'1\.0\.0-beta\.4\.1'", gradle)
+    assert re.search(r'\bversionCode\s+8\b', gradle)
     cli = (ROOT / 'tools/mboxctl/mboxctl.py').read_text()
-    assert 'mboxctl 1.0.0-beta.4' in cli
+    assert 'mboxctl 1.0.0-beta.4.1' in cli

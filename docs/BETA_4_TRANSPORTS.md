@@ -1,3 +1,5 @@
+> Historical beta.4 behavior; see [beta.4.1 status](BETA4_1_STATUS.md) for candidate changes.
+
 # Beta 4 transport selection and UDP model
 
 [Русский](ru/BETA_4_TRANSPORTS.md) · [Android](ANDROID_BETA4.md)

@@ -1,48 +1,36 @@
-# MBox 1.0.0-beta.4 — prerelease
+# MBox v1.0.0-beta.4.1 — prerelease notes
 
-[Русская версия](RELEASE_NOTES.ru.md) · [Android](docs/ANDROID_BETA4.md) · [Source](https://github.com/RegSirius06/mbox)
+[Русский](RELEASE_NOTES.ru.md) · [Android](docs/ANDROID_BETA4_1.md) · [Test evidence](docs/BETA4_1_STATUS.md)
 
-**Channel:** beta/prerelease. **Target:** Android 10+ (API 29), ARM64. APK: `MBox-1.0.0-beta.4-android-arm64.apk`, package `io.mbox.android`, `versionCode=7`. Users import a separate private `mbox://` profile. The APK does **not** embed a deployment-specific QUIC address or certificate.
+**Android 10+; ARM64; package `io.mbox.android`; versionCode 8.** Production-signed prerelease is built by the owner from the reviewed Git commit. This file is **not** proof that a GitHub release or the final APK already exists.
 
-## New in beta 4
+## Fixed compared with beta.4
 
-- **Native QUIC/HTTP3 over external UDP** to the VPS gateway, using HTTP/3 streams rather than QUIC DATAGRAM.
-- **HTTPS/Cronet** via a reachable frontend/FastCGI with application UDP encapsulated inside authenticated MBox records over TCP.
-- **Auto** tries QUIC, falls back to HTTPS on failure and reevaluates the transport on network changes. HTTPS-only profiles remain valid.
-- **Simplified Android UI** with connection control, status and Settings. Diagnostic lab features remain separate.
-- Per-profile `transport.quic_url` (numeric IPv4 URL) and public X.509 `transport.quic_ca_pem`.
-- The local QUIC Unix socket no longer requires developer mode; unsafe diagnostic flags remain prohibited in release builds.
-- Signed release APK contains both `libmbox.so` and `libmboxquic.so`.
+- Local SOCKS readiness no longer substitutes for remote liveness: authenticated existing Noise `framePing`/pong is checked before reporting CONNECTED and periodically after that, including wake/Doze events.
+- Android separately checks the QUIC gateway and HEV while monitoring the Go core; transport reconnect normally retains the TUN, with bounded backoff and Auto fallback.
+- Explicit VERIFYING/RECOVERING and finer connection stages in the app/notification. Native QUIC race CI and TLS integration tests added, release APK structural gates improved.
+- Operator-only QUIC CA/leaf rotation tooling and documentation supplied; **not automatically installed on VPS**.
 
-## Evidence and limits
+**Compatibility:** no MBox Noise/wire change; beta.4 server, existing HTTPS-only and QUIC profiles remain supported subject to the existing certificate lifetime. Auto may break existing streams; it does not do seamless QUIC↔HTTPS migration. QUIC uses HTTP/3 reliable streams, not DATAGRAM; app UDP over HTTPS still travels over TCP.
 
-- On Arch: **110 passed** in `pytest`, `assembleRelease` succeeded, APK manifest/signature and native libraries checked.
-- APK installed successfully on Android as `1.0.0-beta.4` (`versionCode=7`).
-- **Debug build** tested on real networks: Wi-Fi QUIC, restricted MTS/MegaFon HTTPS, Auto, reconnects, Telegram.
-- These do **not** prove every feature works in the newly signed release build. Tele2 on a second device and comprehensive packet-capture leak testing remain pending.
+## Evidence and known limits
 
-## Artifact identity
+Maintainer reports five successful beta.4.1 functional checks: connection, screen-off idle, Wi-Fi/mobile handover, total loss of network and Auto. Go client/server and native QUIC race tests passed; Android debug APK built. Final commit CI, signed-release smoke test, controlled hung-gateway tests, physical packet capture (IPv4/IPv6/DNS/TCP/UDP), Lockdown, long soak and browser fingerprint comparison **remain unverified** as of the recorded report. No independent security audit; no guarantee of no leaks or universal DPI camouflage. See [testing](docs/TESTING.md) and [limits](docs/TRAFFIC_CAMOUFLAGE_LIMITS.md).
 
-Verified build APK SHA-256:
+The test QUIC TLS certificate expires **2026-12-07**. Replacing a pinned self-signed leaf requires an authenticated profile trust migration; never disable certificate verification. See [operator runbook](docs/QUIC_TLS_ROTATION.md).
 
-```text
-c3b1cbcb1b4b472aba35237657c2834a2aa8f032d861cbf817f5a5b9f18b43e1
+## Actual release artifact — populate from FINAL signed APK only
+
+- Filename: `MBox-1.0.0-beta.4.1-android-arm64.apk`
+- APK SHA-256: **Published alongside the signed APK as a `.sha256` release asset; verify the exact artifact**
+- APK signer SHA-256: **Verified out of band against the existing release signing certificate**
+- Source: **the Git tag `v1.0.0-beta.4.1`; verify its commit against GitHub CI**
+- Signed-release device tests: **see the release checklist and published evidence; do not infer success from this source file**
+
+```bash
+sha256sum dist/release/MBox-1.0.0-beta.4.1-android-arm64.apk
+MBOX_RELEASE_SIGNER_SHA256='<trusted-existing-pin>' \
+  ./tools/check-production-apk.sh dist/release/MBox-1.0.0-beta.4.1-android-arm64.apk
 ```
 
-APK signing certificate SHA-256 (a different digest):
-
-```text
-17fd9f930b8356beca8251dd215220771a3d020e56fb6a703b526c35cccd7586
-```
-
-Recheck and update the **APK** SHA-256 if the build is repeated; never publish a checksum for a different file. Keep using the same pinned signing certificate.
-
-## Security and known limitations
-
-- No independent security audit, complete DNS/IPv4/IPv6 physical leak capture or long soak. **No claim of leak-proof operation.**
-- Android Always-on VPN and Lockdown must be enabled in OS settings and validated per device.
-- Auto is reconnect failover, not multipath or seamless stream migration.
-- A test QUIC certificate expires **2026-12-07**. Its operator must renew it and redistribute authenticated trust; never bypass TLS verification.
-- Provisioning links are secrets. Android debug-signed APKs cannot be upgraded in place to the release-signed APK without a matching signer; back up the profile safely before uninstalling.
-
-[Android guide](docs/ANDROID_BETA4.md) · [Issue tracker](https://github.com/RegSirius06/mbox/issues)
+Publish a GitHub **prerelease** only after the [checklist](RELEASE_CHECKLIST.md) is reviewed. Do not attach a debug or unsigned APK. Never publish private `mbox://` links, PSK, private server keys or raw sensitive logs.

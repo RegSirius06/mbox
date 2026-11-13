@@ -384,13 +384,21 @@ public class MainActivity extends Activity {
                 status.setText("Waiting for physical network…");
                 break;
             case CONNECTING:
-                status.setText("Connecting…");
+                status.setText("Connecting via " + MBoxVpnService.getActiveTransport() +
+                        "\n" + MBoxVpnService.getConnectionPhase());
+                break;
+            case VERIFYING:
+                status.setText("Verifying remote " + MBoxVpnService.getActiveTransport() +
+                        " session…\n" + MBoxVpnService.getConnectionPhase());
                 break;
             case RECOVERING:
-                status.setText("Reconnecting…" + (MBoxVpnService.getLastError().isEmpty() ? "" : "\n" + MBoxVpnService.getLastError()));
+                status.setText("Recovering " + MBoxVpnService.getActiveTransport() +
+                        "\n" + MBoxVpnService.getConnectionPhase() +
+                        (MBoxVpnService.getLastError().isEmpty() ? "" : "\nCause: " + MBoxVpnService.getLastError()));
                 break;
             case CONNECTED:
-                status.setText("Connected via " + MBoxVpnService.getActiveTransport());
+                status.setText("Connected via " + MBoxVpnService.getActiveTransport() +
+                        "\n" + MBoxVpnService.getConnectionPhase());
                 break;
             case FAILED:
                 status.setText("Error: " + MBoxVpnService.getLastError());
@@ -417,10 +425,12 @@ public class MainActivity extends Activity {
             quicLabButton.setEnabled(vpnState == MBoxVpnService.State.STOPPED);
         }
         connectButton.setEnabled(hasProfile && vpnState != MBoxVpnService.State.CONNECTING &&
+                vpnState != MBoxVpnService.State.VERIFYING &&
                 vpnState != MBoxVpnService.State.RECOVERING &&
                 vpnState != MBoxVpnService.State.CONNECTED);
         disconnectButton.setEnabled(vpnState == MBoxVpnService.State.DISCONNECTED ||
                 vpnState == MBoxVpnService.State.CONNECTING ||
+                vpnState == MBoxVpnService.State.VERIFYING ||
                 vpnState == MBoxVpnService.State.RECOVERING ||
                 vpnState == MBoxVpnService.State.CONNECTED ||
                 vpnState == MBoxVpnService.State.FAILED);
@@ -428,6 +438,7 @@ public class MainActivity extends Activity {
             // Never display both connection actions together in the public UI.
             boolean running = vpnState == MBoxVpnService.State.DISCONNECTED ||
                     vpnState == MBoxVpnService.State.CONNECTING ||
+                    vpnState == MBoxVpnService.State.VERIFYING ||
                     vpnState == MBoxVpnService.State.RECOVERING ||
                     vpnState == MBoxVpnService.State.CONNECTED ||
                     vpnState == MBoxVpnService.State.FAILED;

@@ -1,9 +1,11 @@
-# MBox documentation — 1.0.0-beta.4
+# MBox documentation — 1.0.0-beta.4.1
 
 [Русский](ru/README.md) · [Project README](../README.md)
 
-**Start here:** [Android users](ANDROID_BETA4.md), [release notes](../RELEASE_NOTES.md), [transport behavior](BETA_4_TRANSPORTS.md), [architecture](ARCHITECTURE.md), [security boundaries](SECURITY.md), [testing](TESTING.md), [current status](STATUS.md).
+**Current:** [Android](ANDROID_BETA4_1.md) · [Release notes](../RELEASE_NOTES.md) · [Status and evidence](BETA4_1_STATUS.md) · [Testing](TESTING.md) · [Security](SECURITY.md) · [Camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md).
 
-For maintainers: [Android release engineering](ANDROID_RELEASE_ENGINEERING.md), [server operations](ADMIN.md), [REG.RU shared hosting](REG_RU_SHARED_HOSTING.md), [network compatibility](NETWORK_COMPATIBILITY.md), [field testing](BETA_4_FIELD_TESTING.md), [checklist](../RELEASE_CHECKLIST.md).
+**Operators:** [REG.RU shared hosting](REG_RU_SHARED_HOSTING.md) · [Origin/VPS administration](ADMIN.md) · [TLS certificate rotation](QUIC_TLS_ROTATION.md) · [Android release engineering](ANDROID_RELEASE_ENGINEERING.md) · [Release checklist](../RELEASE_CHECKLIST.md).
 
-Dated audit and earlier beta documents are retained as historical engineering records. They may describe the pre-beta.4 TCP-only implementation and must not be treated as the current Android transport contract.
+**Deep dives:** [Architecture](ARCHITECTURE.md) · [Transport semantics](BETA_4_TRANSPORTS.md) · [Fingerprint baseline](FINGERPRINT_BASELINE.md) · [Network compatibility](NETWORK_COMPATIBILITY.md) · [Leak test matrix](ANDROID_FAIL_CLOSED_TEST_PLAN.md) · [QUIC DATAGRAM proposal (not implemented)](QUIC_DATAGRAM_DESIGN.md).
+
+Documents explicitly marked beta.2, beta.3 or beta.4, and dated audit snapshots, are **historical**. They are retained for traceability and are not a statement about beta.4.1. The English and Russian documentation trees are separate; a language link only points to the counterpart.

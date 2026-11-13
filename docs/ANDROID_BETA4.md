@@ -1,3 +1,5 @@
+> This describes beta.4; for candidate beta.4.1 see [Android recovery](ANDROID_BETA4_1.md).
+
 # MBox beta 4 on Android — user guide
 
 [Русский](ru/ANDROID_BETA4.md) · [Transports](BETA_4_TRANSPORTS.md) · [Issues](https://github.com/RegSirius06/mbox/issues)

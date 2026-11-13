@@ -1,6 +1,11 @@
-# Безопасность MBox — границы защиты beta 4
+> Кандидат beta.4.1: [непроверенные гарантии](BETA4_1_STATUS.md), [ротация QUIC TLS](QUIC_TLS_ROTATION.md). P0 требует физического перехвата трафика.
 
-[English](../SECURITY.md) · [Android](ANDROID_BETA4.md) · [План испытаний](../ANDROID_FAIL_CLOSED_TEST_PLAN.md)
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Актуальный контекст beta.4.1:** клиент проверяет удалённый Noise heartbeat и восстанавливает QUIC без ручного выключения VPN. См. [статус](BETA4_1_STATUS.md), [пределы маскировки](TRAFFIC_CAMOUFLAGE_LIMITS.md) и [доказательства](TESTING.md). Старые наблюдения beta.2/3/4 — история, а не доказательство отсутствия утечек P0.
+
+# Безопасность MBox — границы защиты beta.4.1
+
+[English](../SECURITY.md) · [Android](ANDROID_BETA4_1.md) · [План испытаний](ANDROID_FAIL_CLOSED_TEST_PLAN.md)
 
 **Экспериментальный проект, независимый аудит не пройден.** Подписанный APK, зелёные тесты и статус «Подключено» сами по себе не доказывают отсутствия утечек.
 

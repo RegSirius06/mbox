@@ -1,36 +1,15 @@
-# Fingerprint и Cronet
+# Fingerprint Android HTTPS и QUIC — beta.4.1
 
-<!-- MBOX-BETA4-CURRENT-DOCS -->
-> **Версионный контекст:** ниже могут быть исторические наблюдения beta.2/beta.3. В **beta 4** работают прямой QUIC/HTTP3, UDP приложений и резервный HTTPS/Cronet. Актуальные сведения: [Android](ANDROID_BETA4.md), [транспорты](BETA_4_TRANSPORTS.md), [границы безопасности](SECURITY.md). Подписанный APK уже собран и установлен, но физический аудит утечек ещё не завершён.
+[English](../FINGERPRINT_BASELINE.md) · [Ограничения](TRAFFIC_CAMOUFLAGE_LIMITS.md)
 
+## Реальная реализация
 
+Внешний **HTTPS** в Android работает через bundled Chromium Cronet/HTTP2; Go выполняет Noise/MBox и передаёт HTTP через аутентифицированный локальный bridge. **QUIC** — отдельный native QUIC/HTTP3 UDP gateway, не использующий сайт REG.RU. Идентичность реальному браузеру для этих двух путей не доказана и не обещается.
 
+Ранние debug-тесты beta.4 у разработчика подтвердили Cronet HTTP/2 (`alpn=h2`) и Noise-аутентификацию. Это подтверждение выбора стека, **а не** сравнение JA4 с Chrome/Firefox. TLS Go из beta.2 и заявления старых лабораторных этапов, что QUIC выключен, остаются историей, не описанием beta.4.1.
 
-[English](../FINGERPRINT_BASELINE.md)
+## Контрольное сравнение — ожидается
 
-В beta.2 внешний HTTPS делал Go. В текущей ветке:
+На **одном телефоне, в одной сети и на контролируемом endpoint** сравнить (а) Chrome/Firefox, (б) HTTPS/Cronet beta.4.1 и (в) QUIC beta.4.1. Зафиксировать протокол, IP, TLS ClientHello и видимые SNI/ALPN, версию QUIC, повторное использование соединений, размеры/время/ошибки. Шифрованные HTTP/2 SETTINGS нужно исследовать на управляемом сервере, а не угадывать из pcap. Для REG.RU отдельно измерить клиент→frontend и frontend→origin, если имеется законный доступ.
 
-```text
-Go Noise/MUX/replay/ACK
-  -> authenticated localhost bridge
-  -> bundled Chromium Cronet
-  -> DNS/TCP/TLS/ALPN/HTTP2
-```
-
-Это намного лучше, чем просто подменить User-Agent: наружный TLS/HTTP принадлежит одному Chromium-derived стеку. На реальном телефоне подтверждены Cronet + `h2` + Noise + tunnel.
-
-Но MBox не заявляет точное совпадение с Chrome JA4/HTTP2 fingerprint. Нужен отдельный capture Chrome vs MBox Cronet vs MBox Go на одном телефоне/сети/endpoint. QUIC пока выключен.
-
-Regression check:
-
-```bash
-python tools/mbox-fingerprint-check.py --require-h2 mbox-cronet.log
-```
-
-Для A/B:
-
-```bash
-sudo mboxctl user link USER --android-http-stack cronet --network-debug --deterministic-transport
-```
-
-Deterministic mode фиксирует camouflage timing/size choices, но не криптографическую случайность Noise.
+Сохранять дату, Android, APN/оператора, режим, коммит и хеш APK; логи обезличивать. Заявление «полностью совпадает с браузером» допустимо только после реальных измерений. Сравнение при ограничениях проводить исключительно в разрешённых условиях.

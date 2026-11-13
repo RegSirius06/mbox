@@ -1,6 +1,11 @@
-# MBox security boundaries — beta 4
+> Candidate beta.4.1: [security verification pending](BETA4_1_STATUS.md) and [QUIC TLS operator runbook](QUIC_TLS_ROTATION.md). Physical leak capture is required before any P0 claim.
 
-[Русский](ru/SECURITY.md) · [Android guide](ANDROID_BETA4.md) · [Test plan](ANDROID_FAIL_CLOSED_TEST_PLAN.md)
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Current beta.4.1 context:** The client checks authenticated Noise session health and can recover QUIC without restarting the VPN; see [current status](BETA4_1_STATUS.md), [transport/camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md), and [test evidence](TESTING.md). Older beta.2/3/4 observations in this document are historical, not proof of current P0 leak safety.
+
+# MBox security boundaries — beta.4.1
+
+[Русский](ru/SECURITY.md) · [Android guide](ANDROID_BETA4_1.md) · [Test plan](ANDROID_FAIL_CLOSED_TEST_PLAN.md)
 
 **Experimental software; not independently security-audited.** Successful APK signing, a passing test suite, and a working VPN status do not prove absence of traffic leaks.
 

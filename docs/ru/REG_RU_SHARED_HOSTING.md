@@ -1,5 +1,8 @@
 # REG.RU shared hosting для MBox
 
+<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
+> **Актуальный контекст beta.4.1:** клиент проверяет удалённый Noise heartbeat и восстанавливает QUIC без ручного выключения VPN. См. [статус](BETA4_1_STATUS.md), [пределы маскировки](TRAFFIC_CAMOUFLAGE_LIMITS.md) и [доказательства](TESTING.md). Старые наблюдения beta.2/3/4 — история, а не доказательство отсутствия утечек P0.
+
 <!-- MBOX-BETA4-CURRENT-DOCS -->
 > **Версионный контекст:** ниже могут быть исторические наблюдения beta.2/beta.3. В **beta 4** работают прямой QUIC/HTTP3, UDP приложений и резервный HTTPS/Cronet. Актуальные сведения: [Android](ANDROID_BETA4.md), [транспорты](BETA_4_TRANSPORTS.md), [границы безопасности](SECURITY.md). Подписанный APK уже собран и установлен, но физический аудит утечек ещё не завершён.
 

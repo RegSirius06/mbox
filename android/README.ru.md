@@ -1,6 +1,8 @@
-# Android-клиент MBox 1.0.0-beta.4
+# Android-клиент MBox 1.0.0-beta.4.1
 
-[English](README.md) · [Руководство](../docs/ru/ANDROID_BETA4.md) · [Подпись и сборка](../docs/ru/ANDROID_RELEASE_ENGINEERING.md)
+> **beta.4.1:** проверяйте финальный APK с production-подписью из точного релизного коммита. Не копируйте SHA-256 файла beta.4. Тесты исходников и телефона — не физический аудит утечек.
+
+[English](README.md) · [Руководство](../docs/ru/ANDROID_BETA4_1.md) · [Подпись и сборка](../docs/ru/ANDROID_RELEASE_ENGINEERING.md)
 
 **Android 10+ (API 29), ARM64.** Один обычный интерфейс у debug и release; в debug дополнительные лабораторные функции находятся в настройках. Статус показывает подключение и текущий транспорт.
 

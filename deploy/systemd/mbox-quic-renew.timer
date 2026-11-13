@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily MBox QUIC TLS certificate renewal check
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=2h
+Persistent=true
+Unit=mbox-quic-renew.service
+
+[Install]
+WantedBy=timers.target

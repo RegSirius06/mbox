@@ -62,6 +62,19 @@ jobs:
           (cd server && go test -run=^$ -fuzz=FuzzControlQueryParser -fuzztime=10s .)
           (cd client && go test -run=^$ -fuzz=FuzzMuxFrameParser -fuzztime=10s .)
           (cd client && go test -run=^$ -fuzz=FuzzNoiseTransportRecord -fuzztime=10s .)
+  native-quic:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with: {go-version: '${{ env.GO_VERSION }}', check-latest: false}
+      - name: Format, vet, unit/integration tests and race
+        run: |
+          test -z "$(gofmt -l native-quic/*.go)"
+          cd native-quic
+          go vet ./...
+          go test -count=1 ./...
+          go test -race -count=1 ./...
   python:
     runs-on: ubuntu-24.04
     steps:
@@ -90,6 +103,12 @@ jobs:
           packages: 'platform-tools'
       - run: yes | sdkmanager --licenses >/dev/null; sdkmanager "platforms;android-${ANDROID_API}" "build-tools;${ANDROID_BUILD_TOOLS}"
       - run: cd android && ./tools/build-debug.sh
+      # This unsigned release build is for structural validation only.
+      # Production signing is performed offline with the owner's existing key.
+      - name: Build unsigned release variant
+        run: cd android && ./gradlew assembleRelease
+      - name: Validate unsigned release payload
+        run: python tools/check-unsigned-apk.py android/app/build/outputs/apk/release/app-release-unsigned.apk
   secret-scan:
     runs-on: ubuntu-24.04
     steps:

@@ -1,11 +1,9 @@
-# MBox status — 1.0.0-beta.4
+# MBox status — 1.0.0-beta.4.1
 
-[Русский](ru/STATUS.md) · [Release notes](../RELEASE_NOTES.md) · [Android](ANDROID_BETA4.md)
+[Русский](ru/STATUS.md) · [Full evidence](BETA4_1_STATUS.md) · [Release notes](../RELEASE_NOTES.md)
 
-**Current source version:** `1.0.0-beta.4` (`versionCode=7`). The maintainer built and installed a signed ARM64 Android release candidate; the artifact passed manifest, library and signing-certificate checks. The candidate APK SHA-256 is recorded in the release notes. GitHub publication and independent security verification are **separate** steps.
+**Source candidate:** `1.0.0-beta.4.1`, Android `versionCode=8`, application ID `io.mbox.android`. Beta.4 wire and HTTPS-only profiles remain compatible. Native QUIC now has an authenticated session heartbeat and independent Android gateway/HEV watchdog; Auto remains reconnection-based.
 
-**Observed debug field testing:** Wi-Fi QUIC, HTTPS on restricted MTS/MegaFon, Auto and reconnects, Telegram. **Release candidate testing:** signed APK installed and version confirmed; full transport acceptance on that artifact has not been logged. Tele2 second-device testing, 24–72h soak and independent physical leak capture are pending.
+**Maintainer-reported field result:** normal connection, screen-off idle, Wi-Fi/mobile handover, complete network loss and Auto passed on a beta.4.1 build. Client/server and native QUIC race tests passed, and a debug APK was built. Exact final production-signed APK acceptance and CI checks are still pending.
 
-**Security scope:** Noise/MBox authenticated encryption, system Android VpnService, bounded transport paths, release signer pin; **not** a guarantee of no leaks or untraceability. Enable Always-on/Lockdown and test after deployment. QUIC test certificate expires on **2026-12-07**.
-
-Historical beta.2/beta.3 engineering notes remain in Git history and dated audit documents. Do not treat old status text as a current implementation contract.
+**Release blockers / warnings:** no independent physical-interface no-leak capture or full Android Lockdown matrix; old pinned-leaf QUIC TLS certificate expires December 7, 2026, and its CA migration/renewal has not been deployed. Universal DPI resistance, browser-identical fingerprint and audit claims are unsupported. Historical beta.4, beta.3 and beta.2 records remain historical.
