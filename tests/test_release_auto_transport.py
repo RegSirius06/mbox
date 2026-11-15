@@ -9,7 +9,8 @@ def test_transport_selector_is_debug_only():
     ui = (ANDROID / "MainActivity.java").read_text()
     assert "final boolean manualTransport = debugLab && hasQuic;" in ui
     assert 'if (manualTransport) options.add("Transport mode");' in ui
-    assert 'else if (choice == 2 && manualTransport) showTransportDialog();' in ui
+    # Subscription endpoints use a name-based menu; not fixed numeric indices.
+    assert 'case "Transport mode": showTransportDialog();break;' in ui
     assert 'if (!AppRuntime.udpLabEnabled(this)) return;' in ui
 
 

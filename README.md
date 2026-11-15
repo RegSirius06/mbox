@@ -1,13 +1,21 @@
 # MBox
 
-[Русский](README.ru.md) · [Android](docs/ANDROID_BETA4_1.md) · [Security](docs/SECURITY.md) · [Changelog](CHANGELOG.md) · [Release notes](RELEASE_NOTES.md)
+[Русский](README.ru.md) · [Android](docs/ANDROID_MULTI_SUBSCRIPTIONS.md) · [Security](docs/SECURITY.md) · [Changelog](CHANGELOG.md) · [Release notes](RELEASE_NOTES.md)
 
-**Current release candidate: `1.0.0-beta.4.1`** — Android 10+ / ARM64 / `io.mbox.android`. This is an experimental encrypted VPN client, not an independently audited security or censorship-resistance product. GitHub release publication and final production-signed APK checks are separate steps.
+**Current prerelease: `1.0.0-beta.4.2`** — Android 10+ / ARM64 / `io.mbox.android`. Experimental self-hosted encrypted VPN with new web administration and HTTPS subscriptions; not independently audited.
+
+## What's new in beta.4.2
+
+**The headline change is MBox Web Admin:** routine users, subscriptions, ingress endpoints, configuration editing and diagnostics can be managed in a browser instead of requiring `mboxctl` over SSH. The CLI remains available for advanced and recovery operations; not every `mboxctl` command is exposed in the UI.
+
+The Android app now supports multiple HTTPS subscriptions and multiple selectable profiles per subscription, while retaining direct `mbox://` imports. In the maintainer's tested deployment, legacy direct profiles continue to work through **HTTPS/FastCGI**, but **older QUIC profiles require updated TLS trust/provisioning**. Existing apps do not understand the new subscription URLs.
+
+See [release notes](RELEASE_NOTES.md) and [beta.4.2 status](docs/BETA4_2_STATUS.md) for verified results and known limitations. This is a **beta prerelease, not RC1**.
 
 ## Get connected
 
-1. Download the **production-signed** `MBox-1.0.0-beta.4.1-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **after the prerelease has been published**. Verify its actual SHA-256 and the signing-certificate fingerprint against the published release notes.
-2. Import your private `mbox://` profile in Settings. Never publish or transmit that URL in an issue: it contains reusable credentials.
+1. Download the **production-signed** `MBox-1.0.0-beta.4.2-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **after the prerelease is published**. Verify its SHA-256 and signing certificate.
+2. Import a private **HTTPS subscription URL** (beta.4.2+) or an existing direct `mbox://` profile in Settings. Both contain sensitive access credentials; never publish them.
 3. Tap **Connect**. Production APKs automatically prefer QUIC with HTTPS fallback when both are configured; HTTPS-only profiles continue to use HTTPS. Manual transport selection is available only in debug builds. The UI shows connection stages, the active transport, Noise verification, recovery and relevant failures.
 
 ## Transport and recovery
@@ -31,7 +39,7 @@ The maintainer reports passing connection, screen-off idle, Wi-Fi/mobile handove
 
 The operator's test QUIC certificate expires **December 7, 2026**. TLS rotation tooling is supplied but **not deployed**; a one-time authenticated migration from pinned self-signed leaf to trusted CA may be necessary. Never turn off certificate verification.
 
-See: [Android guide](docs/ANDROID_BETA4_1.md) · [Current status](docs/BETA4_1_STATUS.md) · [Test matrix](docs/TESTING.md) · [Camouflage limits](docs/TRAFFIC_CAMOUFLAGE_LIMITS.md) · [TLS rotation](docs/QUIC_TLS_ROTATION.md) · [Operations](docs/ADMIN.md).
+See: [Android guide](docs/ANDROID_MULTI_SUBSCRIPTIONS.md) · [Current status](docs/BETA4_1_STATUS.md) · [Test matrix](docs/TESTING.md) · [Camouflage limits](docs/TRAFFIC_CAMOUFLAGE_LIMITS.md) · [TLS rotation](docs/QUIC_TLS_ROTATION.md) · [Operations](docs/ADMIN.md).
 
 Historical: [beta.4 release status](docs/BETA4_RELEASE_STATUS.md) is retained as an archive and does not describe this candidate.
 

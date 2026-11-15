@@ -95,7 +95,7 @@ final class QuicLabTransport implements Closeable {
                 // Public certificate and destination come from the imported profile,
                 // not from an APK-wide developer endpoint.
                 remote = profileQuic.url;
-                Files.write(ca.toPath(), profileQuic.caPem.getBytes(StandardCharsets.US_ASCII));
+                if (!profileQuic.caPem.isEmpty()) Files.write(ca.toPath(), profileQuic.caPem.getBytes(StandardCharsets.US_ASCII));
             } else {
                 if (!AppRuntime.udpLabEnabled(context)) throw new SecurityException("Profile has no QUIC configuration");
                 try (InputStream in = context.getAssets().open(CA_ASSET);
@@ -134,7 +134,8 @@ final class QuicLabTransport implements Closeable {
             broker = new QuicSocketProtector(network);
             String binary = context.getApplicationInfo().nativeLibraryDir + "/libmboxquic.so";
             child = new ProcessBuilder(binary, "client", "--unix-listen", socketFile.getAbsolutePath(),
-                    "--remote", remote, "--ca", ca.getAbsolutePath(),
+                    "--remote", remote, "--ca", ca.exists() ? ca.getAbsolutePath() : "",
+                    "--server-name", profileQuic != null ? profileQuic.serverName : "",
                     "--server-config", routesFile.getAbsolutePath(),
                     "--protect-socket", broker.socketAddress(),
                     "--protect-token", broker.token())

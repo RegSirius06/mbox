@@ -103,6 +103,9 @@ DEFAULT_AUTH = {
 }
 
 
+DEFAULT_QUIC = {"enabled":"false", "url":"", "server_name":"", "ca_file":""}
+
+
 DEFAULT_COVER = {
     "enabled": "false",
     "path": "/api/v1/assets/",
@@ -160,7 +163,7 @@ def load_conf(required=True):
             die(f"configuration not found: {CONF}; run 'mboxctl init'")
         return cp
     cp.read(CONF)
-    for section, defaults in (("camouflage", DEFAULT_CAMO), ("cover", DEFAULT_COVER), ("limits", DEFAULT_LIMITS), ("auth", DEFAULT_AUTH)):
+    for section, defaults in (("camouflage", DEFAULT_CAMO), ("cover", DEFAULT_COVER), ("quic", DEFAULT_QUIC), ("limits", DEFAULT_LIMITS), ("auth", DEFAULT_AUTH)):
         if section not in cp:
             cp[section] = defaults.copy()
         else:
@@ -553,6 +556,12 @@ def validate_config(cp):
         if section not in cp or not cp[section].get(key, "").strip():
             die(f"missing config: {section}.{key}")
     try:
+        quic_on = cp.getboolean("quic", "enabled", fallback=False)
+    except ValueError:
+        die("quic.enabled must be true or false")
+    if quic_on:
+        quic_profile_metadata(cp["quic"].get("url"), cp["quic"].get("ca_file"), cp["quic"].get("server_name"), configured=True)
+    try:
         cp.getboolean("server", "enable_udp_lab", fallback=False)
     except ValueError:
         die("server.enable_udp_lab must be true or false")
@@ -751,6 +760,7 @@ def init_cmd(args):
     }
     cp["camouflage"] = DEFAULT_CAMO.copy()
     cp["cover"] = DEFAULT_COVER.copy()
+    cp["quic"] = DEFAULT_QUIC.copy()
     cp["limits"] = DEFAULT_LIMITS.copy()
     cp["auth"] = DEFAULT_AUTH.copy()
     try:
@@ -860,6 +870,7 @@ def migrate_legacy(args):
             except Exception: pass
     cp["camouflage"] = cam
     cp["cover"] = DEFAULT_COVER.copy()
+    cp["quic"] = DEFAULT_QUIC.copy()
     cp["limits"] = DEFAULT_LIMITS.copy()
     cp["auth"] = DEFAULT_AUTH.copy()
     save_conf(cp); ensure_keys(cp)
@@ -1124,35 +1135,67 @@ def user_delete(args):
     print(f"Deleted {len(ids)} user(s).")
 
 
-def quic_profile_metadata(quic_url, quic_ca_file):
-    """Optional public per-deployment QUIC trust; never embed server private keys."""
-    if not quic_url and not quic_ca_file:
+def valid_quic_server_name(name):
+    if not isinstance(name, str) or len(name) > 253 or not name or name.endswith('.'):
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return False
+    except ValueError:
+        pass
+    labels=name.split('.')
+    if len(labels) < 2:
+        return False
+    return all(len(label) <= 63 and re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?',label) for label in labels)
+
+
+def quic_profile_metadata(quic_url, quic_ca_file, quic_server_name=None, configured=False):
+    """Render QUIC transport info. Prefer configured defaults to per-user CLI flags."""
+    if not quic_url and not quic_ca_file and not quic_server_name:
+        if configured:
+            die('quic.enabled requires quic.url and quic.server_name or quic.ca_file')
         return {}
-    if not quic_url or not quic_ca_file:
-        die('--quic-url and --quic-ca-file must be supplied together')
+    if not quic_url or (not quic_ca_file and not quic_server_name):
+        die('QUIC requires --quic-url plus --quic-server-name or --quic-ca-file')
     u=urlparse(quic_url)
     try:
         ipaddress.IPv4Address(u.hostname or '')
         port=u.port
         if (u.scheme != 'https' or port is None or not (1 <= port <= 65535) or u.username is not None or
-                u.password is not None or u.path not in ('','/') or
-                u.query or u.fragment or len(quic_url)>512):
+                u.password is not None or u.path not in ('','/') or u.query or u.fragment or len(quic_url)>512):
             raise ValueError('invalid endpoint')
     except (ValueError, TypeError) as e:
         die(f'QUIC endpoint must be https://IPv4:port with no query or path: {type(e).__name__}')
-    cert_file=Path(quic_ca_file)
-    if not cert_file.is_file() or cert_file.stat().st_size > 16384:
-        die('QUIC certificate file missing or too large (16KiB maximum)')
-    pem=cert_file.read_text(encoding='ascii')
-    try:
-        ssl.PEM_cert_to_DER_cert(pem)
-    except (ValueError, TypeError) as e:
-        die('Invalid QUIC X.509 certificate PEM')
-    return {'quic_url':quic_url, 'quic_ca_pem':pem}
+    obj={'quic_url':quic_url}
+    if quic_server_name:
+        if not valid_quic_server_name(quic_server_name):
+            die('quic.server_name must be an ASCII DNS hostname (not IP, port, URL, or wildcard)')
+        obj['quic_server_name']=quic_server_name
+    if quic_ca_file:
+        cert_file=Path(quic_ca_file)
+        if not cert_file.is_file() or cert_file.stat().st_size > 16384:
+            die('QUIC certificate file missing or too large (16KiB maximum)')
+        pem=cert_file.read_text(encoding='ascii')
+        try:
+            ssl.PEM_cert_to_DER_cert(pem)
+        except (ValueError, TypeError) as e:
+            die(f'Invalid QUIC X.509 certificate PEM: {type(e).__name__}')
+        obj['quic_ca_pem']=pem
+    return obj
+
+
+def resolve_quic_profile_options(cp, quic_url, quic_ca_file, quic_server_name):
+    # Any explicit CLI override must be complete; otherwise use the one source of truth.
+    if any(x is not None for x in (quic_url,quic_ca_file,quic_server_name)):
+        return quic_profile_metadata(quic_url,quic_ca_file,quic_server_name)
+    if cp.getboolean('quic','enabled',fallback=False):
+        quic=cp['quic']
+        return quic_profile_metadata(quic.get('url',''),quic.get('ca_file',''),quic.get('server_name',''),configured=True)
+    return {}
 
 
 def build_link(uid, name=None, network_debug=False, android_http_stack="cronet", deterministic_transport=False,
-               quic_url=None,quic_ca_file=None):
+               quic_url=None,quic_ca_file=None,quic_server_name=None):
     cp=load_conf(); r=get_user(uid)
     pub=read_hex32(cp["server"]["server_public_key"]).hex()
     payload={
@@ -1163,7 +1206,7 @@ def build_link(uid, name=None, network_debug=False, android_http_stack="cronet",
         "crypto":{"psk":bytes(r["psk"]).hex(),"server_public_key":pub},
         "camouflage":camo_dict(cp,include_timing=True),
     }
-    payload['transport'].update(quic_profile_metadata(quic_url,quic_ca_file))
+    payload['transport'].update(resolve_quic_profile_options(cp,quic_url,quic_ca_file,quic_server_name))
     diagnostics={}
     if network_debug:
         diagnostics["network_debug"]=True
@@ -1176,25 +1219,29 @@ def build_link(uid, name=None, network_debug=False, android_http_stack="cronet",
 
 
 def build_app_link(uid,name=None,network_debug=False,android_http_stack="cronet",deterministic_transport=False,
-                   quic_url=None,quic_ca_file=None):
+                   quic_url=None,quic_ca_file=None,quic_server_name=None):
     cp=load_conf(); public=urlparse(cp["server"]["public_url"])
     if public.scheme != "https" or not public.hostname: die("Verified Android App Links require HTTPS public_url")
-    nested=(build_link(uid,name,network_debug,android_http_stack,deterministic_transport,quic_url,quic_ca_file)
-            if quic_url or quic_ca_file else build_link(uid,name,network_debug,android_http_stack,deterministic_transport)); host=public.hostname
+    if quic_url is None and quic_ca_file is None and quic_server_name is None:
+        nested=build_link(uid,name,network_debug,android_http_stack,deterministic_transport)
+    else:
+        nested=build_link(uid,name,network_debug,android_http_stack,deterministic_transport,
+                          quic_url,quic_ca_file,quic_server_name)
+    host=public.hostname
     if public.port and public.port != 443: host=f"{host}:{public.port}"
     return f"https://{host}/mbox/provision#profile={quote(nested,safe='')}"
 
 
 def user_link(args):
-    print(build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file))
+    print(build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file,args.quic_server_name))
 
 
 def user_app_link(args):
-    print(build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file))
+    print(build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file,args.quic_server_name))
 
 
 def user_qr(args):
-    link=build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file) if args.app_link else build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file)
+    link=build_app_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file,args.quic_server_name) if args.app_link else build_link(args.id,args.name,args.network_debug,args.android_http_stack,args.deterministic_transport,args.quic_url,args.quic_ca_file,args.quic_server_name)
     if shutil.which("qrencode"):
         run(["qrencode","-t","ANSIUTF8",link])
     else:
@@ -1313,7 +1360,9 @@ def config_set(args):
     if "." not in args.key: die("key must be section.key")
     sec,key=args.key.split(".",1)
     if sec not in cp or key not in cp[sec]: die("unknown config key")
-    cp[sec][key]=args.value; validate_config(cp); save_conf(cp); render_runtime(restart=True); generate_relay_files(); generate_origin_files()
+    cp[sec][key]=args.value; validate_config(cp); save_conf(cp)
+    if sec != "quic":
+        render_runtime(restart=True); generate_relay_files(); generate_origin_files()
     print(f"{args.key}={args.value}")
 
 
@@ -2086,9 +2135,9 @@ def make_parser():
     q=us.add_parser("expiry"); q.add_argument("id"); q.add_argument("--days",type=int); q.add_argument("--at"); q.add_argument("--clear",action="store_true"); q.set_defaults(func=user_expiry)
     q=us.add_parser("renew"); q.add_argument("id"); q.add_argument("days",type=int); q.set_defaults(func=user_renew)
     q=us.add_parser("delete"); q.add_argument("ids",nargs="+"); q.add_argument("-y","--yes",action="store_true",help="delete without interactive confirmation"); q.add_argument("--purge",action="store_true",help=argparse.SUPPRESS); q.set_defaults(func=user_delete)
-    q=us.add_parser("link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="PEM server certificate to trust"); q.set_defaults(func=user_link)
-    q=us.add_parser("app-link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="PEM server certificate to trust"); q.set_defaults(func=user_app_link)
-    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--app-link",action="store_true"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="PEM server certificate to trust"); q.set_defaults(func=user_qr)
+    q=us.add_parser("link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="optional PEM CA to trust"); q.add_argument("--quic-server-name",help="DNS name verified in TLS (numeric QUIC endpoint remains unchanged)"); q.set_defaults(func=user_link)
+    q=us.add_parser("app-link"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="optional PEM CA to trust"); q.add_argument("--quic-server-name",help="DNS name verified in TLS"); q.set_defaults(func=user_app_link)
+    q=us.add_parser("qr"); q.add_argument("id"); q.add_argument("--name"); q.add_argument("--app-link",action="store_true"); q.add_argument("--network-debug",action="store_true"); q.add_argument("--android-http-stack",choices=["cronet","go"],default="cronet"); q.add_argument("--deterministic-transport",action="store_true"); q.add_argument("--quic-url",help="optional numeric HTTPS QUIC endpoint"); q.add_argument("--quic-ca-file",help="optional PEM CA to trust"); q.add_argument("--quic-server-name",help="DNS name verified in TLS"); q.set_defaults(func=user_qr)
     q=us.add_parser("export"); q.add_argument("ids",nargs="*"); q.add_argument("--all-enabled",action="store_true"); q.add_argument("--output",required=True); q.add_argument("--no-qr",action="store_true"); q.set_defaults(func=user_export)
     c=sp.add_parser("config"); cs=c.add_subparsers(dest="sub",required=True)
     q=cs.add_parser("show"); q.set_defaults(func=config_show)
@@ -2127,7 +2176,7 @@ def make_parser():
     q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
     q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
     q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.4.1"))
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.4.2"))
     return p
 
 

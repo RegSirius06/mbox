@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,7 +107,7 @@ func protectPacketSocket(packet *net.UDPConn, path, token string) error {
 }
 
 // Keep this signature separate from quicHTTPClient for existing Arch CLI.
-func quicProtectedClient(caFile, protectPath, token string) (*http3.Transport, error) {
+func quicProtectedClient(caFile, protectPath, token string, dnsName ...string) (*http3.Transport, error) {
 	if runtime.GOOS == "android" && protectPath == "" {
 		return nil, errors.New("Android QUIC requires socket protection")
 	}
@@ -114,7 +115,14 @@ func quicProtectedClient(caFile, protectPath, token string) (*http3.Transport, e
 	if err != nil {
 		return nil, err
 	}
-	tr := &http3.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool}}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool}
+	if len(dnsName) > 0 && dnsName[0] != "" {
+		if !validQUICDNSName(dnsName[0]) {
+			return nil, errors.New("invalid QUIC TLS DNS server name")
+		}
+		tlsConfig.ServerName = dnsName[0]
+	}
+	tr := &http3.Transport{TLSClientConfig: tlsConfig}
 	if protectPath != "" {
 		tr.Dial = protectedQUICDial(protectPath, token)
 	}
@@ -123,6 +131,31 @@ func quicProtectedClient(caFile, protectPath, token string) (*http3.Transport, e
 
 // Explicitly ensure no accidental direct UDP dial can bypass protection in
 // Android mode, including when the remote is not a numeric IP address.
+// DNS identity is verified independently of the numeric UDP destination.
+// Do not relax the Android protected-socket/numeric-IP invariant.
+func validQUICDNSName(name string) bool {
+	if len(name) < 3 || len(name) > 253 || net.ParseIP(name) != nil || strings.HasSuffix(name, ".") {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				(c >= '0' && c <= '9') || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func requireNumericRemoteOnAndroid(host string) error {
 	if runtime.GOOS != "android" {
 		return nil

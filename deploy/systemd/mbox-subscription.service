@@ -1,0 +1,29 @@
+[Unit]
+Description=MBox subscription issuer (loopback-only; Caddy HTTPS ingress)
+After=network.target
+ConditionPathExists=/etc/mbox/mbox.conf
+ConditionPathExists=/var/lib/mbox/users.db
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/mbox-subscription serve --port 18450
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mbox
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=1024
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

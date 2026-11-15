@@ -65,6 +65,7 @@ func run(args []string) error {
 		protectToken := fs.String("protect-token", "", "socket protection session token")
 		remote := fs.String("remote", "", "required https://host:port to MBox QUIC VPS")
 		ca := fs.String("ca", "", "optional trusted CA / self-signed root PEM")
+		serverName := fs.String("server-name", "", "DNS name for TLS verification when QUIC endpoint is an IP")
 		serverConfig := fs.String("server-config", "", "MBox server JSON for allowlisted paths")
 		pathsFlag := fs.String("paths", "/api/v1/session,/api/v1/events/,/api/v1/sync/,/api/v1/session/", "comma-separated open,up,down,close paths (omit if --server-config used)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -103,7 +104,7 @@ func run(args []string) error {
 				return errors.New("invalid --paths")
 			}
 		}
-		c, transport, err := quicHTTPClientWithProtection(*ca, *protectPath, *protectToken)
+		c, transport, err := quicHTTPClientWithProtection(*ca, *protectPath, *protectToken, *serverName)
 		if err != nil {
 			return err
 		}

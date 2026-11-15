@@ -190,8 +190,8 @@ func systemAndExtraRoots(caFile string) (*x509.CertPool, error) {
 func quicHTTPClient(caFile string) (*http.Client, *http3.Transport, error) {
 	return quicHTTPClientWithProtection(caFile, "", "")
 }
-func quicHTTPClientWithProtection(caFile, path, token string) (*http.Client, *http3.Transport, error) {
-	h3, err := quicProtectedClient(caFile, path, token)
+func quicHTTPClientWithProtection(caFile, path, token string, dnsName ...string) (*http.Client, *http3.Transport, error) {
+	h3, err := quicProtectedClient(caFile, path, token, dnsName...)
 	if err != nil {
 		return nil, nil, err
 	}

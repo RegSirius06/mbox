@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically compare Caddy certificate and QUIC certificate
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=mbox-quic-caddy-sync.service
+
+[Install]
+WantedBy=timers.target
