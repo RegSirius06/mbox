@@ -1,3 +1,14 @@
+## 1.0.0-beta.4.2 — web administration and subscriptions / 2026-11-15
+
+- **New web admin panel:** routine user management, expiry, concurrent-session limits, PSK rotation, subscription issuance/revocation and HTTPS ingress endpoints without direct SSH/`mboxctl` use. Batch actions, read-only diagnostics, and browser configuration editing with validation, backups and apply logic. The CLI remains for recovery and advanced tasks; a full 1:1 web UI mapping of every `mboxctl` command is **not claimed**.
+- **Persistent HTTPS subscriptions:** dynamic provisioning, one stable primary link per user on repeated viewing, token counts/revocation and configurable public URL (`/api/v2` supported). Changing the public path requires redistributing previously issued URLs.
+- **Android:** up to 12 subscriptions with up to 12 profiles each, endpoint selection, independent refresh/caching and existing direct `mbox://` support. Android 10+, ARM64, `versionCode=9`.
+- **Compatibility:** older direct profiles continue to connect through HTTPS/FastCGI. Old QUIC provisioning fails with the current endpoint's changed TLS trust configuration; refresh the profile to use QUIC. A Noise/wire protocol incompatibility is not established.
+- **Operator-tested:** web UI and public subscription endpoint, config/Caddy route update, HTTPS subscription import and connection, and in-place APK upgrade preserving app data.
+- **Known limits:** QR preview and Android/web UI need work; traffic quotas and registered-device limits are absent; multi-ingress failover and long soak/leak/Lockdown tests remain pending. Beta prerelease, not RC1.
+
+See [beta.4.2 release notes](RELEASE_NOTES.md).
+
 ## 1.0.0-beta.4.1 — prerelease candidate
 
 - Authenticated Noise framePing/pong liveness with a deadline; Android VERIFYING and RECOVERING stages, gateway/HEV watchdog and TUN-preserving reconnect.

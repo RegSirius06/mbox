@@ -1,0 +1,25 @@
+[Unit]
+Description=MBox Admin (SSH-only Unix socket)
+After=mbox-server.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+RuntimeDirectory=mbox-admin
+RuntimeDirectoryMode=0700
+EnvironmentFile=-/etc/mbox-admin/admin.env
+Environment=MBOX_CONFIG_BACKUPS=/var/lib/mbox/config-backups
+ExecStart=/usr/bin/python3 /usr/local/lib/mbox-admin/mbox_admin.py serve --socket /run/mbox-admin/admin.sock
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/mbox-admin /etc/mbox /var/lib/mbox /etc/caddy
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

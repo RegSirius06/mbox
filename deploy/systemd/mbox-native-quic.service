@@ -1,0 +1,25 @@
+[Unit]
+Description=MBox direct QUIC/HTTP3 gateway (opt-in)
+After=network-online.target mbox-server.service
+Requires=mbox-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mbox
+Group=mbox
+EnvironmentFile=/etc/mbox/quic/gateway.env
+ExecStart=/usr/local/bin/mbox-native-quic serve --bind ${MBOX_QUIC_BIND} --origin ${MBOX_QUIC_ORIGIN} --server-config /etc/mbox/server.json --secret-file /etc/mbox/origin-hmac.key --cert ${MBOX_QUIC_CERT} --key ${MBOX_QUIC_KEY}
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryAccounting=true
+MemoryHigh=256M
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

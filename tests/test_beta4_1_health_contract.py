@@ -35,5 +35,5 @@ def test_android_only_connected_after_remote_proof():
 def test_version_and_app_id():
     build = (ROOT/'android/app/build.gradle').read_text()
     assert "applicationId 'io.mbox.android'" in build
-    assert "versionCode 8" in build
-    assert "versionName '1.0.0-beta.4.1'" in build
+    assert "versionCode 9" in build
+    assert "versionName '1.0.0-beta.4.2'" in build
