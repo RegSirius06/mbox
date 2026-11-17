@@ -37,16 +37,15 @@ def test_old_subscription_files_preserved_and_no_unintended_revoke():
 
 def test_switch_profile_only_when_vpn_stopped_and_debug_transport_hidden():
     ui = (ANDROID / 'MainActivity.java').read_text()
-    assert 'final boolean manualTransport = debugLab && hasQuic;' in ui
-    assert 'if (manualTransport) options.add("Transport mode");' in ui
-    assert 'case "Transport mode": showTransportDialog();break;' in ui
+    assert 'private void showLabTools()' in ui
     assert 'if (!AppRuntime.udpLabEnabled(this)) return;' in ui
-    assert 'case "Subscriptions": showSubscriptions();break;' in ui
-    assert 'showSubscriptionEndpoints(String id)' in ui
+    assert 'this::showLabTools' in ui
+    assert 'showTransportDialog()' in ui
     assert 'SubscriptionStore.selectEndpoint(this,id,which)' in ui
     assert 'SubscriptionStore.importUrl(this, url)' in ui
     assert 'SubscriptionStore.refreshAll(this)' in ui
     assert 'SubscriptionStore.saveDirect(this, value)' in ui
+    assert 'SubscriptionStore.deleteSavedDirect(this)' in ui
 
 
 def test_no_fixed_subscription_url_path():

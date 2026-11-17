@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** For current beta.4.3 Android navigation, see [Getting started](GETTING_STARTED.md). The existing subscription behavior described below remains relevant.
+
 # Android: multiple MBox subscriptions (beta.4.2)
 
 This change adds local support for **up to 12 independent HTTPS subscriptions**, each providing **1–12 MBox ingress profiles**. It does not change the MBox wire protocol, server Noise identity or direct `mbox://` provisioning.

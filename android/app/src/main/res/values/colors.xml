@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mbox_bg">#F3F6FA</color>
+    <color name="mbox_surface">#FFFFFF</color>
+    <color name="mbox_surface_alt">#E8EFF6</color>
+    <color name="mbox_border">#D1DCE7</color>
+    <color name="mbox_text">#122033</color>
+    <color name="mbox_muted">#526479</color>
+    <color name="mbox_accent">#147D68</color>
+    <color name="mbox_danger">#963240</color>
+    <color name="mbox_on_danger">#FFFFFF</color>
+    <color name="mbox_icon_background">#000000</color>
+    <color name="mbox_primary_bg">#126E57</color>
+    <color name="mbox_on_primary_bg">#FFFFFF</color>
+    <color name="mbox_stop_bg">#23535B</color>
+    <color name="mbox_on_stop_bg">#FFFFFF</color>
+</resources>

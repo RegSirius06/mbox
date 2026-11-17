@@ -1,31 +1,23 @@
-# Android-клиент MBox 1.0.0-beta.4.1
+# Android-клиент MBox 1.0.0-beta.4.3
 
-> **beta.4.1:** проверяйте финальный APK с production-подписью из точного релизного коммита. Не копируйте SHA-256 файла beta.4. Тесты исходников и телефона — не физический аудит утечек.
+[English](README.md) · [Инструкция пользователя](../docs/ru/GETTING_STARTED.md) · [Сборка и подпись](../docs/ru/RELEASE_ENGINEERING_BETA43.md)
 
-[English](README.md) · [Руководство](../docs/ru/ANDROID_BETA4_1.md) · [Подпись и сборка](../docs/ru/ANDROID_RELEASE_ENGINEERING.md)
+Для пользователя: **Android 10+ (API 29), ARM64**. Получите подписанный APK из [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **после публикации**, импортируйте профиль `mbox://` или HTTPS-подписку и нажмите Connect.
 
-**Android 10+ (API 29), ARM64.** Один обычный интерфейс у debug и release; в debug дополнительные лабораторные функции находятся в настройках. Статус показывает подключение и текущий транспорт.
+Приложение поддерживает **AUTO (QUIC → HTTPS)**, русскую/английскую локализацию, системные светлую/тёмную темы, управление подписками, действие Disconnect в уведомлении и скрытую диагностику по семи нажатиям на MBox. QUIC использует streams, **не** DATAGRAM; UDP приложений в HTTPS-транспорте передаётся внутри шифрованных MBox-записей поверх TCP. Переключение может оборвать действующие сеансы.
 
-- **Auto:** предпочтительно QUIC, при ошибке fallback на HTTPS, при смене Wi-Fi/мобильной сети попытки переоцениваются.
-- **QUIC:** прямой внешний UDP/HTTP3 к endpoint из импортированного профиля. Внутри QUIC применяются streams, не DATAGRAM.
-- **HTTPS:** Cronet HTTP/2/TCP через frontend/FastCGI, UDP приложений внутри Noise/MBox поверх TCP.
-
-## Установка
-
-Скачайте подписанный APK из GitHub Releases. Если раньше стояла debug-сборка с другим сертификатом, Android выдаст `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. **Сначала** сохраните приватный профиль, после чего можно удалить старую debug-сборку и установить release. Обычные обновления со стабильным сертификатом выполняются без удаления данных.
-
-Для работы QUIC необходима пара полей профиля `transport.quic_url`, `transport.quic_ca_pem`. Старые HTTPS-only профили сохраняют возможность подключения. Настройки сервера **не зашиваются** в release APK.
-
-## Сборка на Arch
+**Разработчику на Arch:**
 
 ```bash
 cd ~/src/mbox-main
-./android/tools/build-debug.sh
-# Для подписанного выпуска (keystore и пароль никогда не коммитятся):
-export MBOX_RELEASE_KEYSTORE="$HOME/.local/share/mbox-signing/mbox-release.p12"
-export MBOX_RELEASE_KEY_ALIAS=mbox-release
-export MBOX_RELEASE_SIGNER_SHA256=17fd9f930b8356beca8251dd215220771a3d020e56fb6a703b526c35cccd7586
-./tools/build-release-apk.sh
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export PATH="$JAVA_HOME/bin:$PATH"
+python3 -m pytest -q tests
+GO111MODULE=off go test ./client ./server ./relay
+cd android
+./gradlew :app:assembleRelease
 ```
 
-VPN работает через `VpnService`/TUN/HEV и локальный Go core. Для защиты при обрыве включите системные Always-on и Lockdown, затем проверьте их. Полный аудит DNS/IPv4/IPv6 утечек не завершён.
+Gradle `assembleRelease` сам по себе **не подписывает** итоговый публичный APK. Для подписи из корня проекта используется `./tools/build-release-apk.sh` с переменными `MBOX_RELEASE_KEYSTORE`, `MBOX_RELEASE_KEY_ALIAS`, `MBOX_RELEASE_SIGNER_SHA256` и прежним приватным ключом. Полная команда, проверка `apksigner`, SHA-256 и `adb install -r` — в [релизном руководстве](../docs/ru/RELEASE_ENGINEERING_BETA43.md).
+
+**Не удаляйте старую beta.4.2** перед обновлением: приложение и credential storage могут потерять настройки. Не публикуйте debug APK, тестовые QUIC endpoints или профили с секретами.

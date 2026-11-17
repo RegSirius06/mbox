@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** Актуальная инструкция beta.4.3: [установка сервера](SERVER_QUICKSTART.md), [подготовка релиза](RELEASE_ENGINEERING_BETA43.md) и [публичный домен админки](MBOX_ADMIN_PUBLIC_ACCESS.md). Ниже могут быть команды для прежних версий.
+
 # Администрирование
 
 [English](../ADMIN.md)

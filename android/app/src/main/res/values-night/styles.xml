@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Follows uiMode; the VPN service is not recreated by Activity theme changes. -->
+    <style name="MBoxTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">@color/mbox_accent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:statusBarColor">@color/mbox_bg</item>
+        <item name="android:navigationBarColor">@color/mbox_bg</item>
+        <item name="android:windowBackground">@color/mbox_bg</item>
+    </style>
+    <style name="MBoxDialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/mbox_accent</item>
+        <item name="android:windowBackground">@color/mbox_surface</item>
+        <item name="android:textColorPrimary">@color/mbox_text</item>
+        <item name="android:textColorSecondary">@color/mbox_muted</item>
+    </style>
+</resources>

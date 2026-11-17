@@ -14,6 +14,19 @@ This command updates the FastCGI relay only. It does not modify Caddy, the origi
 - The *verified* RC1 FastCGI relay binary present on the admin VPS.
 - `/etc/mbox/mbox.conf` identifying the same `base_path` and origin HTTPS URL used by the running frontend. The deployer fails closed if the staged origin uses a different `base_path`.
 
+## Build a compatible relay
+
+Build from the complete repository, **including `common/originauth`**. Do not
+archive `relay/` alone, and do not reuse an old `/usr/local/lib/mbox/relay.fcgi`.
+
+```bash
+./tools/build-relay.sh /tmp/mbox-relay-new.fcgi
+```
+
+This runs Go tests and a config-schema self-check before publishing the binary.
+The SSH deployer then checks the uploaded candidate on REG.RU **before** changing
+live relay files. An old binary requiring `slot_lock_prefix` will be rejected.
+
 ## First: dry run
 
 ```bash
@@ -62,3 +75,15 @@ sudo mboxctl relay rollback \
 FTPS deployment is disabled in this HMAC-required release. Shared-hosting FTP users may be chrooted under their document root, so an FTPS script cannot reliably put the HMAC key in a directory that is not web-served. Use SSH or a separately audited provisioning mechanism instead.
 
 `mboxctl relay bundle` continues to create a *local* diagnostic/manual bundle, not an automatically safe-to-extract webroot payload. Never upload its key or unedited `relay.json` into a public document root. The secure SSH `relay deploy` path builds a deployment-specific configuration and keeps the key outside the webroot.
+
+
+<!-- MBOX-RELAY-RECYCLE-2026-11 -->
+### FastCGI worker recycling after deployment
+
+A successful relay upload replaces the executable on disk, but `mod_fcgid` may
+keep workers running the old (deleted) ELF. The deploy and rollback scripts now
+recycle **only stale relay workers belonging to the SSH account and the exact
+configured webroot**, before the HTTP health probe. The new workers start on
+the next request. An upload made manually with `scp` does **not** run this step;
+use `mboxctl relay deploy` for upgrades. In-flight HTTP requests on recycled
+workers may be interrupted; arrange a maintenance window for production.

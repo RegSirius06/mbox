@@ -246,6 +246,18 @@ func allowedPath(cfg *relayConfig, candidate string) bool {
 }
 
 func main() {
+	// A config-only preflight prevents deploying an incompatible FastCGI binary.
+	// Do not open a listener or contact the origin in this mode.
+	if len(os.Args) == 2 && os.Args[1] == "--check-config" {
+		if _, err := loadConfig(); err != nil {
+			log.Fatalf("CONFIG: %v", err)
+		}
+		fmt.Println("MBOX_RELAY_CONFIG_OK")
+		return
+	}
+	if len(os.Args) != 1 {
+		log.Fatal("usage: relay.fcgi [--check-config]")
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("CONFIG: %v", err)

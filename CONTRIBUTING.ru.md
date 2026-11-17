@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** Актуальный процесс выпуска beta.4.3: [подробная инструкция](docs/ru/RELEASE_ENGINEERING_BETA43.md) и [чек-лист](RELEASE_CHECKLIST.ru.md). Не коммитить подписывающие ключи, профили Android и секреты серверов.
+
 # Как помочь разработке MBox
 
 [English](CONTRIBUTING.md)

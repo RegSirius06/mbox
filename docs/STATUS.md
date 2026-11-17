@@ -1,9 +1,9 @@
-# MBox status — 1.0.0-beta.4.1
+# MBox status — 1.0.0-beta.4.3
 
-[Русский](ru/STATUS.md) · [Full evidence](BETA4_1_STATUS.md) · [Release notes](../RELEASE_NOTES.md)
+[Русский](ru/STATUS.md) · [Release notes](../RELEASE_NOTES.md) · [Release process](RELEASE_ENGINEERING_BETA43.md)
 
-**Source candidate:** `1.0.0-beta.4.1`, Android `versionCode=8`, application ID `io.mbox.android`. Beta.4 wire and HTTPS-only profiles remain compatible. Native QUIC now has an authenticated session heartbeat and independent Android gateway/HEV watchdog; Auto remains reconnection-based.
+**Source candidate:** 1.0.0-beta.4.3; Android `versionCode=10`, package `io.mbox.android`. Reported latest checks: 273 Python tests passed after UX8, Android release compilation passed again after UX9. The exact final production-signed APK needs its own acceptance evidence, checksum, device upgrade, and CI run before publication.
 
-**Maintainer-reported field result:** normal connection, screen-off idle, Wi-Fi/mobile handover, complete network loss and Auto passed on a beta.4.1 build. Client/server and native QUIC race tests passed, and a debug APK was built. Exact final production-signed APK acceptance and CI checks are still pending.
+**Deployed VPS:** Admin UX7 works, but `mboxctl version` was reported as beta.4.2. Origin update is a separate operation with a maintenance window and backup. The shared-host FastCGI frontend is also a separate deployment. Do not call the whole production setup upgraded until these components are checked.
 
-**Release blockers / warnings:** no independent physical-interface no-leak capture or full Android Lockdown matrix; old pinned-leaf QUIC TLS certificate expires December 7, 2026, and its CA migration/renewal has not been deployed. Universal DPI resistance, browser-identical fingerprint and audit claims are unsupported. Historical beta.4, beta.3 and beta.2 records remain historical.
+**Open security evidence:** physical IPv4/IPv6/DNS/UDP capture, Android Lockdown matrix, long soak, and complete TLS certificate rotation remain separate from a cosmetic prerelease. No independent security audit or universal DPI bypass claimed. REG.RU CPU metrics and Android core packets/bytes/streams counters are not integrated.

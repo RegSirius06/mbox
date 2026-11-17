@@ -36,6 +36,10 @@ import hev.htproxy.TProxyService;
 public class MBoxVpnService extends VpnService {
     public static final String ACTION_START = "io.mbox.android.START";
     public static final String ACTION_STOP = "io.mbox.android.STOP";
+    public static final String ACTION_OPEN_STATUS = "io.mbox.android.OPEN_STATUS";
+    // MBOX_BETA43_NOTIFICATION_DIAGNOSTICS: public, non-sensitive channel metadata.
+    public static String getNotificationChannelId() { return CHANNEL_ID; }
+    public static int getNotificationId() { return NOTIFICATION_ID; }
 
     public enum State { DISCONNECTED, CONNECTING, VERIFYING, CONNECTED, RECOVERING, FAILED, STOPPED }
 
@@ -53,6 +57,13 @@ public class MBoxVpnService extends VpnService {
     private static volatile String lastError = "";
     private static volatile String activeTransport = "";
     private static volatile String connectionPhase = "";
+    // MBOX_BETA43_POLISH: process-local, read-only diagnostics; no per-packet polling.
+    private static final java.util.concurrent.atomic.AtomicLong connectionAttempts =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong recoveryAttempts =
+            new java.util.concurrent.atomic.AtomicLong();
+    private static volatile long lastSuccessfulConnectionElapsed;
+
 
     private final AtomicBoolean stoppedLogged = new AtomicBoolean(true);
     private final AtomicLong underlyingChangeGeneration = new AtomicLong();
@@ -84,6 +95,14 @@ public class MBoxVpnService extends VpnService {
     public static String getConnectionPhase() {
         return connectionPhase;
     }
+    public static long getConnectionAttempts() { return connectionAttempts.get(); }
+    public static long getRecoveryAttempts() { return recoveryAttempts.get(); }
+    public static long getConnectedForSeconds() {
+        long since = lastSuccessfulConnectionElapsed;
+        return state == State.CONNECTED && since > 0
+                ? Math.max(0, (SystemClock.elapsedRealtime() - since) / 1000) : 0;
+    }
+
 
     @Override
     public void onCreate() {
@@ -213,11 +232,14 @@ public class MBoxVpnService extends VpnService {
                         " via " + path + "…");
 
                 try {
+                    connectionAttempts.incrementAndGet();
+                    if (hasConnected) recoveryAttempts.incrementAndGet();
                     Process process = startCoreTransport(path);
                     hasConnected = true;
                     long connectedAt = SystemClock.elapsedRealtime();
 
                     updateState(State.CONNECTED, "");
+                    lastSuccessfulConnectionElapsed = SystemClock.elapsedRealtime();
                     updatePhase("Encrypted remote session verified via " + path);
                     updateNotification("Connected via " + path + ": " + ProfileStore.profileName(this));
                     Log.i(TAG, "VPN CONNECTED");
@@ -389,17 +411,21 @@ public class MBoxVpnService extends VpnService {
     }
 
     private void ensureForeground(String text) {
-        Intent openApp = new Intent(this, MainActivity.class);
-        PendingIntent pending = PendingIntent.getActivity(
-                this, 0, openApp, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-
-        Notification notification = new Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("MBox")
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("MBox · VPN")
                 .setContentText(text)
-                .setContentIntent(pending)
+                .setContentIntent(notificationOpenIntent())
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setOnlyAlertOnce(true)
                 .setOngoing(true)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .build();
+                .addAction(android.R.drawable.ic_media_pause,
+                        UiLanguage.text(this, "Disconnect"), notificationStopIntent())
+                .setSmallIcon(android.R.drawable.stat_sys_download_done);
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        Notification notification = builder.build();
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED);
         } else {
@@ -416,13 +442,37 @@ public class MBoxVpnService extends VpnService {
         Log.i(TAG, "VPN PHASE " + safe);
     }
 
+    // MBOX_BETA43_RELEASE_UPDATES_FINAL: explicit in-app stop action.
+    private PendingIntent notificationStopIntent() {
+        Intent stop = new Intent(this, MBoxVpnService.class).setAction(ACTION_STOP);
+        return PendingIntent.getService(this, 73, stop,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    private PendingIntent notificationOpenIntent() {
+        Intent openApp = new Intent(this, MainActivity.class)
+                .setAction(ACTION_OPEN_STATUS)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        return PendingIntent.getActivity(this, 0, openApp,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
     private void updateNotification(String text) {
-        Notification notification = new Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("MBox")
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("MBox · VPN")
                 .setContentText(text)
+                .setContentIntent(notificationOpenIntent())
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setOnlyAlertOnce(true)
                 .setOngoing(true)
-                .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .build();
+                .addAction(android.R.drawable.ic_media_pause,
+                        UiLanguage.text(this, "Disconnect"), notificationStopIntent())
+                .setSmallIcon(android.R.drawable.stat_sys_download_done);
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
+        Notification notification = builder.build();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
                 .notify(NOTIFICATION_ID, notification);
     }

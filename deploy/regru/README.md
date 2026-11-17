@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** Beta.4.3: begin with [first server setup](../../docs/SERVER_QUICKSTART.md) or [the installer wizard](../../docs/BETA4_3_INSTALL_WIZARD.md). REG.RU shared hosting is separate from origin. No production relay is changed by documentation updates.
+
 # REG.RU shared-hosting deployment
 
 The REG.RU/shared-hosting frontend is a separate component from the MBox origin VPS and from the eventual Internet exit.

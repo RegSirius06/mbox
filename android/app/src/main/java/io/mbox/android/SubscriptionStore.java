@@ -295,6 +295,13 @@ final class SubscriptionStore {
         ProfileStore.commitCandidate(c,candidate);
         deactivate(c);
     }
+    /** Remove only the encrypted saved direct link, never any subscription token. */
+    static void deleteSavedDirect(Context c) throws Exception {
+        File file = new File(directory(c), DIRECT_FILE);
+        if (file.exists() && !file.delete())
+            throw new java.io.IOException("Cannot delete saved direct profile");
+    }
+
     static void deactivate(Context c) { prefs(c).edit().remove(ACTIVE).commit(); }
     static void clear(Context c) { deactivate(c); } // no deletion on direct import
 
@@ -310,14 +317,23 @@ final class SubscriptionStore {
         List<String> list = ids(c);
         if (list.isEmpty()) return "";
         String id = activeId(c);
-        if (id.isEmpty()) return list.size() + " подписок · активен прямой профиль";
+        if (id.isEmpty()) return UiLanguage.text(c,
+                list.size() + " subscriptions · direct profile active",
+                list.size() + " подписок · активен прямой профиль");
         try {
             JSONObject account = cached(c,id).optJSONObject("account");
-            if (account == null) return list.size() + " подписок · активная выбрана";
+            if (account == null) return UiLanguage.text(c,
+                    list.size() + " subscriptions · active selected",
+                    list.size() + " подписок · активная выбрана");
             String expires = account.isNull("expires_at") ? "" : account.optString("expires_at", "");
             int sessions = account.optInt("session_limit",0);
-            String limit = sessions == -1 ? "∞" : sessions == 0 ? "по умолчанию" : String.valueOf(sessions);
-            return list.size() + " подписок · сессии: " + limit + " · до " + (expires.isEmpty() ? "∞" : expires);
-        } catch(Exception ignored) { return list.size() + " подписок"; }
+            String limitEn = sessions == -1 ? "∞" : sessions == 0 ? "default" : String.valueOf(sessions);
+            String limitRu = sessions == -1 ? "∞" : sessions == 0 ? "по умолчанию" : String.valueOf(sessions);
+            return UiLanguage.text(c,
+                    list.size() + " subscriptions · sessions: " + limitEn + " · until " + (expires.isEmpty() ? "∞" : expires),
+                    list.size() + " подписок · сессии: " + limitRu + " · до " + (expires.isEmpty() ? "∞" : expires));
+        } catch(Exception ignored) {
+            return UiLanguage.text(c, list.size() + " subscriptions", list.size() + " подписок");
+        }
     }
 }

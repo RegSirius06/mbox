@@ -1,3 +1,13 @@
+<!-- MBOX_BETA43_DOCS10 -->
+## 1.0.0-beta.4.3 — Android, administration and installer update / 2026-11-17
+
+- Android: redesigned user interface, profiles/subscriptions screens, English/Russian language selection, Android system day/night theme and corrected button contrast; custom MBox app icon.
+- Notification behavior: open MBox, Disconnect action, optional in-VPN GitHub Releases update alerts; seven-tap read-only diagnostics.
+- Web administration: dashboard navigation; optional explicitly configured HTTPS domain while SSH tunnel remains recommended. No live REG.RU CPU provider API integration.
+- First-install `install.sh` interaction and optional REG.RU FastCGI wizard with dry-run and explicit DEPLOY; managed relay deploy/rollback can recycle stale FastCGI workers.
+- Unified source version `1.0.0-beta.4.3`, Android versionCode=10. Existing deployed origin must be upgraded **separately**; UI and documentation updates are not a production upgrade.
+- No intentional Noise/wire format, origin API or provisioning schema changes. Beta prerelease, not RC1; physical leak audit and all release acceptance checks are not claimed complete.
+
 ## 1.0.0-beta.4.2 — web administration and subscriptions / 2026-11-15
 
 - **New web admin panel:** routine user management, expiry, concurrent-session limits, PSK rotation, subscription issuance/revocation and HTTPS ingress endpoints without direct SSH/`mboxctl` use. Batch actions, read-only diagnostics, and browser configuration editing with validation, backups and apply logic. The CLI remains for recovery and advanced tasks; a full 1:1 web UI mapping of every `mboxctl` command is **not claimed**.

@@ -1,0 +1,17 @@
+# OPTIONAL: merge as a separate site block into /etc/caddy/Caddyfile.
+# Requires DNS, HTTPS and the opt-in admin systemd drop-in first.
+# Generate a different strong password: caddy hash-password
+# Replace BOTH panel.example.com occurrences and REPLACE_WITH_BCRYPT_HASH.
+panel.example.com {
+    # Second independent authentication barrier before MBox's admin login.
+    basic_auth {
+        operator REPLACE_WITH_BCRYPT_HASH
+    }
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy unix//run/mbox-admin/admin.sock {
+        # Make Host explicit; never trust a client-supplied X-Forwarded-Host.
+        header_up Host panel.example.com
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-Proto
+    }
+}

@@ -1,17 +1,131 @@
 <!doctype html>
+<!-- MBOX_BETA43_THEME_BRAND8 -->
 <html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MBox — Управление сервером</title>
 <style>
 :root{font-family:system-ui,-apple-system,sans-serif;color-scheme:light dark}body{max-width:1180px;margin:30px auto;padding:0 15px}h1{letter-spacing:-.04em}header{display:flex;align-items:center;justify-content:space-between}input,button,select{font:inherit;padding:9px;border:1px solid #8887;border-radius:6px}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}main{margin-top:28px}section{padding:16px;border:1px solid #8885;border-radius:10px;margin-bottom:18px}table{width:100%;border-collapse:collapse}td,th{padding:10px 7px;border-bottom:1px solid #8885;text-align:left}td:last-child{text-align:right}.quiet{opacity:.65}.error{color:#d45}.good{color:#1a8}.hidden{display:none}textarea{width:100%;min-height:100px;box-sizing:border-box;overflow-wrap:anywhere}#users{overflow-x:auto}.endpointcard{border:1px solid #8884;border-radius:8px;padding:12px;margin:8px 0}.endpointcard small{overflow-wrap:anywhere}.configfields{display:grid;gap:9px;margin:15px 0}.configrow{display:grid;grid-template-columns:minmax(160px,1fr) minmax(230px,2fr);gap:14px;align-items:center;border-bottom:1px solid #8883;padding-bottom:7px}.configrow label{font-weight:500}.configrow input{width:100%;box-sizing:border-box}pre{white-space:pre-wrap}@media(max-width:650px){.configrow{grid-template-columns:1fr}}small{display:block;margin:5px 0 14px}
+
+/* MBOX_BETA43_POLISH: visual changes only, existing authenticated API is untouched. */
+:root{color-scheme:dark;--page:#0b1018;--surface:#121b26;--border:#263446;--muted:#9baabd;--mint:#89e4c5}
+*{box-sizing:border-box}
+body{max-width:1560px;margin:0 auto;padding:28px clamp(16px,3vw,44px);background:var(--page);color:#edf3f8;font:15px system-ui,-apple-system,"Segoe UI",sans-serif}
+header{border-bottom:1px solid var(--border);padding-bottom:19px;gap:16px;flex-wrap:wrap}
+header h1{margin:0 0 8px;font-size:32px;letter-spacing:-1.2px}
+header small,.quiet,section small{color:var(--muted);opacity:1}
+main#app{margin-top:18px}
+#app section,#login{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:16px;box-shadow:0 12px 30px #05090e22}
+section h2{margin:0 0 18px;font-size:18px;letter-spacing:-.3px}
+button,select,input,textarea{font:inherit;border-radius:10px;border:1px solid #344355;background:#0f1823;color:#edf3f8;padding:11px 12px}
+button{background:#1d2e3a;cursor:pointer}button:hover:not(:disabled){border-color:#78bfad;background:#213b3d}
+button:focus-visible,a:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+#login button,#newuser button,#newbatch button,#endpointform button,#cfgSave{background:#89e4c5;color:#073b31;border-color:#89e4c5;font-weight:750}
+input::placeholder,textarea::placeholder{color:#8497a9}
+table{font-size:13px}thead{color:#a8bacb}td,th{border-bottom:1px solid var(--border)}
+.endpointcard{background:#162434;border:1px solid var(--border);border-radius:12px}
+#mbox-nav{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 22px}
+#mbox-nav button{padding:12px 17px;background:#172231;color:#b4c5d6;border-radius:11px}
+#mbox-nav button[aria-current="page"]{color:#081f1d;background:#89e4c5;border-color:#89e4c5;font-weight:750}
+.mbox-tab-hidden{display:none!important}
+#mbox-overview .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:14px 0}
+#mbox-overview .tile{border:1px solid #334456;border-radius:12px;background:#192938;padding:16px}
+#mbox-overview .tile b{display:block;font-size:14px;margin:7px 0}
+#mbox-overview .tile small{margin:0;font-size:12px}
+#mbox-overview .note{border-left:3px solid #89e4c5;padding:13px 16px;background:#1b2e33;border-radius:0 10px 10px 0;line-height:1.7}
+@media(max-width:800px){body{padding:16px}#app section,#login{padding:16px}#mbox-overview .tiles{grid-template-columns:1fr}#mbox-nav button{flex:1 1 auto}#mbox-nav{gap:6px}header h1{font-size:26px}}
+
+/* MBOX_BETA43_ADMIN_UX6 — local presentation only; no new requests. */
+:root{--mbox-bg:#0b1018;--mbox-panel:#121b26;--mbox-panel2:#182535;--mbox-edge:#263446;--mbox-ink:#edf3f8;--mbox-muted:#9baabd;--mbox-accent:#89e4c5;color-scheme:dark}
+body{max-width:none!important;width:auto;margin:0;padding:0 0 0 240px!important;background:var(--mbox-bg);color:var(--mbox-ink)}
+body>header,body>#message,body>#login,body>main#app{max-width:1350px;margin-left:auto!important;margin-right:auto!important;padding-left:clamp(16px,3vw,50px);padding-right:clamp(16px,3vw,50px)}
+body>header{padding-top:26px;padding-bottom:18px;border-color:var(--mbox-edge)}
+body>header h1{font-size:clamp(27px,3vw,38px)}
+body>#message{min-height:1.2em;margin-top:6px;margin-bottom:8px}
+body>main#app{margin-top:16px!important;padding-bottom:36px}
+body:has(#app.hidden){padding-left:0!important}
+body:has(#app.hidden) .mbox-rail{display:none}
+body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
+.mbox-rail{position:fixed;z-index:20;left:0;top:0;bottom:0;width:240px;background:#101823;border-right:1px solid var(--mbox-edge);padding:24px 15px;display:flex;flex-direction:column;gap:25px}
+.mbox-brand{display:flex;align-items:center;gap:12px;padding:0 10px}
+.mbox-mark{flex:0 0 40px;height:40px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#71dec0,#2b8f8b);color:#083a35;font-weight:900;font-size:22px}
+.mbox-brand strong{font-size:19px;letter-spacing:-.8px;display:block}
+.mbox-brand small{display:block;font-size:11px;color:var(--mbox-muted);margin-top:3px}
+.mbox-rail #mbox-nav{display:grid;gap:5px;align-content:start;flex:0 0 auto;margin:0}
+.mbox-rail #mbox-nav button{width:100%;display:flex;align-items:center;gap:11px;text-align:left;background:transparent;border:1px solid transparent;color:#aebdcd;font-weight:500;border-radius:10px;padding:12px 14px;min-width:0}
+.mbox-rail #mbox-nav button:hover{background:#1c2b39;color:#e8f5f3}
+.mbox-rail #mbox-nav button[aria-current=page]{background:#203b3d;border-color:#284a4a;color:#c1f3e4;font-weight:700}
+.mbox-rail .mbox-rail-foot{margin-top:auto;padding:16px 12px 0;border-top:1px solid var(--mbox-edge);color:var(--mbox-muted);font-size:12px;line-height:1.7}
+.mbox-rail .mbox-rail-foot span{color:var(--mbox-accent)}
+#mbox-overview{border:0!important;background:none!important;box-shadow:none!important;padding:0!important;margin:0 0 20px!important}
+#mbox-overview .mbox-home-h{margin:0 0 18px}
+#mbox-overview .mbox-home-h h2{font-size:24px;margin:0 0 7px;letter-spacing:-.9px}
+#mbox-overview .mbox-home-h p{color:var(--mbox-muted);margin:0;font-size:13px}
+#mbox-overview .mbox-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0 0 18px}
+#mbox-overview .mbox-metric{border:1px solid var(--mbox-edge);border-radius:16px;background:var(--mbox-panel);padding:20px;min-width:0}
+#mbox-overview .mbox-metric .caption{font-size:12px;color:var(--mbox-muted)}
+#mbox-overview .mbox-metric strong{display:block;margin:12px 0 4px;font-size:29px;letter-spacing:-1.1px;line-height:1.2}
+#mbox-overview .mbox-metric .desc{color:var(--mbox-muted);font-size:12px;line-height:1.55}
+#mbox-overview .mbox-metric .mbox-not-configured{font-size:16px;letter-spacing:0;color:#f4c48b}
+#mbox-overview .mbox-columns{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(250px,1fr);gap:16px}
+#mbox-overview .mbox-pane{border:1px solid var(--mbox-edge);border-radius:16px;background:var(--mbox-panel);padding:20px;min-width:0}
+#mbox-overview .mbox-pane h3{font-size:17px;margin:0 0 8px}
+#mbox-overview .mbox-pane p{color:var(--mbox-muted);font-size:13px;line-height:1.6}
+#mbox-overview .mbox-home-actions{display:flex;flex-wrap:wrap;gap:8px;margin:15px 0 4px}
+#mbox-overview .mbox-home-actions button{border-radius:10px;padding:10px 14px;background:#1d3438;border:1px solid #3d5b5a;color:#caeee4}
+#mbox-overview .mbox-home-actions button:first-child{background:#89e4c5;color:#073b31;font-weight:750;border-color:#89e4c5}
+#mbox-overview #mbox-recent-users{padding:0;margin:12px 0 0;list-style:none}
+#mbox-overview #mbox-recent-users li{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--mbox-edge);padding:11px 0;font-size:13px}
+#mbox-overview #mbox-recent-users .quiet{font-size:12px}
+#mbox-overview .mbox-home-note{border-left:3px solid var(--mbox-accent);background:#173031;padding:14px;border-radius:0 10px 10px 0;color:#d5f0e8;line-height:1.6;font-size:13px;margin-top:16px}
+#app section:not(#mbox-overview){border:1px solid var(--mbox-edge);background:var(--mbox-panel);box-shadow:none}
+#app .endpointcard{background:var(--mbox-panel2)}
+#app input,#app select,#app textarea{min-width:0;max-width:100%}
+#app #users{overflow:auto;max-width:100%}
+#app table{width:100%;font-size:13px}
+#app td:last-child{text-align:left;min-width:200px}
+#app td button{font-size:12px;padding:8px 9px}
+#app .configrow{grid-template-columns:minmax(150px,1fr) minmax(200px,2fr)}
+#app #secretbox{border-color:#528d7e;background:#13272a}
+#login{border-color:var(--mbox-edge)}
+@media(max-width:1050px){#mbox-overview .mbox-columns{grid-template-columns:1fr}#mbox-overview .mbox-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:800px){body{padding:0!important}.mbox-rail{position:sticky;top:0;left:auto;bottom:auto;width:100%;height:auto;padding:10px 12px;flex-direction:row;align-items:center;gap:10px;border-right:0;border-bottom:1px solid var(--mbox-edge)}.mbox-brand{padding:0}.mbox-mark{height:32px;flex-basis:32px;font-size:18px;border-radius:9px}.mbox-brand strong{font-size:15px}.mbox-brand small,.mbox-rail-foot{display:none!important}.mbox-rail #mbox-nav{display:flex;flex:1;overflow:auto;gap:4px;white-space:nowrap}.mbox-rail #mbox-nav button{width:auto;min-width:max-content;font-size:12px;padding:8px 10px}body>header{padding-top:16px}#mbox-overview .mbox-cards{grid-template-columns:repeat(2,minmax(0,1fr))}#app .configrow{grid-template-columns:1fr}#app section{padding:16px}}
+@media(max-width:460px){.mbox-rail{flex-wrap:wrap}.mbox-rail #mbox-nav{flex-basis:100%;width:100%}#mbox-overview .mbox-cards{grid-template-columns:1fr}#mbox-overview .mbox-pane{padding:15px}}
+
 </style>
-<header><div><h1>MBox <span class="quiet">beta.4.2</span></h1><small>Управление VPN · защищённый доступ</small></div><button id="logout" class="hidden">Выйти</button></header>
+<aside class="mbox-rail" aria-label="MBox Admin">
+  <div class="mbox-brand"><div class="mbox-mark" aria-hidden="true">M</div><div><strong>MBox</strong><small>CONTROL CENTER · beta.4.3</small></div></div>
+  <nav id="mbox-nav" aria-label="Sections">
+    <button type="button" data-mbox-tab="overview" aria-current="page">Обзор</button>
+    <button type="button" data-mbox-tab="clients">Клиенты</button>
+    <button type="button" data-mbox-tab="subscriptions">Подписки</button>
+    <button type="button" data-mbox-tab="configuration">Конфигурация</button>
+    <button type="button" data-mbox-tab="diagnostics">Диагностика</button>
+  </nav>
+  <div class="mbox-rail-foot"><span>●</span> Панель администратора<br>SSH (рекомендуется) · HTTPS-домен (по настройке)</div>
+</aside>
+<header><div><h1>MBox <span class="quiet">beta.4.3</span></h1><small>Управление VPN · защищённый доступ</small></div><button id="logout" class="hidden">Выйти</button></header>
 <p id="message" role="status"></p>
 <section id="login"><h2>Вход</h2><form id="loginform" class="row"><input id="password" type="password" autocomplete="current-password" required placeholder="Пароль администратора"><button>Войти</button></form></section>
 <main id="app" class="hidden">
-<section><h2>Создать клиента</h2><form id="newuser" class="row"><input name="id" required maxlength="63" pattern="[A-Za-z0-9._-]+" placeholder="client-001" aria-label="ID"><input name="max_sessions" type="number" min="1" max="10000" placeholder="Сессий (по умолчанию)" aria-label="Лимит сессий"><input name="days" type="number" min="1" max="3650" placeholder="Дней (без срока)" aria-label="Срок в днях"><button>Добавить</button></form><small>Один клиент = индивидуальные PSK и профиль. Лимит IP и квоты трафика пока не реализованы.</small></section>
-<section><h2>Создать несколько клиентов</h2><form id="newbatch" class="row"><input name="prefix" required maxlength="60" pattern="[A-Za-z0-9._-]+" value="user-" placeholder="user-" aria-label="Префикс"><input name="count" type="number" min="2" max="100" value="10" required aria-label="Количество"><input name="max_sessions" type="number" min="1" max="10000" placeholder="Сессий (по умолчанию)" aria-label="Лимит сессий"><input name="days" type="number" min="1" max="3650" placeholder="Дней (без срока)" aria-label="Срок в днях"><button>Создать группу</button></form><small>Создаёт от 2 до 100 пользователей с отдельными PSK: user-001, user-002 и т.д. Повторный префикс с существующими ID отклоняется. Лимит — одновременные сессии, а не зарегистрированные устройства.</small></section>
-<section><div class="row" style="justify-content:space-between"><h2>Клиенты</h2><button id="refresh">Обновить</button></div><div id="users"><table><thead><tr><th><input id="selectall" type="checkbox" aria-label="Выбрать всех"></th><th>ID</th><th>Статус</th><th>Онлайн</th><th>Сессии</th><th>До</th><th>Ссылок</th><th>Управление</th></tr></thead><tbody id="userrows"></tbody></table></div><div class="row"><button id="deletebatch">Удалить выбранных пользователей</button></div><small>Онлайн — число активных сессий, не уникальных IP. Трафик не показывается, пока нет серверного учёта. Новые профили используют QUIC из серверного конфига, если он включён; HTTPS остаётся запасным транспортом.</small></section>
-<section><h2>Подписки и точки входа</h2>
+  <section id="mbox-overview" data-mbox-panel="overview">
+  <div class="mbox-home-h"><h2>Обзор системы</h2><p>Только данные из существующего MBox API. Никаких демонстрационных цифр.</p></div>
+  <div class="mbox-cards">
+    <div class="mbox-metric"><span class="caption">Клиенты</span><strong id="mbox-stat-clients">—</strong><div class="desc">В текущей выдаче API</div></div>
+    <div class="mbox-metric"><span class="caption">Активные сессии</span><strong id="mbox-stat-sessions">—</strong><div class="desc">Сессии, не уникальные IP</div></div>
+    <div class="mbox-metric"><span class="caption">REG.RU · CPU / ресурсы</span><strong class="mbox-not-configured">Нет интеграции с REG.RU</strong><div class="desc">Это не ошибка настройки: MBox не получает CPU-статистику аккаунта REG.RU. Проверяйте её в личном кабинете хостинга. Автоматического опроса нет.</div><a href="https://help.reg.ru/support/hosting/dostupy-i-podklyucheniye-panel-upravleniya-ftp-ssh/kak-voyti-v-panel-upravleniya-hostingom" target="_blank" rel="noopener noreferrer">Как открыть панель хостинга REG.RU</a></div>
+  </div>
+  <div class="mbox-columns">
+    <div class="mbox-pane"><h3>Клиенты</h3><p>Последние записи в текущей выдаче (не история подключений).</p><ul id="mbox-recent-users"><li><span class="quiet">Данные появятся после входа.</span></li></ul>
+      <div class="mbox-home-actions"><button type="button" data-mbox-open="clients">Управлять клиентами</button><button type="button" data-mbox-open="subscriptions">HTTPS-входы</button></div></div>
+    <div class="mbox-pane"><h3>Транспорты и диагностика</h3><p><b>QUIC</b> — прямой UDP-транспорт при наличии подходящего клиентского профиля.</p><p><b>HTTPS / FastCGI</b> — альтернативный путь через настроенные веб-входы.</p><p>Статус отдельных входов здесь не измеряется. Для реальных проверок используй Doctor и Resources.</p>
+      <div class="mbox-home-actions"><button type="button" data-mbox-open="diagnostics">Открыть диагностику</button><button type="button" data-mbox-open="configuration">Конфигурация</button></div></div>
+  </div>
+  <div class="mbox-home-note">Рекомендуется SSH-доступ. По желанию администратор может включить HTTPS-домен через защищённый reverse proxy. Редактирование конфигурации сохраняет проверку ревизии и подтверждение APPLY. Секреты не отображаются в обзоре.</div>
+</section>
+
+<section data-mbox-panel="clients"><h2>Создать клиента</h2><form id="newuser" class="row"><input name="id" required maxlength="63" pattern="[A-Za-z0-9._-]+" placeholder="client-001" aria-label="ID"><input name="max_sessions" type="number" min="1" max="10000" placeholder="Сессий (по умолчанию)" aria-label="Лимит сессий"><input name="days" type="number" min="1" max="3650" placeholder="Дней (без срока)" aria-label="Срок в днях"><button>Добавить</button></form><small>Один клиент = индивидуальные PSK и профиль. Лимит IP и квоты трафика пока не реализованы.</small></section>
+<section data-mbox-panel="clients"><h2>Создать несколько клиентов</h2><form id="newbatch" class="row"><input name="prefix" required maxlength="60" pattern="[A-Za-z0-9._-]+" value="user-" placeholder="user-" aria-label="Префикс"><input name="count" type="number" min="2" max="100" value="10" required aria-label="Количество"><input name="max_sessions" type="number" min="1" max="10000" placeholder="Сессий (по умолчанию)" aria-label="Лимит сессий"><input name="days" type="number" min="1" max="3650" placeholder="Дней (без срока)" aria-label="Срок в днях"><button>Создать группу</button></form><small>Создаёт от 2 до 100 пользователей с отдельными PSK: user-001, user-002 и т.д. Повторный префикс с существующими ID отклоняется. Лимит — одновременные сессии, а не зарегистрированные устройства.</small></section>
+<section data-mbox-panel="clients"><div class="row" style="justify-content:space-between"><h2>Клиенты</h2><button id="refresh">Обновить</button></div><div id="users"><table><thead><tr><th><input id="selectall" type="checkbox" aria-label="Выбрать всех"></th><th>ID</th><th>Статус</th><th>Онлайн</th><th>Сессии</th><th>До</th><th>Ссылок</th><th>Управление</th></tr></thead><tbody id="userrows"></tbody></table></div><div class="row"><button id="deletebatch">Удалить выбранных пользователей</button></div><small>Онлайн — число активных сессий, не уникальных IP. Трафик не показывается, пока нет серверного учёта. Новые профили используют QUIC из серверного конфига, если он включён; HTTPS остаётся запасным транспортом.</small></section>
+<section data-mbox-panel="subscriptions"><h2>Подписки и точки входа</h2>
 <small><b>Показать подписку</b> — открывает одну и ту же постоянную ссылку, без повторной выдачи токена. Если раньше выпускались разные ссылки, они остаются действительными; столбец «Ссылок» показывает их количество. Кнопка «Отозвать подписки» отключает ВСЕ ссылки выбранного пользователя. После отзыва можно получить новую постоянную ссылку.</small>
 <small>Постоянная HTTPS-подписка; при её обновлении Android получает актуальные MBox-профили. Дополнительные точки входа (например, REG.RU и Beget) должны вести к одному origin с совместимыми camouflage-путями.</small>
 <div class="row"><button id="endpoints">Обновить точки входа</button></div>
@@ -22,7 +136,7 @@
 <input id="endpointurl" required type="url" placeholder="https://example.com/base" style="flex:1;min-width:250px" aria-label="HTTPS URL точки входа">
 <button>Добавить / сохранить</button></form>
 <small>Один вход — один публичный HTTPS-релей к origin. Для Beget укажи его рабочий FastCGI URL, а не адрес VPS. Записи обновляют подписки динамически.</small></section>
-<section id="settingspanel"><h2>Конфигурация MBox</h2>
+<section id="settingspanel" data-mbox-panel="configuration"><h2>Конфигурация MBox</h2>
 <small>Все параметры mbox.conf. Изменения применяются после проверки; для части параметров сервер будет перезапущен один раз. Секреты скрыты и не меняются, пока ты не введёшь новое значение.</small>
 <div class="row"><label for="cfgSection">Раздел</label><select id="cfgSection" aria-label="Раздел конфигурации"></select><button id="cfgReload">Обновить конфигурацию</button></div>
 <div id="cfgFields" class="configfields"></div>
@@ -30,7 +144,7 @@
 <p id="cfgStatus" role="status"></p>
 <small>Путь подписки: поле <code>subscription.public_url</code>. Например <code>https://lupka.zalupka.fun/api/v2</code>. При изменении старые ссылки перестанут открываться — новые адреса нужно отправить пользователям.</small>
 </section>
-<section><h2>Состояние системы</h2><div class="row"><select id="ctlcommand"><option value="doctor">Проверить состояние</option><option value="resources">Ресурсы и лимиты</option><option value="db-check">Проверить базу</option><option value="user-list">Список клиентов</option><option value="user-count">Количество клиентов</option><option value="version">Версия MBox</option></select><button id="runctl">Выполнить</button></div><pre id="ctloutput" style="white-space:pre-wrap"></pre><small>Проверки не изменяют настройки и не перезапускают VPN.</small></section>
+<section data-mbox-panel="diagnostics"><h2>Состояние системы</h2><div class="row"><select id="ctlcommand"><option value="doctor">Проверить состояние</option><option value="resources">Ресурсы и лимиты</option><option value="db-check">Проверить базу</option><option value="user-list">Список клиентов</option><option value="user-count">Количество клиентов</option><option value="version">Версия MBox</option></select><button id="runctl">Выполнить</button></div><pre id="ctloutput" style="white-space:pre-wrap"></pre><small>Проверки не изменяют настройки и не перезапускают VPN.</small></section>
 <section id="secretbox" class="hidden"><h2>Личная ссылка</h2><p class="error">Ссылка (профиль или подписка) даёт доступ к VPN. Не публикуйте и не отправляйте посторонним.</p><textarea id="link" readonly spellcheck="false"></textarea><div class="row"><button id="copy">Скопировать</button><button id="showqr">Показать QR</button><button id="close">Скрыть</button></div><img id="secretqr" class="hidden" alt="QR подписки или профиля" style="max-width:min(100%,360px);image-rendering:pixelated;margin-top:14px"></section>
 </main>
 <script>
@@ -96,9 +210,37 @@ $('newbatch').onsubmit=async e=>{
  }catch(err){setmsg(err.message,true)}
 };
 const cell=(tr,s)=>{let td=document.createElement('td');td.textContent=String(s);tr.appendChild(td);return td};
+
+// MBOX_BETA43_ADMIN_UX6: derive read-only overview from the existing /api/users response.
+// No polling, no additional API call, no profile URLs/PSK rendered.
+function mboxUpdateOverview(users){
+  const list = Array.isArray(users) ? users : [];
+  $('mbox-stat-clients').textContent = String(list.length);
+  let sessions = 0;
+  for (const user of list) {
+    const n = Number(user.online);
+    if (Number.isFinite(n) && n > 0) sessions += n;
+  }
+  $('mbox-stat-sessions').textContent = String(sessions);
+  const ul = $('mbox-recent-users');
+  ul.replaceChildren();
+  for (const user of list.slice(0,5)) {
+    const li = document.createElement('li');
+    const id = document.createElement('span');
+    id.textContent = String(user.id ?? '');
+    const state = document.createElement('span');
+    state.className = 'quiet';
+    state.textContent = user.expired ? 'Истёк' : user.enabled ? 'Активен' : 'Отключён';
+    li.append(id,state);ul.appendChild(li);
+  }
+  if (!list.length) {
+    const li=document.createElement('li');li.textContent='Клиентов пока нет';ul.appendChild(li);
+  }
+}
+
 async function refresh({quiet=false}={}){
  try{
-  const data=await req('/api/users');const body=$('userrows');body.replaceChildren();
+  const data=await req('/api/users');mboxUpdateOverview(data.users);const body=$('userrows');body.replaceChildren();
   for(const u of data.users){
    let tr=document.createElement('tr');const pick=document.createElement('td');const ck=document.createElement('input');ck.type='checkbox';ck.className='pickuser';ck.value=u.id;pick.appendChild(ck);tr.appendChild(pick);cell(tr,u.id);
    cell(tr,u.expired?'Истёк':u.enabled?'Активен':'Выключен');cell(tr,u.online);
@@ -275,6 +417,22 @@ $('showqr').onclick=async()=>{
 $('logout').onclick=async()=>{try{await req('/api/logout',{})}catch(e){}showLogin();setmsg('Выход выполнен')};
 $('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('link').value);setmsg('Ссылка скопирована')}catch(e){setmsg('Выделите и скопируйте ссылку вручную',true)}};
 $('close').onclick=()=>{$('link').value='';$('secretqr').removeAttribute('src');$('secretqr').classList.add('hidden');$('secretbox').classList.add('hidden')};
+
+// MBOX_BETA43_POLISH: navigation only; never changes API requests or privileges.
+function mboxAdminSelectTab(name){
+  document.querySelectorAll('[data-mbox-panel]').forEach(panel=>
+    panel.classList.toggle('mbox-tab-hidden',panel.dataset.mboxPanel!==name));
+  document.querySelectorAll('[data-mbox-tab]').forEach(button=>{
+    if(button.dataset.mboxTab===name)button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  });
+}
+document.querySelectorAll('[data-mbox-tab]').forEach(button=>
+  button.addEventListener('click',()=>mboxAdminSelectTab(button.dataset.mboxTab)));
+mboxAdminSelectTab('overview');
+document.querySelectorAll('[data-mbox-open]').forEach(button =>
+  button.addEventListener('click', () => mboxAdminSelectTab(button.dataset.mboxOpen)));
+
 auth();
 })();
 </script></html>

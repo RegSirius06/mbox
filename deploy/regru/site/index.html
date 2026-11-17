@@ -1,14 +1,36 @@
 <!doctype html>
 <html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Private Rooms</title>
+<meta name="color-scheme" content="dark">
+<title>Private Rooms — Invitation only</title>
 <style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d0f12;color:#e8e8e8;font:15px system-ui,sans-serif}.box{width:min(420px,90vw);padding:32px;border:1px solid #292d33;border-radius:14px;background:#15181d}h1{margin:0 0 12px;font-size:24px}p{margin:7px 0;color:#9ca3ad;line-height:1.5}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;margin-right:8px}
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141d2f;--border:#2a3650;--text:#f0f5fa;--muted:#a6b4c6;--accent:#64e5c3}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 80% 5%,#1b3040 0%,transparent 52%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center;padding:28px}
+main{width:min(100%,600px)}
+header{display:flex;align-items:center;gap:11px;margin-bottom:52px;font-weight:750;letter-spacing:.01em}
+mark{display:inline-grid;place-items:center;background:var(--accent);color:#09221f;width:36px;height:36px;border-radius:12px;font-weight:800;font-size:19px}
+small{display:block;color:var(--accent);font-size:.76rem;font-weight:750;letter-spacing:.18em;text-transform:uppercase}
+h1{font-size:clamp(2.6rem,8vw,4.8rem);line-height:1.04;letter-spacing:-.06em;margin:14px 0 20px;font-weight:770}
+p{color:var(--muted);margin:0;max-width:460px}
+section{background:rgba(20,29,47,.85);border:1px solid var(--border);border-radius:24px;padding:24px;margin-top:42px;box-shadow:0 14px 38px #0002}
+section strong{display:block;margin-bottom:6px;font-size:1rem}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--accent);margin-right:10px;box-shadow:0 0 0 5px #64e5c318}
+footer{margin-top:26px;color:#8090a7;font-size:.83rem}
+@media(max-width:480px){header{margin-bottom:44px}section{margin-top:34px}h1{letter-spacing:-.045em}}
+@media(prefers-reduced-motion:no-preference){section{animation:appear .45s ease both}@keyframes appear{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
 </style>
-<div class="box">
-<h1>Private Rooms</h1>
-<p><span class="dot"></span>Service online</p>
-<p>Secure temporary rooms.</p>
-<p>Invite only. No public directory.</p>
-</div>
+</head>
+<body>
+<main>
+<header><mark aria-hidden="true">P</mark><span>Private Rooms</span></header>
+<small>Members only</small>
+<h1>A quieter place<br>to connect.</h1>
+<p>Private spaces for invited guests. No public directory, no open registration, no unnecessary distractions.</p>
+<section aria-label="Access information"><strong><span class="dot" aria-hidden="true"></span>Invitation-based access</strong><p>If you have a valid invitation, open the address provided by your host.</p></section>
+<footer>Private Rooms · Restricted access</footer>
+</main>
+</body>
+</html>

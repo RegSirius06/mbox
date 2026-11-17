@@ -114,8 +114,14 @@ class AdminTest(unittest.TestCase):
 
     def test_cross_origin_and_host_rejected(self):
         self.login()
-        code, _, _ = self.req('POST','/api/action',{'action':'disable','id':'client1'},
-                              {'Origin':'https://other.example'})
+        # Origin is rejected before the server reads the POST body.
+        # Send headers only to avoid racing with the immediate HTTP 403.
+        code, _, _ = self.req('POST', '/api/action', headers={
+            'Origin': 'https://other.example',
+            'Content-Type': 'application/json',
+            'Content-Length': '0',
+        })
+        self.assertFalse(self.log.exists())
         self.assertEqual(code,403)
         code, _, _ = self.req('GET','/api/users',headers={'Host':'evil.example'})
         self.assertEqual(code,403)

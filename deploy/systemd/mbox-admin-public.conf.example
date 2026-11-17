@@ -1,0 +1,9 @@
+# OPTIONAL drop-in. Place at /etc/systemd/system/mbox-admin.service.d/public.conf.
+# Do NOT install unless you also configure a TLS + additional-auth reverse proxy.
+# Replace panel.example.com with your real DNS name.
+[Service]
+Environment=MBOX_ADMIN_PUBLIC_HOST=panel.example.com
+# The admin process still runs as root; its primary group becomes 'caddy'.
+# Only caddy can traverse the runtime dir and connect to the Unix socket.
+Group=caddy
+RuntimeDirectoryMode=0750

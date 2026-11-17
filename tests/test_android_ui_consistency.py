@@ -8,7 +8,8 @@ def test_same_simple_ui_in_debug_and_release():
     source=SOURCE.read_text()
     assert 'compactUi = true;' in source
     assert 'FLAG_DEBUGGABLE) == 0' not in source
-    assert 'if (debugLab) options.add("UDP Lab: STUN through VPN")' in source
+    assert 'private void showLabTools()' in source
+    assert 'this::showLabTools' in source
     assert 'AppRuntime.udpLabEnabled(this)' in source
 
 def test_profile_import_failures_are_visible():

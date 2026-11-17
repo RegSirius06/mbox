@@ -18,6 +18,24 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 
+# The production relay deployer executes a staged binary before installation.
+# A synthetic ELF header is not executable and is correctly rejected. Build
+# the actual Go FastCGI relay once per pytest process for integration tests.
+from functools import lru_cache
+import shutil
+import tempfile
+
+@lru_cache(maxsize=1)
+def _compiled_relay_bytes():
+    if not shutil.which('go'):
+        pytest.skip('Go toolchain is required for executable relay deployment tests')
+    with tempfile.TemporaryDirectory(prefix='mbox-relay-fixture-') as directory:
+        exe = Path(directory) / 'relay.fcgi'
+        env = dict(os.environ, CGO_ENABLED='0', GO111MODULE='off')
+        subprocess.run(['go', 'build', '-trimpath', '-o', str(exe), '.'],
+                       cwd=ROOT/'relay', env=env, check=True, capture_output=True, timeout=120)
+        return exe.read_bytes()
+
 def fixture_plan(tmp_path, monkeypatch):
     host = tmp_path / 'server'
     host.mkdir()
@@ -36,7 +54,7 @@ def fixture_plan(tmp_path, monkeypatch):
         'origin_hmac_secret_file': str(key),
     }}))
     binary = host / 'relay.fcgi'
-    binary.write_bytes(b'\x7fELF' + b'new-relay-binary' * 10_000)
+    binary.write_bytes(_compiled_relay_bytes())
     cfg = {
         'server': {
             'base_path': '/fixed-path',

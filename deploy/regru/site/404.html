@@ -1,12 +1,14 @@
 <!doctype html>
 <html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Room unavailable</title>
+<meta name="color-scheme" content="dark">
+<title>Room unavailable — Private Rooms</title>
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d0f12;color:#eee;font:15px system-ui,sans-serif}.b{width:min(400px,90vw);padding:28px;border:1px solid #292d33;border-radius:14px;background:#15181d}h1{font-size:22px;margin:0 0 10px}p{color:#9ca3ad;line-height:1.5}
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141d2f;--border:#2a3650;--text:#f0f5fa;--muted:#a6b4c6;--accent:#64e5c3}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px;background:radial-gradient(ellipse at 80% 5%,#1b3040 0%,transparent 52%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}main{width:min(100%,600px)}a{color:var(--accent)}.brand{font-weight:750;letter-spacing:.01em}h1{font-size:clamp(2.5rem,8vw,4rem);letter-spacing:-.06em;line-height:1.06;margin:58px 0 18px}p{color:var(--muted);max-width:470px}small{display:block;color:var(--accent);font-size:.76rem;letter-spacing:.16em;text-transform:uppercase;font-weight:750}
 </style>
-<div class="b">
-<h1>Room unavailable</h1>
-<p>This room does not exist or the invite has expired.</p>
-</div>
+</head>
+<body><main><div class="brand">Private Rooms</div><h1>Room unavailable.</h1><small>404 · Not found</small><p>This address doesn’t lead to an available room. Check your invitation or return to the <a href="/">home page</a>.</p></main></body>
+</html>
