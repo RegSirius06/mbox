@@ -1,26 +1,23 @@
-# MBox Android 1.0.0-beta.4.1
+# MBox Android 1.0.0-beta.4.3
 
-> **beta.4.1:** Verify the final production-signed APK from the exact release commit. Do not reuse the beta.4 file checksum. Source/device tests are not a physical leak audit.
+[Русский](README.ru.md) · [User guide](../docs/GETTING_STARTED.md) · [Build and signing](../docs/RELEASE_ENGINEERING_BETA43.md)
 
-[Русский](README.ru.md) · [User guide](../docs/ANDROID_BETA4_1.md) · [Release engineering](../docs/ANDROID_RELEASE_ENGINEERING.md)
+**Android 10+ (API 29), ARM64.** Once published, install the production-signed APK from [GitHub Releases](https://github.com/RegSirius06/mbox/releases), import an administrator-issued `mbox://` profile or HTTPS subscription, and tap Connect.
 
-**Android 10+ (API 29), ARM64.** Debug and release share a simplified main screen. Debug-only laboratory diagnostics remain in Settings.
+The app supports **AUTO (QUIC → HTTPS)**, English/Russian UI, Android system light/dark mode, multi-subscription management, a Disconnect notification action, and hidden diagnostics after seven taps on MBox. QUIC uses streams (**not** DATAGRAM); application UDP over HTTPS is carried inside authenticated MBox records over TCP. Switching transports can interrupt active application streams.
 
-- **Auto:** QUIC preferred; HTTPS on QUIC failure, reevaluated after network changes.
-- **QUIC:** direct external UDP/HTTP3, using streams (not DATAGRAM), with endpoint/certificate from the profile.
-- **HTTPS:** Cronet HTTP/2/TCP via the configured frontend and FastCGI; application UDP inside encrypted MBox records over TCP.
-
-Install the signed APK from the project's GitHub Releases. A debug APK with a different signer cannot be updated in place: save your secret profile *before* uninstalling. Per-profile `transport.quic_url` and `transport.quic_ca_pem` are needed for QUIC; HTTPS-only profiles remain valid. The release APK contains no deployment-specific QUIC address or certificate.
-
-## Build on Arch
+**For developers on Arch:**
 
 ```bash
 cd ~/src/mbox-main
-./android/tools/build-debug.sh
-export MBOX_RELEASE_KEYSTORE="$HOME/.local/share/mbox-signing/mbox-release.p12"
-export MBOX_RELEASE_KEY_ALIAS=mbox-release
-export MBOX_RELEASE_SIGNER_SHA256=17fd9f930b8356beca8251dd215220771a3d020e56fb6a703b526c35cccd7586
-./tools/build-release-apk.sh
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+export PATH="$JAVA_HOME/bin:$PATH"
+python3 -m pytest -q tests
+GO111MODULE=off go test ./client ./server ./relay
+cd android
+./gradlew :app:assembleRelease
 ```
 
-Android `VpnService`/TUN/HEV forwards through the local Go core. Enable OS Always-on VPN and Lockdown, then test the behavior on your device. Independent physical-interface leak tests remain incomplete.
+Gradle `assembleRelease` alone does **not sign** the production artifact. Run `./tools/build-release-apk.sh` from the project root with `MBOX_RELEASE_KEYSTORE`, `MBOX_RELEASE_KEY_ALIAS`, and `MBOX_RELEASE_SIGNER_SHA256` set to the existing production identity. Full commands, `apksigner`/checksum checks, and `adb install -r` are in [release engineering](../docs/RELEASE_ENGINEERING_BETA43.md).
+
+**Never uninstall beta.4.2 merely to upgrade**; stored credentials and profiles may be lost. Do not publish debug APKs, personal test QUIC endpoints, or profiles containing credentials.

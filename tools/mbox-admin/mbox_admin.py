@@ -316,6 +316,28 @@ class AdminConfig:
         raise ValueError('Unknown action')
 
 
+def configured_public_host():
+    """Explicit, single public HTTPS hostname; never infer trust from forwarded headers."""
+    name = os.environ.get('MBOX_ADMIN_PUBLIC_HOST', '')
+    if not name:
+        return ''
+    if len(name) > 253 or name != name.lower() or name.endswith('.') or '.' not in name:
+        raise ValueError('MBOX_ADMIN_PUBLIC_HOST must be one lowercase DNS hostname')
+    labels = name.split('.')
+    if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', item)
+           for item in labels):
+        raise ValueError('Invalid MBOX_ADMIN_PUBLIC_HOST label')
+    # Avoid accidentally treating localhost or a raw IP as a public domain.
+    if name.endswith('.localhost') or name.endswith('.local') or name == 'localhost':
+        raise ValueError('MBOX_ADMIN_PUBLIC_HOST must be a real DNS hostname')
+    try:
+        import ipaddress
+        ipaddress.ip_address(name)
+    except ValueError:
+        return name
+    raise ValueError('MBOX_ADMIN_PUBLIC_HOST cannot be an IP address')
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'MBoxAdminPreview'
     sys_version = ''
@@ -329,9 +351,21 @@ class Handler(BaseHTTPRequestHandler):
         super().setup()
         self.connection.settimeout(8)
 
+    def expected_origin(self):
+        # Reject duplicated Host headers; never trust X-Forwarded-Host or Proto.
+        hosts = self.headers.get_all('Host', [])
+        if len(hosts) != 1:
+            return None
+        host = hosts[0]
+        if re.fullmatch(r'(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?', host):
+            return 'http://' + host
+        public = configured_public_host()
+        if public and host in (public, public + ':443'):
+            return 'https://' + public
+        return None
+
     def headers_safe(self):
-        host = self.headers.get('Host', '')
-        return bool(re.fullmatch(r'(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?', host))
+        return self.expected_origin() is not None
 
     def respond(self, status, payload, cookie=None):
         data = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
@@ -343,6 +377,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Cross-Origin-Resource-Policy', 'same-origin')
         if cookie:
+            # Public sessions must never be sent over plain HTTP.
+            if (self.expected_origin() or '').startswith('https://'):
+                cookie += '; Secure'
             self.send_header('Set-Cookie', cookie)
         self.end_headers()
         self.wfile.write(data)
@@ -394,10 +431,13 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(404, {'error': 'Not found'})
 
     def do_POST(self):
-        if not self.headers_safe():
+        expected = self.expected_origin()
+        if expected is None:
             return self.respond(403, {'error': 'Forbidden host'})
-        origin = self.headers.get('Origin', '')
-        if origin and origin != 'http://' + self.headers.get('Host', ''):
+        origins = self.headers.get_all('Origin', [])
+        origin = origins[0] if len(origins) == 1 else ''
+        if (len(origins) > 1 or (origin and origin != expected) or
+                (expected.startswith('https://') and not origin)):
             return self.respond(403, {'error': 'Invalid Origin'})
         if not self.headers.get('Content-Type', '').split(';')[0].strip() == 'application/json':
             return self.respond(415, {'error': 'JSON required'})
@@ -465,14 +505,21 @@ def serve(args):
     global ADMIN
     if os.geteuid() != 0 and not args.allow_nonroot_test:
         raise SystemExit('Run as root: mboxctl mutations require root')
+    public = configured_public_host()  # invalid public configuration fails at startup
     ADMIN = AdminConfig(args.ctl, args.db, args.status, args.password_file, args.quic_url, args.quic_ca_file)
     path = Path(args.socket)
     if not path.is_absolute():
         raise ValueError('Socket path must be absolute')
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     parent_stat = path.parent.stat()
-    if os.geteuid() == 0 and (parent_stat.st_uid != 0 or parent_stat.st_mode & 0o077):
-        raise ValueError('Admin socket directory must be root-owned mode 0700')
+    if os.geteuid() == 0:
+        mode = parent_stat.st_mode & 0o777
+        # SSH-only: root:root 0700. Public: root:proxy-group 0750.
+        # Group must be set explicitly in the systemd opt-in drop-in.
+        if (parent_stat.st_uid != 0 or
+                mode != (0o750 if public else 0o700) or
+                (public and parent_stat.st_gid != os.getegid())):
+            raise ValueError('Admin socket directory permissions/group do not match access mode')
     if path.is_symlink():
         raise ValueError('Refusing symlink socket')
     if path.exists():
@@ -482,7 +529,7 @@ def serve(args):
     old_umask = os.umask(0o077)
     try:
         with UnixServer(str(path), Handler) as server:
-            os.chmod(path, 0o600)
+            os.chmod(path, 0o660 if public else 0o600)
             try:
                 server.serve_forever(poll_interval=0.2)
             finally:
@@ -492,11 +539,11 @@ def serve(args):
 
 
 def main():
-    p = argparse.ArgumentParser(description='SSH-only MBox admin preview')
+    p = argparse.ArgumentParser(description='MBox admin: SSH by default, explicit HTTPS reverse-proxy opt-in')
     sub = p.add_subparsers(dest='command', required=True)
     init = sub.add_parser('init', help='Create admin password file (interactive)')
     init.add_argument('--password-file', default='/etc/mbox-admin/password.json')
-    s = sub.add_parser('serve', help='Serve a root-owned Unix socket only')
+    s = sub.add_parser('serve', help='Serve Unix socket (optionally available to a configured reverse-proxy group)')
     s.add_argument('--password-file', default='/etc/mbox-admin/password.json')
     s.add_argument('--socket', default='/run/mbox-admin/admin.sock')
     s.add_argument('--ctl', default='/usr/local/bin/mboxctl')

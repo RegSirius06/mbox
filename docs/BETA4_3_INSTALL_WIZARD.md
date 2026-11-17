@@ -1,0 +1,9 @@
+# MBox beta.4.3 — interactive installation
+
+**Fresh deployments:** on the origin server, run `./install.sh` from an interactive terminal. Choose `1` for `--fresh-install`. The installer guides the initial origin configuration. After origin health checks, it offers an optional REG.RU FastCGI deployment wizard (`tools/relay-setup.sh`), asking for `user@host`, remote webroot, private directory outside the webroot, and the actual origin runtime config/binary. It runs a dry run before requiring `DEPLOY` to change REG.RU. SSH authentication remains managed by SSH; passwords are not saved by the wizard. Confirm the hosting paths and active HMAC key. This is not an automatic provider account integration.
+
+**Existing production deployments:** call `./install.sh --check` for a read-only prerequisite check; `--with-admin` to update admin/CLI without restarting origin; `--with-subscriptions` for subscriptions/admin; or **explicitly** `--upgrade-origin` for a full origin upgrade after reviewing backups. That upgrade **restarts MBox origin and may interrupt sessions**. The REG.RU wizard is *not* launched in upgrade modes. With no arguments and noninteractive stdin, `install.sh` remains a no-op. Never run an installer from a stale or incomplete source tree.
+
+**Release consistency:** `VERSION`, `mboxctl version`, Android `versionName`/`versionCode`, and release gate must agree in the source tree before release. An installed VPS will still report its previous version until you explicitly deploy updated components; changing UI HTML does not change the origin version. Don't patch a version string on the live server instead of performing a tested upgrade.
+
+**Button accessibility:** Android uses separate day/night primary and stop button colors; these must be checked on a device in both themes. This overlay changes UI + first-install menu only; it does not change Noise, transports, REG.RU or a running server.

@@ -25,6 +25,31 @@ Usage: ./install.sh --check|--upgrade-origin|--with-admin|--with-subscriptions|-
 Do not run --upgrade-origin merely to enable new client-side QUIC TLS support.
 EOF
 }
+# MBOX_BETA43_RELEASE_CONSISTENCY9: explicit opt-in interactive installer.
+# No arguments in a terminal show a menu; noninteractive no-args stays a no-op.
+if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then
+  printf '\nMBox %s · installer\n' "$(cat "$ROOT/VERSION")"
+  printf '  1) New server installation (includes optional REG.RU wizard)\n'
+  printf '  2) Update admin panel only\n'
+  printf '  3) Update subscriptions and admin panel\n'
+  printf '  4) Check prerequisites (read-only)\n'
+  printf '  5) Upgrade origin (interrupts active VPN sessions)\n'
+  printf '  0) Exit\n'
+  read -r -p 'Choose [0]: ' choice
+  case "${choice:-0}" in
+    1) set -- --fresh-install ;;
+    2) set -- --with-admin ;;
+    3) set -- --with-subscriptions ;;
+    4) set -- --check ;;
+    5)
+      read -r -p 'This restarts production origin. Type UPGRADE: ' confirm
+      [[ "$confirm" == UPGRADE ]] || { echo 'Cancelled.'; exit 0; }
+      set -- --upgrade-origin ;;
+    0) echo 'No changes.'; exit 0 ;;
+    *) echo 'Unknown selection. Nothing changed.' >&2; exit 2 ;;
+  esac
+fi
+
 for opt in "$@"; do
   case "$opt" in
     --check) CHECK_ONLY=1 ;;
@@ -53,6 +78,15 @@ fi
 
 need() { command -v "$1" >/dev/null 2>&1; }
 say() { printf '\n==> %s\n' "$*"; }
+# Never install a mixed client/server release by mistake.
+source_version=$(cat "$ROOT/VERSION")
+[[ "$source_version" == "1.0.0-beta.4.3" ]] || {
+  echo "Expected MBox 1.0.0-beta.4.3; found: $source_version" >&2; exit 1;
+}
+grep -Fq "mboxctl $source_version" "$ROOT/tools/mboxctl/mboxctl.py" || {
+  echo "CLI version differs from VERSION; refusing mixed release" >&2; exit 1;
+}
+
 for path in server client relay tools/mboxctl/mboxctl.py tools/mbox-key tools/mbox-link native-quic/go.mod deploy/mbox-server.service tools/mbox-admin/mbox_admin.py tools/mbox-admin/config_ui.py tools/mbox-admin/index.html deploy/systemd/mbox-admin.service tools/mbox-subscription/mbox_subscription.py deploy/systemd/mbox-subscription.service tools/quic-cert-renew.sh deploy/systemd/mbox-quic-renew.service deploy/systemd/mbox-quic-renew.timer; do
   [[ -e "$ROOT/$path" ]] || { echo "Missing repository component: $path" >&2; exit 1; }
 done
@@ -323,3 +357,13 @@ echo 'Origin installed; existing QUIC services were not modified.'
 echo 'REG.RU FastCGI and Caddy/sing-box require separate operator deployment.'
 echo 'TLS renewal is NOT auto-enabled; existing QUIC services remain untouched.'
 echo "Backup: $BACKUP"
+# MBOX_BETA43_POLISH: optional, explicit, first-install-only REG.RU wizard.
+# Never change an existing production frontend during --upgrade-origin.
+if (( FRESH_INSTALL )) && [[ -t 0 ]]; then
+  printf '\nREG.RU shared-host FastCGI relay is optional.\n'
+  read -r -p 'Configure and deploy relay now? [y/N] ' relay_answer
+  case "${relay_answer,,}" in
+    y|yes) bash "$ROOT/tools/relay-setup.sh" ;;
+    *) echo 'Relay deployment skipped; origin installation complete.' ;;
+  esac
+fi

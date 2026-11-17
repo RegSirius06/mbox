@@ -1692,7 +1692,7 @@ def _relay_deploy_payload(args):
 # small tar archive over encrypted SSH stdin, avoiding persistent secret copies
 # in /tmp or the webroot. It leaves a complete private rollback snapshot.
 _RELAY_SSH_DEPLOY = r'''
-import hashlib, io, json, os, shutil, stat, sys, tarfile, tempfile, time
+import hashlib, io, json, os, shutil, stat, subprocess, sys, tarfile, tempfile, time
 from pathlib import Path
 
 os.umask(0o077)
@@ -1750,6 +1750,34 @@ for name in payload:
     if p.is_symlink() or (p.exists() and not p.is_file()):
         raise SystemExit('DEPLOY_FAILED: unsafe destination: ' + name)
 
+# Check the candidate binary against the actual candidate config BEFORE
+# replacing anything live. The test runs as the unprivileged REG.RU SSH user.
+# The staged key and lock directory are private and never served by Apache.
+with tempfile.TemporaryDirectory(prefix='.mbox-preflight-', dir=str(private)) as tmpdir:
+    tmp = Path(tmpdir)
+    candidate = tmp / 'relay.fcgi'
+    candidate.write_bytes(payload['relay.fcgi'])
+    candidate.chmod(0o700)
+    (tmp / 'origin-hmac.key').write_bytes(payload['origin-hmac.key'])
+    (tmp / 'origin-hmac.key').chmod(0o600)
+    (tmp / 'locks').mkdir(mode=0o700)
+    preflight = dict(config)
+    preflight['origin_hmac_secret_file'] = str(tmp / 'origin-hmac.key')
+    preflight['runtime_dir'] = str(tmp / 'locks')
+    cfg_file = tmp / 'relay.json'
+    cfg_file.write_text(json.dumps(preflight))
+    cfg_file.chmod(0o600)
+    env = os.environ.copy()
+    env['MBOX_RELAY_CONFIG'] = str(cfg_file)
+    try:
+        check = subprocess.run([str(candidate), '--check-config'], env=env,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=8, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SystemExit('DEPLOY_FAILED: relay self-check could not execute: ' + type(exc).__name__)
+    if check.returncode != 0 or check.stdout.strip() != b'MBOX_RELAY_CONFIG_OK':
+        raise SystemExit('DEPLOY_FAILED: incompatible FastCGI binary/config; rebuild relay from current MBox source')
+
 backups = private / 'backups'
 backups.mkdir(mode=0o700, exist_ok=True)
 if backups.is_symlink() or stat.S_IMODE(backups.stat().st_mode) != 0o700:
@@ -1805,6 +1833,33 @@ with tempfile.TemporaryDirectory(prefix='.mbox-upload-', dir=str(private)) as tm
             else:
                 target.unlink(missing_ok=True)
         raise
+
+# MBOX_RELAY_RECYCLE_STALE_WORKERS_V1
+import signal
+_relay_exe = str(web / 'relay.fcgi')
+_new_stat = os.stat(_relay_exe)
+_recycled = 0
+for _entry in os.scandir('/proc'):
+    if not _entry.name.isdecimal():
+        continue
+    try:
+        _proc_exe = _entry.path + '/exe'
+        _target = os.readlink(_proc_exe)
+        if _target.endswith(' (deleted)'):
+            _target = _target[:-len(' (deleted)')]
+        if _target != _relay_exe:
+            continue
+        _old_stat = os.stat(_proc_exe)
+        if (_old_stat.st_dev, _old_stat.st_ino) == (_new_stat.st_dev, _new_stat.st_ino):
+            continue
+        if os.stat(_entry.path).st_uid != os.geteuid():
+            continue
+        os.kill(int(_entry.name), signal.SIGTERM)
+        _recycled += 1
+    except (OSError, ProcessLookupError):
+        # The worker may have exited during inspection.
+        continue
+print('RELAY_STALE_WORKERS_TERMINATED=' + str(_recycled))
 
 print('DEPLOY_OK')
 print('BACKUP_ID=' + backup_id)
@@ -1862,6 +1917,33 @@ for name in ('origin-hmac.key', 'relay.json', 'relay.fcgi', 'index.html', '404.h
         os.replace(temp, target)
     else:
         target.unlink(missing_ok=True)
+# MBOX_RELAY_RECYCLE_STALE_WORKERS_V1
+import signal
+_relay_exe = str(web / 'relay.fcgi')
+_new_stat = os.stat(_relay_exe)
+_recycled = 0
+for _entry in os.scandir('/proc'):
+    if not _entry.name.isdecimal():
+        continue
+    try:
+        _proc_exe = _entry.path + '/exe'
+        _target = os.readlink(_proc_exe)
+        if _target.endswith(' (deleted)'):
+            _target = _target[:-len(' (deleted)')]
+        if _target != _relay_exe:
+            continue
+        _old_stat = os.stat(_proc_exe)
+        if (_old_stat.st_dev, _old_stat.st_ino) == (_new_stat.st_dev, _new_stat.st_ino):
+            continue
+        if os.stat(_entry.path).st_uid != os.geteuid():
+            continue
+        os.kill(int(_entry.name), signal.SIGTERM)
+        _recycled += 1
+    except (OSError, ProcessLookupError):
+        # The worker may have exited during inspection.
+        continue
+print('RELAY_STALE_WORKERS_TERMINATED=' + str(_recycled))
+
 print('ROLLBACK_OK')
 print('BACKUP_ID=' + backup.name)
 '''
@@ -2176,7 +2258,7 @@ def make_parser():
     q=bs.add_parser("verify"); q.add_argument("path"); q.set_defaults(func=backup_verify)
     q=bs.add_parser("list"); q.add_argument("--directory",default="/root"); q.set_defaults(func=backup_list)
     q=bs.add_parser("prune"); q.add_argument("--directory",default="/root"); q.add_argument("--keep",type=int,default=3); q.add_argument("--dry-run",action="store_true"); q.set_defaults(func=backup_prune)
-    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.4.2"))
+    q=sp.add_parser("version"); q.set_defaults(func=lambda a: print("mboxctl 1.0.0-beta.4.3"))
     return p
 
 

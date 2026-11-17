@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** Для beta.4.3 начните с [установки сервера](SERVER_QUICKSTART.md) и [мастера](BETA4_3_INSTALL_WIZARD.md). Ниже сохранены исторические сведения beta.4.1 и более ранних версий. Мониторинг CPU REG.RU в MBox **пока не подключён**.
+
 # REG.RU shared hosting для MBox
 
 <!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
@@ -85,3 +88,15 @@ sudo mboxctl relay test
 - идентификация: https://help.reg.ru/support/pravovyye-voprosy/personalnyye-dannyye/protsedura-identifikatsii-personalnykh-dannykh
 
 Тарифы и договоры меняются — перед развёртыванием перепроверьте актуальную редакцию.
+
+
+<!-- MBOX-RELAY-RECYCLE-2026-11 -->
+### Обновление процессов FastCGI после деплоя
+
+Загрузка `relay.fcgi` заменяет файл на диске, но `mod_fcgid` может продолжать
+исполнять старую (уже удалённую) версию. Штатные `relay deploy` и `relay rollback`
+теперь завершают **только устаревшие процессы relay конкретного сайта и
+SSH-пользователя** перед проверкой `/health`. Следующий запрос запускает новый
+процесс. При обычном ручном `scp` эта логика **не выполняется** — обновлять
+relay нужно через `mboxctl relay deploy`. Текущие HTTPS-запросы могут
+прерваться; для прода выбирайте окно обслуживания.

@@ -1,17 +1,21 @@
-# MBox v1.0.0-beta.4.1 — Android prerelease
+# MBox v1.0.0-beta.4.3 — Android & Admin prerelease
 
-**Android 10+ / ARM64 / `io.mbox.android` / versionCode 8.** Recovery-focused maintenance release for the beta.4 QUIC and HTTPS transports.
+**DRAFT — DO NOT PUBLISH UNTIL ALL PENDING FIELDS ARE FILLED.**
 
-**Changes:** authenticated Noise liveness checks; separate QUIC gateway and HEV monitoring; TUN-preserving reconnect; detailed CONNECTING / VERIFYING / RECOVERING states; improved native QUIC CI. The wire protocol, legacy HTTPS-only profile format and server API are unchanged. The server does not require updating solely for heartbeat.
+Android 10+ / ARM64 · `io.mbox.android` · `versionCode=10` · **Pre-release, not RC1**.
 
-**Testing:** maintainer reported 5 passing core connection/recovery field scenarios; Go and native QUIC race tests passed and debug APK built. Independent IPv4/IPv6/DNS/UDP physical leak capture, complete Lockdown matrix, controlled dead-gateway tests, long soak and release-signed device acceptance are still pending. This is **not an independently audited no-leak or DPI-immune VPN**.
+**New:** redesigned Android UI; Russian/English; Android system light/dark theme and corrected Connect/Disconnect contrast; custom MBox launcher icon; profile/subscription management; notification Disconnect; hidden diagnostics; GitHub update alerts; redesigned server web panel with optional HTTPS domain; interactive first-install shared-hosting setup.
 
-**Known limits:** Auto can reset existing streams; no QUIC DATAGRAM or multipath; HTTPS application UDP is encapsulated over TCP. The operator's old test QUIC certificate expires December 7, 2026; TLS CA/leaf rotation has **not** been deployed.
+**Connection:** QUIC is preferred, with HTTPS fallback via the configured ingress (such as REG.RU FastCGI). No intentional Noise/wire or provisioning format change; existing beta.4.2 client profiles should remain supported. Transport transitions may interrupt sessions. No QUIC DATAGRAM/multipath.
 
-- **APK SHA-256:** `PENDING_FINAL_SIGNED_APK_HASH`
-- **APK signer SHA-256:** `PENDING_VERIFIED_EXISTING_SIGNER_PIN`
-- **Source commit:** `PENDING_FINAL_GIT_SHA`
+**Limitations:** no independently audited physical no-leak guarantee, no universal DPI bypass, REG.RU CPU metrics not integrated, Android packets/bytes/streams counters unavailable. Deployed origin version may differ from the app version until explicitly upgraded. Do not expose the admin panel without documented TLS and access controls.
 
-Read [English release notes](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.1/RELEASE_NOTES.md) or [русскую документацию](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.1/RELEASE_NOTES.ru.md).
+**Artifacts:** production-signed APK only. Do not publish debug/unsigned APK, profiles, private subscription links, keystore or runtime secrets.
 
-**Do not publish this draft with pending fields.** Attach only the owner-key production-signed APK and checksum, never debug/unsigned binaries, secret profiles or raw logs.
+- APK: `MBox-1.0.0-beta.4.3-android-arm64.apk`
+- APK SHA-256: `PENDING_SIGNED_APK_SHA256`
+- Production signing certificate SHA-256: `17FD9F930B8356BECA8251DD215220771A3D020E56FB6A703B526C35CCCD7586`
+- Git commit: `PENDING_FINAL_GIT_SHA`
+- Final device test and server deployment status: `PENDING_FINAL_VERIFICATION`
+
+[English release notes](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.3/RELEASE_NOTES.md) · [Russian release notes](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.3/RELEASE_NOTES.ru.md)

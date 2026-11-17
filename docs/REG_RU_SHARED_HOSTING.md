@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** For beta.4.3 start with [server quickstart](SERVER_QUICKSTART.md) and [installer wizard](BETA4_3_INSTALL_WIZARD.md). The following provider observations include historical beta.4.1 and older context. REG.RU resource CPU metrics are **not currently integrated** with MBox.
+
 # REG.RU shared-hosting frontend guide
 
 <!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
@@ -90,3 +93,15 @@ On 2026-11-05 a single Android device running the updated beta.2.2 code (now bet
 - REG.RU identity procedure: https://help.reg.ru/support/pravovyye-voprosy/personalnyye-dannyye/protsedura-identifikatsii-personalnykh-dannykh
 
 Provider plans and terms change; re-check them before deployment.
+
+
+<!-- MBOX-RELAY-RECYCLE-2026-11 -->
+### FastCGI worker recycling after deployment
+
+A successful relay upload replaces the executable on disk, but `mod_fcgid` may
+keep workers running the old (deleted) ELF. The deploy and rollback scripts now
+recycle **only stale relay workers belonging to the SSH account and the exact
+configured webroot**, before the HTTP health probe. The new workers start on
+the next request. An upload made manually with `scp` does **not** run this step;
+use `mboxctl relay deploy` for upgrades. In-flight HTTP requests on recycled
+workers may be interrupted; arrange a maintenance window for production.

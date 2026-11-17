@@ -136,6 +136,31 @@ public final class ProfileStore {
             runtime.getJSONObject("transport").remove("enable_udp_lab");JSONObject runtimeCrypto=runtime.getJSONObject("crypto");runtimeCrypto.remove("psk_encrypted_file");runtimeCrypto.put("psk_file",plainFile.getAbsolutePath());File runtimeConfig=new File(dir,"client.json");writePrivateFile(runtimeConfig,runtime.toString(2)+"\n");ok=true;return new RuntimeMaterialization(runtimeConfig,dir);}finally{if(!ok)deleteTree(dir);}}
     private static void cleanupOldGenerations(File root,File keep){File[] es=root.listFiles();if(es==null)return;for(File e:es)if(e.isDirectory()&&e.getName().startsWith("gen-")&&!e.equals(keep))deleteTree(e);}
     private static void cleanupRuntimeMaterializations(Context c){File[] es=c.getCacheDir().listFiles();if(es==null)return;for(File e:es)if(e.isDirectory()&&e.getName().startsWith("gen-")&&e.getName().endsWith("-runtime"))deleteTree(e);}
+    /** Delete local active profile (including encrypted generation), never server credentials. */
+    public static synchronized void deleteActiveProfile(Context c) throws Exception {
+        File root = profileDir(c);
+        if (root.exists()) {
+            java.nio.file.Files.walkFileTree(root.toPath(),
+                    new java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                @Override public java.nio.file.FileVisitResult visitFile(
+                        java.nio.file.Path file, java.nio.file.attribute.BasicFileAttributes attrs)
+                        throws java.io.IOException {
+                    java.nio.file.Files.delete(file);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+                @Override public java.nio.file.FileVisitResult postVisitDirectory(
+                        java.nio.file.Path dir, java.io.IOException error)
+                        throws java.io.IOException {
+                    if (error != null) throw error;
+                    java.nio.file.Files.delete(dir);
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        }
+        cleanupRuntimeMaterializations(c);
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(PREF_NAME).commit();
+    }
+
     private static void deleteTree(File f){if(f==null||!f.exists())return;if(f.isDirectory()){File[] cs=f.listFiles();if(cs!=null)for(File c:cs)deleteTree(c);}f.delete();}
     public static String transportUrl(Context c)throws Exception{byte[] data=Files.readAllBytes(configFile(c).toPath());JSONObject root=new JSONObject(new String(data,StandardCharsets.UTF_8));return root.getJSONObject("transport").getString("url");}
     public static String transportHost(Context c)throws Exception{URI u=new URI(transportUrl(c));String h=u.getHost();if(h==null||h.isEmpty())throw new Exception("В профиле отсутствует hostname MBox endpoint");return h;}

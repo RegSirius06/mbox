@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** For the current beta.4.3 entry point, see [server quickstart](SERVER_QUICKSTART.md), [release engineering](RELEASE_ENGINEERING_BETA43.md) and [public admin access](MBOX_ADMIN_PUBLIC_ACCESS.md). Historical commands below may be version-specific.
+
 # Administrator notes
 
 [Русская версия](ru/ADMIN.md)

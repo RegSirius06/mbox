@@ -1,3 +1,6 @@
+<!-- MBOX_BETA43_DOCS10 -->
+> **beta.4.3 context:** The active beta.4.3 subscription user guide starts at [Android](GETTING_STARTED.md); this page retains the technical beta.4.2 protocol design as compatible historical reference.
+
 # MBox subscriptions — beta.4.2
 
 The permanent `https://DOMAIN/<configured-path>/<token>` URL returns JSON v1 containing standard `mbox://` profiles for one or more HTTPS ingress endpoints. Tokens are 256-bit bearer secrets. Only SHA-256 digests are stored in SQLite. The canonical token is re-derived with a dedicated 32-byte server-only key and per-user random nonce; legacy issued tokens remain valid but their URLs cannot be recovered. Revoking a token, disabling/deleting a user, or expiration prevents any further profile retrieval. The active MBox Noise key, PSK, QUIC settings and camouflage parameters come from the existing `mboxctl` link generator. All ingress variants share the same credentials but have different `transport.url` fields.
