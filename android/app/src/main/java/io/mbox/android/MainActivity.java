@@ -39,7 +39,8 @@ public class MainActivity extends Activity {
         @Override
         public void run() {
             refreshUi();
-            handler.postDelayed(this, 500);
+            // Only refresh the visible Activity once per second.
+            handler.postDelayed(this, 1000);
         }
     };
 
@@ -50,6 +51,7 @@ public class MainActivity extends Activity {
     private boolean subscriptionConnecting;
     private Button connectButton;
     private Button disconnectButton;
+    private Button updateProfileButton;
     private Button udpLabButton;
     private Button quicLabButton;
     private boolean compactUi;
@@ -70,7 +72,11 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         buildUi();
         maybeRequestNotificationPermission();
-        if (!handleReleaseIntent(getIntent())) handleIntent(getIntent());
+        if (getIntent() != null && MBoxTileService.ACTION_CONNECT_FROM_TILE.equals(getIntent().getAction())) {
+            requestVpn();
+        } else if (!handleReleaseIntent(getIntent())) {
+            handleIntent(getIntent());
+        }
     }
 
     @Override
@@ -81,6 +87,11 @@ public class MainActivity extends Activity {
                 || ReleaseUpdates.ACTION_GITHUB.equals(intent.getAction()))) {
             buildUi();
             handleReleaseIntent(intent);
+            return;
+        }
+        if (intent != null && MBoxTileService.ACTION_CONNECT_FROM_TILE.equals(intent.getAction())) {
+            buildUi();
+            if (MBoxVpnService.getState() == MBoxVpnService.State.STOPPED) requestVpn();
             return;
         }
         if (intent != null && MBoxVpnService.ACTION_OPEN_STATUS.equals(intent.getAction())) {
@@ -162,6 +173,9 @@ public class MainActivity extends Activity {
             startService(intent);
         });
 
+        updateProfileButton = new Button(this);
+        updateProfileButton.setOnClickListener(v -> updateActiveProfile());
+
         Button clipboardButton = new Button(this);
         clipboardButton.setText(ui("Import from clipboard"));
         clipboardButton.setOnClickListener(v -> importFromClipboard());
@@ -228,9 +242,26 @@ public class MainActivity extends Activity {
             status.setGravity(Gravity.CENTER);
             status.setTextSize(19);
             status.setTypeface(null, Typeface.BOLD);
-            status.setPadding(0, dp(22), 0, dp(8));
+            status.setPadding(0, dp(12), 0, dp(8));
             panel.addView(profile);
             panel.addView(subscriptionStatus);
+            // Profile selector is one tap away; visible copy is "Choose profile", not "Choose location / profile".
+            Button chooseLocation = new Button(this);
+            chooseLocation.setAllCaps(false);
+            chooseLocation.setText(ui("Choose profile"));
+            chooseLocation.setContentDescription(ui("Choose profile"));
+            chooseLocation.setOnClickListener(v -> chooseLocationFromHome());
+            GradientDrawable locationBackground = new GradientDrawable();
+            locationBackground.setColor(getColor(R.color.mbox_surface_alt));
+            locationBackground.setCornerRadius(dp(16));
+            locationBackground.setStroke(dp(1), getColor(R.color.mbox_border));
+            chooseLocation.setBackground(locationBackground);
+            chooseLocation.setBackgroundTintList(null);
+            chooseLocation.setTextColor(getColor(R.color.mbox_text));
+            chooseLocation.setTextSize(15);
+            LinearLayout.LayoutParams profileAction = new LinearLayout.LayoutParams(-1, dp(48));
+            profileAction.topMargin = dp(12);
+            panel.addView(chooseLocation, profileAction);
             panel.addView(status);
             LinearLayout.LayoutParams panelParams = new LinearLayout.LayoutParams(-1, -2);
             panelParams.topMargin = dp(42);
@@ -241,7 +272,6 @@ public class MainActivity extends Activity {
             primaryBackground.setColor(getColor(R.color.mbox_primary_bg));
             primaryBackground.setCornerRadius(dp(18));
             connectButton.setBackground(primaryBackground);
-            // Custom GradientDrawable must not inherit the platform Button tint.
             connectButton.setBackgroundTintList(null);
             connectButton.setTextColor(getColor(R.color.mbox_on_primary_bg));
             connectButton.setAllCaps(false);
@@ -261,29 +291,34 @@ public class MainActivity extends Activity {
 
             Button settings = new Button(this);
             settings.setText(ui("Profiles & settings"));
-            settings.setAllCaps(false);
-            settings.setTextSize(15);
-            settings.setTextColor(Color.rgb(202, 216, 234));
-            GradientDrawable secondaryBackground = new GradientDrawable();
-            secondaryBackground.setColor(getColor(R.color.mbox_surface));
-            secondaryBackground.setCornerRadius(dp(16));
-            secondaryBackground.setStroke(dp(1), getColor(R.color.mbox_border));
-            settings.setBackground(secondaryBackground);
             settings.setOnClickListener(v -> showSettingsHome());
-            LinearLayout.LayoutParams settingsLayout = new LinearLayout.LayoutParams(-1, dp(54));
-            settingsLayout.topMargin = dp(14);
-            root.addView(settings, settingsLayout);
+            // Exactly three home actions: connect/stop, update/import, settings.
+            for (Button secondary : new Button[]{updateProfileButton, settings}) {
+                secondary.setAllCaps(false);
+                secondary.setTextSize(15);
+                secondary.setTextColor(getColor(R.color.mbox_text));
+                GradientDrawable background = new GradientDrawable();
+                background.setColor(getColor(R.color.mbox_surface));
+                background.setCornerRadius(dp(16));
+                background.setStroke(dp(1), getColor(R.color.mbox_border));
+                secondary.setBackground(background);
+                secondary.setBackgroundTintList(null);
+                LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, dp(54));
+                layout.topMargin = dp(12);
+                root.addView(secondary, layout);
+            }
 
             View footerSpace = new View(this);
             root.addView(footerSpace, new LinearLayout.LayoutParams(1, 0, 1f));
-            TextView releases = new TextView(this);
-            releases.setText(ui("GitHub · Releases"));
-            releases.setTextSize(13);
-            releases.setTextColor(getColor(R.color.mbox_muted));
-            releases.setGravity(Gravity.CENTER);
-            releases.setPadding(dp(4), dp(8), dp(4), dp(8));
+            LinearLayout communityLinks = new LinearLayout(this);
+            communityLinks.setOrientation(LinearLayout.HORIZONTAL);
+            TextView releases = communityLink("GitHub · Releases", "GitHub · Releases");
             releases.setOnClickListener(v -> openGithubReleases());
-            root.addView(releases, new LinearLayout.LayoutParams(-1, dp(48)));
+            communityLinks.addView(releases, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            TextView telegram = communityLink("Telegram · Community", "Telegram community");
+            telegram.setOnClickListener(v -> openExternalPage("https://t.me/github_mailbox"));
+            communityLinks.addView(telegram, new LinearLayout.LayoutParams(0, dp(48), 1f));
+            root.addView(communityLinks, new LinearLayout.LayoutParams(-1, dp(48)));
         } else {
             root.addView(title);
             root.addView(profile);
@@ -320,7 +355,7 @@ public class MainActivity extends Activity {
             root.addView(importButton);
         }
         scroll.addView(root);
-        setContentView(scroll);
+        showScrollPage(scroll);
         refreshUi();
     }
 
@@ -335,7 +370,11 @@ public class MainActivity extends Activity {
         scroll.setBackgroundColor(getColor(R.color.mbox_bg));
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(22), dp(18), dp(22), dp(30));
+        if (page == Page.DIAGNOSTICS) {
+            content.setPadding(dp(28), dp(28), dp(28), dp(36));
+        } else {
+            content.setPadding(dp(22), dp(18), dp(22), dp(30));
+        }
 
         TextView back = new TextView(this);
         back.setText(ui("‹  Back"));
@@ -357,11 +396,28 @@ public class MainActivity extends Activity {
         lead.setText(ui(subtitle));
         lead.setTextSize(14);
         lead.setTextColor(getColor(R.color.mbox_muted));
-        lead.setPadding(0, dp(10), 0, dp(26));
+        lead.setPadding(0, dp(10), 0, dp(page == Page.DIAGNOSTICS ? 34 : 26));
         content.addView(lead);
         scroll.addView(content);
-        setContentView(scroll);
+        showScrollPage(scroll);
         return content;
+    }
+
+    // Target SDK 36 enforces edge-to-edge on Android 15+. Keep safe-area
+    // padding separate from the page's visual padding; never accumulate it.
+    private void showScrollPage(ScrollView scroll) {
+        if (Build.VERSION.SDK_INT >= 35) {
+            scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets safe = insets.getInsets(
+                        android.view.WindowInsets.Type.systemBars()
+                                | android.view.WindowInsets.Type.displayCutout()
+                                | android.view.WindowInsets.Type.ime());
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+                return insets;
+            });
+        }
+        setContentView(scroll);
+        if (Build.VERSION.SDK_INT >= 35) scroll.requestApplyInsets();
     }
 
     private void addPageAction(LinearLayout content, String title, String subtitle,
@@ -426,14 +482,37 @@ public class MainActivity extends Activity {
         return true;
     }
 
-    private void openGithubReleases() {
+    private void openGithubReleases() { openExternalPage(ReleaseUpdates.releasesUrl()); }
+
+    private TextView communityLink(String label, String description) {
+        TextView link = new TextView(this);
+        link.setText(ui(label)); link.setContentDescription(ui(description));
+        link.setTextSize(13); link.setTextColor(getColor(R.color.mbox_muted));
+        link.setGravity(Gravity.CENTER); link.setPadding(dp(3), dp(8), dp(3), dp(8));
+        return link;
+    }
+
+    private void openExternalPage(String url) {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW,
-                    Uri.parse(ReleaseUpdates.releasesUrl())));
+                    Uri.parse(url)));
         } catch (android.content.ActivityNotFoundException error) {
             uiMessage = ui("No browser available");
             refreshUi();
         }
+    }
+
+    private void updateActiveProfile() {
+        if (subscriptionConnecting) return;
+        if (MBoxVpnService.getState() != MBoxVpnService.State.STOPPED) {
+            new AlertDialog.Builder(this, R.style.MBoxDialog)
+                    .setMessage(ui("Disconnect VPN before changing profiles"))
+                    .setPositiveButton(ui("OK"), null).show();
+            return;
+        }
+        String id = SubscriptionStore.activeId(this);
+        if (id.isEmpty()) showImportDialog();
+        else refreshOneSubscription(id);
     }
 
     private void showSettingsHome() {
@@ -589,26 +668,32 @@ public class MainActivity extends Activity {
                 + "\nNotification channel: " + channelStatus
                 + "\nNotification posted by app: " + posted
                 + "\nLast error: " + MBoxVpnService.getLastError()
+                + "\n" + QuicFailback.diagnostics(this)
+                + "\nQUIC DATAGRAM: " + MBoxVpnService.getDatagramState()
                 + "\nPackets, bytes, streams: core counters not available yet"
                 + "\n\nRead-only statistics since application process start.";
     }
 
     private void showDiagnostics() {
-        LinearLayout content = openPage("Diagnostics", "Live, read-only connection status.",
+        LinearLayout content = openPage("Diagnostics", "Connection status and advanced settings.",
                 Page.DIAGNOSTICS);
         diagnosticsView = new TextView(this);
         diagnosticsView.setTextSize(14);
         diagnosticsView.setTextColor(getColor(R.color.mbox_text));
         diagnosticsView.setTextIsSelectable(true);
         diagnosticsView.setLineSpacing(dp(5), 1f);
-        diagnosticsView.setPadding(dp(18), dp(20), dp(18), dp(20));
+        diagnosticsView.setPadding(dp(22), dp(26), dp(22), dp(26));
         GradientDrawable background = new GradientDrawable();
         background.setColor(getColor(R.color.mbox_surface));
         background.setCornerRadius(dp(18));
         background.setStroke(dp(1), getColor(R.color.mbox_border));
         diagnosticsView.setBackground(background);
         diagnosticsView.setText(diagnosticsSnapshot());
-        content.addView(diagnosticsView, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams diagnosticsParams = new LinearLayout.LayoutParams(-1, -2);
+        diagnosticsParams.bottomMargin = dp(18);
+        content.addView(diagnosticsView, diagnosticsParams);
+        addPageAction(content, "Transport settings", "Available while VPN is stopped", () -> TransportSettings.show(this));
+        addPageAction(content, "UDP routing (developer)", "AUTO / STREAMS only / DATAGRAM only", () -> TransportSettings.showUdpMode(this));
         if (AppRuntime.udpLabEnabled(this)) {
             addPageAction(content, "Transport laboratory", "Debug build only",
                     this::showLabTools);
@@ -719,9 +804,28 @@ public class MainActivity extends Activity {
                 }).setNegativeButton(ui("Close"),null).show();
     }
 
+    // Home shortcut: choose a subscription first only when there is more than one.
+    private void chooseLocationFromHome() {
+        if (!vpnStopped()) return;
+        try {
+            final java.util.List<String> ids = SubscriptionStore.ids(this);
+            if (ids.isEmpty()) { showImportDialog(); return; }
+            if (ids.size() == 1) { showSubscriptionEndpoints(ids.get(0)); return; }
+            final String[] labels = SubscriptionStore.subscriptionLabels(this);
+            new AlertDialog.Builder(this, R.style.MBoxDialog)
+                    .setTitle(ui("Choose subscription"))
+                    .setItems(labels, (dialog, which) -> showSubscriptionEndpoints(ids.get(which)))
+                    .setNegativeButton(ui("Cancel"), null).show();
+        } catch (Exception error) { showImportError(error); }
+    }
+
     private void showSubscriptionEndpoints() {
         String id = SubscriptionStore.activeId(this);
-        if (id.isEmpty()) { showSubscriptions();return; }
+        if (id.isEmpty()) {
+            if (SubscriptionStore.isConfigured(this)) showSubscriptions();
+            else showImportDialog();
+            return;
+        }
         showSubscriptionEndpoints(id);
     }
 
@@ -729,7 +833,7 @@ public class MainActivity extends Activity {
         if (!vpnStopped()) return;
         try {
             String[] items = SubscriptionStore.labels(this,id);
-            new AlertDialog.Builder(this, R.style.MBoxDialog).setTitle(ui("Select MBox endpoint"))
+            new AlertDialog.Builder(this, R.style.MBoxDialog).setTitle(ui("Choose profile"))
                     .setItems(items, (d,which) -> {
                         try {
                             SubscriptionStore.selectEndpoint(this,id,which);
@@ -970,6 +1074,13 @@ public class MainActivity extends Activity {
         boolean hasProfile = ProfileStore.hasProfile(this);
         profile.setText(hasProfile ? ui("Profile: ") + ProfileStore.profileName(this) : ui("No profile"));
         subscriptionStatus.setText(SubscriptionStore.summary(this));
+        if (updateProfileButton != null) {
+            String action = subscriptionConnecting ? "Updating profile…"
+                    : SubscriptionStore.activeId(this).isEmpty() ? "Import profile" : "Update profile";
+            String label = ui(action);
+            if (!label.contentEquals(updateProfileButton.getText())) updateProfileButton.setText(label);
+            updateProfileButton.setEnabled(!subscriptionConnecting);
+        }
 
         MBoxVpnService.State vpnState = MBoxVpnService.getState();
         switch (vpnState) {
@@ -990,8 +1101,8 @@ public class MainActivity extends Activity {
                         (MBoxVpnService.getLastError().isEmpty() ? "" : "\n" + ui("Cause: ") + MBoxVpnService.getLastError()));
                 break;
             case CONNECTED:
-                status.setText(ui("Connected via ") + MBoxVpnService.getActiveTransport() +
-                        "\n" + MBoxVpnService.getConnectionPhase());
+                // Protocol phases belong in the hidden diagnostics, not on the home screen.
+                status.setText(ui("Connected via ") + MBoxVpnService.getActiveTransport());
                 break;
             case FAILED:
                 status.setText(ui("Error: ") + MBoxVpnService.getLastError());

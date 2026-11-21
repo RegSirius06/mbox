@@ -18,7 +18,7 @@ def test_admin_ux6_observes_only_existing_safe_metrics():
     assert 'mboxUpdateOverview(data.users)' in HTML
     assert 'user.id ??' in HTML
     assert 'user.online' in HTML
-    assert 'Нет интеграции с REG.RU' in HTML
+    assert 'Не тарифная статистика REG.RU.' in HTML
     assert 'Автоматического опроса нет.' in HTML
     assert 'setInterval(' not in HTML
     assert 'mboxAdminSelectTab(' in HTML

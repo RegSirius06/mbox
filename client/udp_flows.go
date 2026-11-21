@@ -147,7 +147,14 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 			return
 		}
 	}
-	if err := t.queue(id, frameUDPOpen, nil); err != nil {
+	if t.udpMode == "datagrams" {
+		// One-byte opt-in requires a rekey-capable origin; never send this
+		// to legacy servers in the normal AUTO/STREAMS modes.
+		if err := t.queue(id, frameUDPOpen, []byte{1}); err != nil {
+			t.closeUDPFlow(id, false)
+			return
+		}
+	} else if err := t.queue(id, frameUDPOpen, nil); err != nil {
 		t.closeUDPFlow(id, false)
 		return
 	}
@@ -182,6 +189,8 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 	}
 	t.streamWG.Add(1)
 	go t.localUDPWriter(id, f)
+	// Opening a UDP association is not traffic. The first actual packet
+	// starts the on-demand DATAGRAM lane below.
 	reader := bufio.NewReaderSize(conn, 4096)
 	for {
 		select {
@@ -215,6 +224,20 @@ func (t *tunnel) handoffToUDP(oldID uint32, st *localStream, conn net.Conn) {
 		if err != nil {
 			t.closeUDPFlow(id, true)
 			return
+		}
+		// Debug-only strict mode: never put UDP data in reliable frames.
+		if t.udpMode == "datagrams" {
+			t.offerDatagramOnly(id, wire)
+			continue
+		}
+		// AUTO starts on demand. STREAMS mode never starts DATAGRAM.
+		if t.udpMode != "streams" {
+			// Lane.Offer is nil-safe: an absent lane returns false, so AUTO
+			// starts it on demand and keeps this first packet on reliable streams.
+			if t.datagramLane.Load().Offer(id, wire) {
+				continue
+			}
+			t.startDatagramLane()
 		}
 		if err = t.queue(id, frameUDPData, wire); err != nil {
 			t.closeUDPFlow(id, false)

@@ -1,35 +1,14 @@
-# Документация MBox — 1.0.0-beta.4.3
+# Документация MBox — 1.0.0-beta.4.4
 
 [English](../README.md) · [Главная](../../README.ru.md)
 
-**Впервые слышите про MBox?** Начните с первого раздела. Старые материалы beta.2–beta.4.2 сохранены для истории и не заменяют актуальную инструкцию.
+**Актуальные материалы** (старые страницы статуса/планов beta.4.x — история, не описание текущих возможностей):
 
-## 1. Первые шаги
+1. **Пользователь:** [Установка Android](GETTING_STARTED.md) · [Профили и подписки](ANDROID_MULTI_SUBSCRIPTIONS.md) · [Примечания](../../RELEASE_NOTES.ru.md).
+2. **Администратор:** [Первая установка](SERVER_QUICKSTART.md) · [Панель](ADMIN.md) · [Подписки и выходы](MBOX_SUBSCRIPTIONS.md) · [Риски REG.RU FastCGI](REG_RU_SHARED_HOSTING.md) · [Эксплуатация](BETA44_OPERATIONS.md).
+3. **Архитектура:** [Все маршруты](ARCHITECTURE.md) · [DATAGRAM по требованию](BETA44_DATAGRAM_EXPERIMENT.md) · [Безопасность](SECURITY.md) · [Совместимость сетей](NETWORK_COMPATIBILITY.md).
+4. **Выпуск:** [Чек-лист](../../RELEASE_CHECKLIST.ru.md) · [Тестирование](TESTING.md) · [Описание релиза](GITHUB_RELEASE_BODY.md) · [GitHub Issues](https://github.com/RegSirius06/mbox/issues).
 
-- [Android: установка, подключение, обновление и диагностика](GETTING_STARTED.md)
-- [Первый запуск собственного сервера](SERVER_QUICKSTART.md)
-- [Подписки и профили Android](ANDROID_MULTI_SUBSCRIPTIONS.md)
-- [Примечания к текущему выпуску](../../RELEASE_NOTES.ru.md)
+**Совместимость:** подписки v1 (beta.4.3) и v2 (beta.4.4, страны) отличаются от payload Noise OPEN MBD1/MBD2 и версии record 2. Маршрут по умолчанию сохранён намеренно для старого клиента; неподдерживаемые и небезопасные прежние версии не гарантированы.
 
-## 2. Для администратора
-
-- [Веб-панель и CLI](ADMIN.md) · [Дополнительный домен HTTPS](MBOX_ADMIN_PUBLIC_ACCESS.md)
-- [Подписки и точки входа](MBOX_SUBSCRIPTIONS.md)
-- [REG.RU shared hosting](REG_RU_SHARED_HOSTING.md) · [Безопасный деплой FastCGI](../SAFE_SSH_RELAY_DEPLOY.md)
-- [TLS-сертификаты](QUIC_TLS_ROTATION.md)
-- [Интерактивный установщик](BETA4_3_INSTALL_WIZARD.md)
-
-## 3. Устройство и безопасность
-
-- [Архитектура](ARCHITECTURE.md) · [QUIC и HTTPS](BETA_4_TRANSPORTS.md)
-- [Ограничения безопасности](SECURITY.md) · [Пределы маскировки](TRAFFIC_CAMOUFLAGE_LIMITS.md)
-- [Тестирование](TESTING.md) · [Fail-closed проверки](ANDROID_FAIL_CLOSED_TEST_PLAN.md)
-- [Сетевые ограничения](NETWORK_COMPATIBILITY.md) · [Проект QUIC DATAGRAM — не реализован](QUIC_DATAGRAM_DESIGN.md)
-
-## 4. Разработчику релиза
-
-- [Статус beta.4.3](BETA4_3_STATUS.md) · [Процесс выпуска](RELEASE_ENGINEERING_BETA43.md)
-- [Чек-лист](../../RELEASE_CHECKLIST.ru.md) · [Подпись APK](ANDROID_RELEASE_ENGINEERING.md)
-- [Аудит документации](BETA4_3_DOCUMENTATION_AUDIT.md)
-
-**Примечание:** статьи с прежними номерами версий или датами остаются историческими. Если Git-репозиторий или панель показывает beta.4.3, это ещё не означает, что бинарник origin на VPS уже обновлён.
+**Открытые риски:** CPU/воркеры REG.RU, батарея/долгий простой Android, реальные физические утечки/Lockdown и проверка уведомления после публикации. Зелёные unit-тесты не закрывают их.

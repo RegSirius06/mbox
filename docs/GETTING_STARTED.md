@@ -1,3 +1,5 @@
+**beta.4.4:** Profile chooser displays country exit variants from a v2 subscription. Hidden developer UDP routing (seven MBox title taps) supports AUTO / STREAMS only / DATAGRAM only; keep AUTO for ordinary use. The app may check GitHub Releases through an active VPN and show a dismissible update notice; no direct network bypass.
+
 # MBox Android: getting started
 
 [Русский](ru/GETTING_STARTED.md) · [Home](../README.md)
@@ -8,7 +10,7 @@ An **Android 10+ / ARM64** device, the signed MBox APK, and a valid administrato
 
 ## Install and connect
 
-1. After the release has been published, get `MBox-1.0.0-beta.4.3-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases). Until publication, this is the planned artifact name, not a live download.
+1. After the release has been published, get `MBox-1.0.0-beta.4.4-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases). Until publication, this is the planned artifact name, not a live download.
 2. Install the signed APK. Treat provisioning and subscription URLs as secrets.
 3. Open MBox → Settings → Profiles. Import from clipboard or paste a profile/subscription URL. HTTPS subscriptions can expose more than one available ingress/profile.
 4. Tap **Connect** and approve Android's VPN request. Wait for **Connected via QUIC/HTTPS**.
@@ -30,7 +32,7 @@ MBox defaults to the phone language, with **English and Russian** choices. The i
 
 ## Upgrade safely
 
-Use a production-signed APK from the trusted source with the **same signing certificate**. Install over the existing version; via ADB: `adb install -r MBox-1.0.0-beta.4.3-android-arm64.apk`. Confirm that profiles and subscriptions persist. **Do not uninstall first**, or stored credentials can be lost.
+Use a production-signed APK from the trusted source with the **same signing certificate**. Install over the existing version; via ADB: `adb install -r MBox-1.0.0-beta.4.4-android-arm64.apk`. Confirm that profiles and subscriptions persist. **Do not uninstall first**, or stored credentials can be lost.
 
 ## Troubleshooting and security
 

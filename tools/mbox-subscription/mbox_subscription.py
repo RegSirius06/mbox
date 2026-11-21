@@ -9,6 +9,7 @@ import base64
 import configparser
 from datetime import datetime, timezone
 import hashlib
+import grp
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
@@ -26,6 +27,8 @@ from urllib.parse import urlsplit
 
 DB = Path(os.environ.get('MBOX_STATE', '/var/lib/mbox')) / 'users.db'
 CONF = Path(os.environ.get('MBOX_ETC', '/etc/mbox')) / 'mbox.conf'
+EGRESS = Path(os.environ.get('MBOX_EGRESS', str(CONF.parent / 'egress.json')))
+DEFAULT_EXIT_LABEL = Path(os.environ.get('MBOX_SUB_DEFAULT_EXIT_LABEL', str(CONF.parent / 'subscription-default-exit-label')))
 INGRESS = Path(os.environ.get('MBOX_SUB_ENDPOINTS', '/etc/mbox/subscription-endpoints.json'))
 CTL = Path(os.environ.get('MBOX_SUB_CTL', '/usr/local/bin/mboxctl'))
 LINK_KEY = Path(os.environ.get('MBOX_SUB_LINK_KEY', '/etc/mbox/subscription-link.key'))
@@ -261,6 +264,96 @@ def write_endpoints(items):
         tmp.unlink(missing_ok=True)
 
 
+# Same allowlist as the origin. Egresses are local SOCKS5 listeners, never
+# arbitrary user-supplied IP addresses or a second FastCGI ingress.
+def valid_egress(entry):
+    if not isinstance(entry, dict) or set(entry) != {'id','name','upstream'}:
+        fail('invalid egress entry')
+    ident, name, upstream = entry['id'], entry['name'], entry['upstream']
+    if not isinstance(ident, str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,15}', ident):
+        fail('invalid exit ID')
+    if not isinstance(name, str) or not 1 <= len(name) <= 48 or any(c in name for c in '\r\n\t'):
+        fail('invalid exit name')
+    if not isinstance(upstream, str) or len(upstream) > 64:
+        fail('invalid exit upstream')
+    from ipaddress import ip_address
+    import socket
+    try:
+        host,port = (upstream[1:].split(']:',1) if upstream.startswith('[') else upstream.rsplit(':',1))
+        ip = ip_address(host)
+        if not ip.is_loopback or not port.isdecimal() or not 1 <= int(port) <= 65535:
+            fail('upstream must be loopback SOCKS5 IP:port')
+    except (ValueError, TypeError, IndexError):
+        fail('upstream must be loopback SOCKS5 IP:port')
+    return {'id':ident,'name':name,'upstream':upstream}
+
+
+def configured_exits():
+    if not EGRESS.exists():
+        return []
+    if EGRESS.is_symlink() or EGRESS.stat().st_size > 8192 or not EGRESS.is_file():
+        fail('invalid egress file')
+    obj = json.loads(EGRESS.read_text(encoding='utf-8'))
+    if not isinstance(obj, dict) or set(obj) != {'exits'} or not isinstance(obj['exits'],list) or len(obj['exits']) > 12:
+        fail('invalid egress file')
+    exits = [valid_egress(row) for row in obj['exits']]
+    if len({item['id'] for item in exits}) != len(exits):
+        fail('duplicate egress ID')
+    return exits
+
+
+def write_exits(rows):
+    if not EGRESS.parent.is_dir() or EGRESS.is_symlink() or len(rows) > 12:
+        fail('unsafe egress location')
+    checked=[valid_egress(row) for row in rows]
+    if len({row['id'] for row in checked}) != len(checked):
+        fail('duplicate exit ID')
+    data=(json.dumps({'exits':checked},indent=2,ensure_ascii=False)+'\n').encode('utf-8')
+    tmp=EGRESS.with_name('.egress-'+str(os.getpid())+'-'+secrets.token_hex(4)+'.tmp')
+    fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    try:
+        with os.fdopen(fd,'wb') as f:
+            # Admin runs as root with UMask=0077. Keep each atomic
+            # replacement readable by the unprivileged origin user.
+            if EGRESS == Path('/etc/mbox/egress.json'):
+                os.fchown(f.fileno(), -1, grp.getgrnam('mbox').gr_gid)
+                os.fchmod(f.fileno(), 0o640)
+            f.write(data); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp,EGRESS)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def validate_default_exit_label(label):
+    if not isinstance(label, str) or not 1 <= len(label) <= 48 or any(ord(c) < 32 or ord(c) == 127 for c in label):
+        fail('invalid default exit label')
+    return label
+
+
+def default_exit_label():
+    if not DEFAULT_EXIT_LABEL.exists() and not DEFAULT_EXIT_LABEL.is_symlink():
+        return 'Default'
+    if DEFAULT_EXIT_LABEL.is_symlink() or not DEFAULT_EXIT_LABEL.is_file() or DEFAULT_EXIT_LABEL.stat().st_size > 192:
+        fail('invalid default exit label file')
+    return validate_default_exit_label(DEFAULT_EXIT_LABEL.read_text(encoding='utf-8').removesuffix('\n'))
+
+
+def write_default_exit_label(label):
+    label = validate_default_exit_label(label)
+    if not DEFAULT_EXIT_LABEL.parent.is_dir() or DEFAULT_EXIT_LABEL.parent.is_symlink() or DEFAULT_EXIT_LABEL.is_symlink():
+        fail('unsafe default exit label location')
+    temp = DEFAULT_EXIT_LABEL.with_name('.subscription-default-exit-' + secrets.token_hex(6) + '.tmp')
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(label + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, DEFAULT_EXIT_LABEL)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def ctl_module():
     # Reuse the authoritative beta.4.2 profile generator; no second wire codec.
     loader = SourceFileLoader('_mbox_subscription_ctl', str(CTL))
@@ -275,15 +368,16 @@ def ctl_module():
     return mod
 
 
-def profile_link(ctl, uid, entry):
+def profile_link(ctl, uid, entry, exit_row=None, display_name=None):
     link = ctl.build_link(uid)
     if not link.startswith('mbox://'):
         fail('mboxctl returned an invalid link')
     token = link[7:].split('#', 1)[0]
     raw = base64.urlsafe_b64decode(token + '=' * (-len(token) % 4))
     obj = json.loads(raw)
-    obj['name'] = entry['name']
+    obj['name'] = display_name if display_name is not None else (entry['name'] if exit_row is None else exit_row['name'] + ' · ' + entry['name'])
     obj['transport']['url'] = entry['url']
+    if exit_row is not None: obj['transport']['egress_id'] = exit_row['id']
     raw = json.dumps(obj, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     return 'mbox://' + base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=') + '#' + entry['id']
 
@@ -300,7 +394,7 @@ def is_expired(value):
         return True
 
 
-def subscription_document(token):
+def subscription_document(token, extended=False):
     if not TOKEN.fullmatch(token):
         return None
     digest = hashlib.sha256(token.encode('ascii')).hexdigest()
@@ -312,10 +406,33 @@ def subscription_document(token):
         return None
     endpoints = configured_endpoints()
     ctl = ctl_module()
-    profiles = [{'id': x['id'], 'name': x['name'], 'link': profile_link(ctl, row['id'], x)}
-                for x in endpoints]
+    exits = configured_exits() if extended else []
+    if exits:
+        # Preserve existing ingress profile IDs, so an update never silently
+        # redirects a beta.4.3-selected profile to a different country.
+        if len(endpoints)*(len(exits)+1)>MAX_PROFILES:
+            fail('too many ingress-exit combinations (max 12)')
+        base_name = default_exit_label()
+        # For a single ingress display only the country/exit label, not the
+        # implementation detail "Primary". Keep all endpoint IDs unchanged.
+        def display(exit_name, endpoint):
+            return exit_name if len(endpoints) == 1 else exit_name + ' · ' + endpoint['name']
+        profiles = [{'id': x['id'], 'name': display(base_name, x),
+                     'link': profile_link(ctl, row['id'], x, display_name=display(base_name, x))}
+                    for x in endpoints]
+        profiles += [{'id': x['id'] + '_' + e['id'], 'name': display(e['name'], x),
+                      'link': profile_link(ctl, row['id'], x, e, display_name=display(e['name'], x))}
+                     for x in endpoints for e in exits]
+    else:
+        profiles = [{'id': x['id'], 'name': x['name'], 'link': profile_link(ctl,row['id'],x)}
+                    for x in endpoints]
+    # Fail closed before emitting an unusable Android bundle when ingress and
+    # exit IDs collide or their combination exceeds the 32-byte profile ID cap.
+    ids=[p['id'] for p in profiles]
+    if len(ids)!=len(set(ids)) or any(not ENDPOINT_ID.fullmatch(x) for x in ids):
+        fail('duplicate or oversized subscription profile ID')
     return {
-        'version': 1,
+        'version': 2 if exits else 1,
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'account': {'expires_at': row['expires_at'],
                     'session_limit': row['max_sessions'],
@@ -370,7 +487,7 @@ class SubscriptionHandler(BaseHTTPRequestHandler):
             status = 404
         else:
             try:
-                payload = subscription_document(p[len(PREFIX):])
+                payload = subscription_document(p[len(PREFIX):], extended=('application/vnd.mbox.subscription.v2+json' in self.headers.get('Accept', '')))
             except (sqlite3.Error, OSError, ValueError, KeyError, ImportError):
                 status = 503
             if payload is None and status == 200:
@@ -400,8 +517,32 @@ class SubscriptionHandler(BaseHTTPRequestHandler):
 def command(args):
     if args.operation == 'check':
         configured_endpoints()
+        configured_exits()
+        default_exit_label()
         public_url()
         print('CONFIG OK: endpoints='+str(len(configured_endpoints())))
+        return
+    if args.operation == 'exit-default-get':
+        print(default_exit_label())
+        return
+    if args.operation == 'exit-default-set':
+        write_default_exit_label(args.name)
+        print('DEFAULT EXIT LABEL SAVED')
+        return
+    if args.operation == 'exit-list':
+        for row in configured_exits():
+            print(row['id'],row['name'],row['upstream'],sep='\t')
+        return
+    if args.operation == 'exit-set':
+        rows=[row for row in configured_exits() if row['id'] != args.id]
+        rows.append(valid_egress({'id':args.id,'name':args.name,'upstream':args.upstream}))
+        write_exits(rows)
+        print('EXIT SAVED:',args.id)
+        return
+    if args.operation == 'exit-delete':
+        rows=[row for row in configured_exits() if row['id'] != args.id]
+        write_exits(rows)
+        print('EXIT DELETED:',args.id)
         return
     if args.operation == 'endpoint-list':
         for x in configured_endpoints():
@@ -452,6 +593,11 @@ def main():
     p = argparse.ArgumentParser(description='MBox subscription issuer and HTTPS reverse-proxy upstream')
     sub = p.add_subparsers(dest='operation', required=True)
     sub.add_parser('check')
+    sub.add_parser('exit-list')
+    sub.add_parser('exit-default-get')
+    a = sub.add_parser('exit-default-set'); a.add_argument('name')
+    a = sub.add_parser('exit-set'); a.add_argument('id'); a.add_argument('name'); a.add_argument('upstream')
+    a = sub.add_parser('exit-delete'); a.add_argument('id')
     sub.add_parser('endpoint-list')
     a = sub.add_parser('endpoint-set'); a.add_argument('id'); a.add_argument('name'); a.add_argument('url')
     a = sub.add_parser('endpoint-delete'); a.add_argument('id')

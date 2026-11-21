@@ -1,3 +1,11 @@
+## 1.0.0-beta.4.4 — on-demand UDP DATAGRAM, routed exits and release hardening / 2026-11-21
+
+- Per-lane authenticated QUIC DATAGRAM for application UDP: on-demand start, idle expiry, monotonic rekey epochs with independent AEAD contexts, replay protection, fallback to streams. No periodic DATAGRAM keepalive.
+- Hidden UDP developer choice: AUTO (default), STREAMS only, DATAGRAM only; control/TCP remain reliable. Android power/reconnect improvements and profile chooser polish.
+- Subscription v2 with authenticated `egress_id` and origin-allowlisted SOCKS5; stable subscription v1 for beta.4.3 and default exit. Field-verified DK and KZ.
+- Admin SSH access, exit-label and country-exit management; hardened egress configuration permission (`root:mbox 0640`). `install.sh --check` read-only; origin/gateway/frontend updates separate.
+- Known issues: REG.RU FastCGI CPU/worker resource risk unresolved; Android battery profiling and physical-network leak matrix pending. See [release notes](RELEASE_NOTES.md).
+
 <!-- MBOX_BETA43_DOCS10 -->
 ## 1.0.0-beta.4.3 — Android, administration and installer update / 2026-11-17
 

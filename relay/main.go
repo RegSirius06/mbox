@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/fcgi"
 	"net/http/httputil"
 	"net/url"
 	"os"
@@ -295,6 +294,11 @@ func main() {
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("upstream error")
+		// Reuse healthy connections. On a transport failure, discard idle
+		// upstream connections; active requests are not interrupted.
+		if r.Context().Err() != context.Canceled {
+			transport.CloseIdleConnections()
+		}
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 
@@ -334,6 +338,7 @@ func main() {
 
 		slot, ok := acquireSlot(cfg)
 		if !ok {
+			logSlotBusy()
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "Service Busy", http.StatusServiceUnavailable)
 			return
@@ -346,7 +351,11 @@ func main() {
 		proxy.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	if err := fcgi.Serve(nil, handler); err != nil {
+	guardedHandler := fcgiWatchdog(handler, fcgiHardLimit, func() {
+		log.Print("FCGI_WATCHDOG_EXIT reason=request_deadline")
+		os.Exit(1) // this worker only; the kernel releases its locks
+	})
+	if err := serveGuardedFastCGI(guardedHandler); err != nil {
 		log.Fatal(err)
 	}
 }

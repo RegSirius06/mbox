@@ -17,6 +17,7 @@ func main() {
 		log.Fatalf("RUNTIME STATUS: %v", err)
 	}
 	configPath := runtimeConfigPath("/etc/mbox/server.json")
+	setEgressConfigDirectory(configPath)
 	if err := loadRuntimeConfig(configPath); err != nil {
 		log.Fatalf("CONFIG: %v", err)
 	}
@@ -35,6 +36,16 @@ func main() {
 	startRuntimeStatusLoop()
 	startSessionExpiryLoop()
 	startCoverEngine(coverCfg)
+	// Experimental datagram lane is opt-in and not part of HTTP/REG.RU.
+	if path := os.Getenv("MBOX_DATAGRAM_ORIGIN_UNIX"); path != "" && enableUDPLabServer {
+		laneListener, err := startOriginDatagrams(path)
+		if err != nil {
+			log.Print("DATAGRAM code=ORIGIN_LISTENER_UNAVAILABLE")
+		} else {
+			defer laneListener.Close()
+			log.Print("DATAGRAM code=ORIGIN_LISTENING")
+		}
+	}
 
 	srv := &http.Server{
 		Addr: listen, Handler: metricsMiddleware(originAuthMiddleware(mux)), ReadHeaderTimeout: 5 * time.Second,

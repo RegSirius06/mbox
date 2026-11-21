@@ -204,7 +204,11 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 			_ = appendFrame(s, streamID, frameError, []byte("global stream quota exceeded"))
 			return nil
 		}
-		conn, err := net.DialTimeout("tcp", socksAddr, 5*time.Second)
+		upstream := s.upstreamAddr
+		if upstream == "" {
+			upstream = socksAddr
+		}
+		conn, err := net.DialTimeout("tcp", upstream, 5*time.Second)
 		if err != nil {
 			totalStreams.Add(-1)
 			_ = appendFrame(s, streamID, frameError, []byte("connect upstream failed"))
@@ -267,16 +271,20 @@ func handleFrame(s *session, streamID uint32, typ byte, payload []byte) error {
 		}
 		return st.addSendCredit(credit)
 	case frameUDPOpen:
-		if len(payload) != 0 {
-			return fmt.Errorf("UDP OPEN payload must be empty")
+		if len(payload) != 0 && (len(payload) != 1 || payload[0] != 1) {
+			return fmt.Errorf("invalid UDP OPEN mode")
 		}
-		if err := newUDPFlow(s, streamID); err != nil {
+		if err := newUDPFlowMode(s, streamID, len(payload) == 1); err != nil {
 			_ = appendFrame(s, streamID, frameError, []byte("UDP open rejected"))
 		}
 		return nil
 	case frameUDPData:
 		if !enableUDPLabServer {
 			return fmt.Errorf("UDP disabled")
+		}
+		// Debug DATAGRAM-only flows cannot smuggle UDP via stream frames.
+		if udpFlowDatagramsOnly(s, streamID) {
+			return nil
 		}
 		return onUDPData(s, streamID, payload)
 	case frameClose:

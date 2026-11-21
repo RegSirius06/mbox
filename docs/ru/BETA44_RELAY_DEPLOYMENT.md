@@ -1,0 +1,5 @@
+# beta.4.4: штатное обновление Relay
+
+`bash install.sh --relay-only` собирает Relay из текущих исходников, выполняет штатные тесты и проверку конфигурации, сохраняет предыдущие локальные файлы, устанавливает CLI и бинарник в стандартные пути. Origin и QUIC не перезапускаются. REG.RU не изменяется до отдельной команды deploy.
+
+Один раз: `mboxctl relay configure --ssh USER@HOST --remote-dir /path/to/site --remote-private-dir /path/to/private`. Параметры сохраняются в `/etc/mbox/relay-deploy.json` (0600, без паролей). `mboxctl relay deploy --dry-run`, затем `mboxctl relay deploy` используют установленный Relay и действующий `server.json`. Явные параметры для staging сохранены. `mboxctl relay status` сравнивает SHA-256 local/remote и показывает последний backup. После обрыва SSH сначала проверять status, а не повторять deploy. Health и rollback остаются штатными. Не изменяет лимиты, ключи origin, маршрутизацию или DNS намеренно; деплой передаёт существующий HMAC и сгенерированную конфигурацию как прежде. При ошибке между локальными заменами восстановить файлы из LOCAL_BACKUP. Испытания на реальном хостинге обязательны.

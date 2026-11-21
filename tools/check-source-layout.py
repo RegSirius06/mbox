@@ -3,11 +3,11 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[1]
 LIMITS={".go":700,".java":650}
-# Temporary allowance for the beta.4.1 Android supervisor.
+# Bounded allowances for the beta.4.4 Android supervisor and home UI.
 ANDROID = ROOT / "android/app/src/main/java/io/mbox/android"
 EXCEPTIONS = {
-    ANDROID / "MBoxVpnService.java": 850,
-    ANDROID / "MainActivity.java": 1100,  # beta.4.3 UI
+    ANDROID / "MBoxVpnService.java": 875,  # wake handler and QS tile
+    ANDROID / "MainActivity.java": 1170,  # compact home, profile refresh, footer links
 }
 roots=[ROOT/"client",ROOT/"server",ROOT/"android"/"app"/"src"/"main"/"java"]
 bad=[]

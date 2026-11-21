@@ -51,7 +51,7 @@ def test_reg_ru_cpu_not_faked_and_version_is_current_ui():
     html=(ROOT/'tools/mbox-admin/index.html').read_text()
     assert 'MBOX_BETA43_THEME_BRAND8' in html
     assert 'beta.4.2' not in html
-    assert 'Нет интеграции с REG.RU' in html
+    assert 'Не тарифная статистика REG.RU.' in html
     assert 'Автоматического опроса нет.' in html
     assert 'REG.RU · CPU / ресурсы' in html
     assert 'mboxAdminSelectTab' in html

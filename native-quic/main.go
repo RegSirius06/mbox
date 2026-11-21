@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"flag"
@@ -54,13 +55,23 @@ func run(args []string) error {
 			return err
 		}
 		cfg := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}}
-		s := &http3.Server{Addr: *bind, TLSConfig: cfg, Handler: makeServerHandler(addr, paths, secret, localHTTPClient()), MaxHeaderBytes: 32 << 10, IdleTimeout: 45 * time.Second}
+		handler := makeServerHandler(addr, paths, secret, localHTTPClient())
+		dgramOrigin := os.Getenv("MBOX_DATAGRAM_ORIGIN_UNIX")
+		if dgramOrigin != "" {
+			handler = wrapDatagramServer(handler, paths, dgramOrigin)
+		}
+		s := &http3.Server{Addr: *bind, TLSConfig: cfg, Handler: handler, MaxHeaderBytes: 32 << 10, IdleTimeout: 45 * time.Second, EnableDatagrams: dgramOrigin != ""}
+		if dgramOrigin != "" {
+			s.ConnContext = datagramConnContext
+		}
 		log.Printf("MBox QUIC UDP listening on %s (authenticated origin forwarding)", *bind)
 		return s.ListenAndServe()
 	case "client":
 		fs := flag.NewFlagSet("client", flag.ContinueOnError)
 		bind := fs.String("bind", "127.0.0.1:18451", "loopback HTTP proxy for MBox client")
 		unixListen := fs.String("unix-listen", "", "app-private Unix HTTP socket (Android)")
+		probe := fs.Bool("probe", false, "bounded HTTP/3 connectivity check; no MBox session")
+		datagrams := fs.Bool("datagrams", false, "experimental Noise-authenticated UDP lane; requires private Unix socket")
 		protectPath := fs.String("protect-socket", "", "Android protected-UDP socket bridge")
 		protectToken := fs.String("protect-token", "", "socket protection session token")
 		remote := fs.String("remote", "", "required https://host:port to MBox QUIC VPS")
@@ -109,6 +120,19 @@ func run(args []string) error {
 			return err
 		}
 		defer transport.Close()
+		if *probe {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			defer cancel()
+			return probeHTTP3(ctx, c, remoteURL)
+		}
+		if *datagrams && *unixListen != "" {
+			laneListener, err := startClientDatagrams(*unixListen+".dgram", remoteURL, paths, transport)
+			if err != nil {
+				log.Print("DATAGRAM code=LOCAL_LISTENER_UNAVAILABLE")
+			} else {
+				defer laneListener.Close()
+			}
+		}
 		log.Printf("MBox QUIC client on %s -> %s (HTTPS path remains independent)", *bind, remoteURL.Host)
 		if *unixListen != "" {
 			return serveLocalHTTPUnix(*unixListen, makeClientHandler(remoteURL, paths, c))

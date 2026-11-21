@@ -28,16 +28,24 @@ type udpQueuedDatagram struct {
 }
 
 type udpFlow struct {
-	assoc      *socksUDPAssociation
-	queued     chan udpQueuedDatagram
-	done       chan struct{}
-	closed     atomic.Bool
-	ready      atomic.Bool
-	lastActive atomic.Int64
-	enqueueMu  sync.Mutex
-	rateMu     sync.Mutex
-	window     time.Time
-	packets    int
+	datagramOnly bool // fixed at association OPEN; control frames stay reliable
+	assoc        *socksUDPAssociation
+	queued       chan udpQueuedDatagram
+	done         chan struct{}
+	closed       atomic.Bool
+	ready        atomic.Bool
+	lastActive   atomic.Int64
+	enqueueMu    sync.Mutex
+	rateMu       sync.Mutex
+	window       time.Time
+	packets      int
+}
+
+func udpFlowDatagramsOnly(s *session, id uint32) bool {
+	s.mu.Lock()
+	f := s.udpFlows[id]
+	s.mu.Unlock()
+	return f != nil && f.datagramOnly
 }
 
 func (f *udpFlow) touch() { f.lastActive.Store(time.Now().UnixNano()) }
@@ -89,6 +97,10 @@ func closeUDPFlow(s *session, id uint32, expected *udpFlow, notify bool) {
 }
 
 func newUDPFlow(s *session, id uint32) error {
+	return newUDPFlowMode(s, id, false)
+}
+
+func newUDPFlowMode(s *session, id uint32, datagramOnly bool) error {
 	if !enableUDPLabServer {
 		return fmt.Errorf("UDP is disabled")
 	}
@@ -120,7 +132,7 @@ func newUDPFlow(s *session, id uint32) error {
 		s.mu.Unlock()
 		return fmt.Errorf("global stream quota exceeded")
 	}
-	f := &udpFlow{queued: make(chan udpQueuedDatagram, udpPerFlowPending), done: make(chan struct{})}
+	f := &udpFlow{datagramOnly: datagramOnly, queued: make(chan udpQueuedDatagram, udpPerFlowPending), done: make(chan struct{})}
 	f.touch()
 	if s.udpFlows == nil {
 		s.udpFlows = make(map[uint32]*udpFlow)
@@ -132,7 +144,11 @@ func newUDPFlow(s *session, id uint32) error {
 }
 
 func startUDPFlow(s *session, id uint32, f *udpFlow) {
-	assoc, err := dialSOCKSUDP(socksAddr)
+	upstream := s.upstreamAddr
+	if upstream == "" {
+		upstream = socksAddr
+	}
+	assoc, err := dialSOCKSUDP(upstream)
 	if err != nil {
 		_ = appendFrame(s, id, frameError, []byte("UDP upstream unavailable"), f)
 		closeUDPFlow(s, id, f, false)
@@ -200,6 +216,14 @@ func udpFlowReceiver(s *session, id uint32, f *udpFlow) {
 		if err != nil {
 			closeUDPFlow(s, id, f, true)
 			return
+		}
+		if s.datagramLane.Load().Offer(id, out) {
+			continue
+		}
+		// With DATAGRAM-only selected, never return UDP via streams.
+		// Drop during negotiation / idle instead of buffering unbounded data.
+		if f.datagramOnly {
+			continue
 		}
 		if err := appendFrame(s, id, frameUDPData, out, f); err != nil {
 			closeUDPFlow(s, id, f, true)

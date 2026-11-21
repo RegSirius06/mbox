@@ -12,6 +12,7 @@ import (
 type runtimeTransportConfig struct {
 	Listen       string `json:"listen"`
 	URL          string `json:"url"`
+	EgressID     string `json:"egress_id,omitempty"`
 	EnableUDP    bool   `json:"enable_udp,omitempty"`
 	EnableUDPLab bool   `json:"enable_udp_lab,omitempty"`
 }
@@ -35,6 +36,7 @@ type runtimeConfig struct {
 }
 
 var (
+	egressID               string
 	clientID               string
 	deviceID               string
 	networkDebug           bool
@@ -148,6 +150,10 @@ func loadRuntimeConfig(path string) error {
 	}
 	// Unlike diagnostic network logging, authenticated MBox UDP forwarding is
 	// supported in release builds. The old lab switch retains its developer gate.
+	if cfg.Transport.EgressID != "" && !validEgressID(cfg.Transport.EgressID) {
+		return fmt.Errorf("invalid transport.egress_id")
+	}
+	egressID = cfg.Transport.EgressID
 	enableUDPClient = cfg.Transport.EnableUDP || cfg.Transport.EnableUDPLab
 	listen = cfg.Transport.Listen
 	base = cfg.Transport.URL

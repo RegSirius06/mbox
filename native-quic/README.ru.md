@@ -1,3 +1,5 @@
+**beta.4.4:** отдельный QUIC DATAGRAM переносит UDP по запросу, засыпает и переподключается с новой аутентифицированной эпохой без постоянных PING. TCP/управление продолжают использовать надёжные HTTP/3 streams. См. [DATAGRAM](../docs/ru/BETA44_DATAGRAM_EXPERIMENT.md).
+
 # MBox native QUIC / HTTP3 — beta.4.1
 
 [English](README.md) · [Android](../docs/ru/ANDROID_BETA4_1.md) · [Ротация TLS](../docs/ru/QUIC_TLS_ROTATION.md)

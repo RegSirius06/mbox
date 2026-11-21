@@ -1,26 +1,23 @@
-# MBox architecture (beta.4.1)
+# MBox architecture — 1.0.0-beta.4.4
 
-<!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->
-> **Current beta.4.1 context:** The client checks authenticated Noise session health and can recover QUIC without restarting the VPN; see [current status](BETA4_1_STATUS.md), [transport/camouflage limits](TRAFFIC_CAMOUFLAGE_LIMITS.md), and [test evidence](TESTING.md). Older beta.2/3/4 observations in this document are historical, not proof of current P0 leak safety.
-
-[Русский](ru/ARCHITECTURE.md) · [Transports](BETA_4_TRANSPORTS.md)
+[Русский](ru/ARCHITECTURE.md) · [Subscriptions](MBOX_SUBSCRIPTIONS.md) · [DATAGRAM](BETA44_DATAGRAM_EXPERIMENT.md) · [Security](SECURITY.md)
 
 ```text
-Android apps -> VpnService/TUN -> HEV -> local Go MBox SOCKS -> Noise/MUX
-                                                        |
-                             +--> QUIC/HTTP3 over UDP --+--> VPS QUIC gateway --> origin --> sing-box --> exit
-                             |
-                             +--> Chromium Cronet HTTPS/HTTP2 over TCP --> shared hosting FastCGI --> origin
+Android apps -> VpnService/TUN -> HEV -> Go core / Noise / MUX
+                                              |
+               +--> QUIC/HTTP3/UDP -----------+--> VPS native QUIC gateway --> origin -----+
+               |                              |                                           |
+               +--> HTTPS/Cronet/TCP ---------+--> shared-host FastCGI -----> origin -----+--> sing-box SOCKS5 exit (DK, KZ, ...)
+
+On QUIC: real application UDP -> separate QUIC DATAGRAM lane when ready; otherwise MBox STREAMS
+On HTTPS: application UDP -> encrypted MBox STREAMS, externally carried by TCP
+TCP/control: reliable MBox STREAMS on either outer transport
 ```
 
-The **frontend**, **origin**, and **exit** can run on separate providers and in separate countries. REG.RU shared hosting serves a regular website and FastCGI relay; it is **not** the RU VPS. A direct QUIC route bypasses FastCGI. An origin may forward through sing-box to a separate exit.
+**Ingress vs exit:** QUIC and FastCGI are independent *entry paths*, not separate user subscriptions or countries. Origin authenticates Noise sessions and decides an allowlisted SOCKS5 route. A default route is kept for beta.4.3/older MBD1 clients; beta.4.4 uses authenticated MBD2 `egress_id` to request named exits. One canonical subscription may produce profiles for several exits. The same origin remains a single point of failure.
 
-**Application UDP:** SOCKS UDP/flow datagrams traverse authenticated MBox data records on either path. HTTPS uses TCP externally; QUIC uses UDP externally but HTTP/3 streams internally. Do not describe either as QUIC DATAGRAM or transparent direct UDP from the application to the destination.
+**Transport AUTO** prefers QUIC, switches to HTTPS after network/transport failure; this can reset active streams. **UDP AUTO** is distinct: if the DATAGRAM lane is up and payload fits it, datagrams are sent there; otherwise new UDP data use reliable MBox streams. Replays/duplicate datagram packets and bounded queues are handled in the DATAGRAM layer; encrypted association OPEN/CLOSE remain in reliable streams. An idle dedicated lane may time out after about 30s and reattach on real UDP demand with independently derived AES-GCM key/nonce domains per epoch. No periodic DATAGRAM PING; not seamless multipath.
 
-**Auto:** tries QUIC first when configured, falls back to HTTPS on failed connection and reevaluates after network change. Existing connections can reset; this is not seamless migration/multipath or continuous performance racing.
+**Noise formats:** session encryption and record-v2 are separate from MBD1/MBD2 authenticated OPEN metadata. MBD2 is not an unauthenticated HTTP query and never lets the client specify an arbitrary SOCKS5 address. The server validates an `egress_id` against its configured local allowlist.
 
-**Profile:** `mbox://` contains client credentials and transport configuration. `transport.quic_url` and `transport.quic_ca_pem` are required together, and are omitted for HTTPS-only clients. The APK never contains the operator's endpoint/certificate. Keep private profiles out of source and issue reports.
-
-**beta.4.1 recovery:** existing authenticated Noise framePing/pong, gateway/HEV health watch, VPN CONNECTING/VERIFYING/RECOVERING, and TUN-preserving reconnect. See [status](BETA4_1_STATUS.md).
-
-**Security and reliability:** Noise authentication/encryption, DOWN replay/ACK, quotas/bounded queues, Android system VPN and optional Lockdown. These mechanisms do not replace packet-capture verification, independent auditing or documented operational limits.
+**Security/operations:** authenticate and authorize at origin; cap sessions, streams, queues and UDP traffic; preserve replay windows. Android should fail closed when physical connectivity is unavailable. Independent packet-capture/Lockdown, long-soak, battery and FastCGI CPU tests are still required; a successful field connection is not an assurance of leak-freedom.

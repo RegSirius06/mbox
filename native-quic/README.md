@@ -1,3 +1,5 @@
+**beta.4.4:** native QUIC supports a separate on-demand UDP DATAGRAM lane, idle close/reattach with origin authenticated epochs and no persistent DATAGRAM keepalive. This is distinct from reliable HTTP/3 streams used for TCP and control. See [DATAGRAM documentation](../docs/BETA44_DATAGRAM_EXPERIMENT.md).
+
 # MBox native QUIC / HTTP3 — beta.4.1
 
 [Русский](README.ru.md) · [Android](../docs/ANDROID_BETA4_1.md) · [TLS rotation](../docs/QUIC_TLS_ROTATION.md)

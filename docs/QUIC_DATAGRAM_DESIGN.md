@@ -1,3 +1,5 @@
+> **ARCHIVED DESIGN, NOT CURRENT STATUS:** QUIC DATAGRAM has been implemented for beta.4.4 as a bounded on-demand lane with epoch-based reattach. Read the [current behavior and limitations](BETA44_DATAGRAM_EXPERIMENT.md). Any 'not implemented' language below describes the older proposal only.
+
 # QUIC DATAGRAM — possible beta.5 design, NOT in beta.4.1
 
 [Русский](ru/QUIC_DATAGRAM_DESIGN.md) · [Transport behavior](BETA_4_TRANSPORTS.md)

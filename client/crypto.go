@@ -124,6 +124,16 @@ func buildOpenRequestForDevice(openDeviceID string) ([]byte, *noise.Handshake, [
 		return nil, nil, nil, err
 	}
 	payload, err := noiseDevicePayload(openDeviceID)
+	if err == nil && openDeviceID != "" && egressID != "" {
+		if !validEgressID(egressID) {
+			return nil, nil, nil, errors.New("invalid egress ID")
+		}
+		payload = append([]byte("MBD2"), payload[4:]...)
+		payload = append(payload, byte(len(egressID)))
+		payload = append(payload, []byte(egressID)...)
+	} else if err == nil && egressID != "" {
+		return nil, nil, nil, errors.New("routed Noise session requires device ID")
+	}
 	if err != nil {
 		return nil, nil, nil, err
 	}

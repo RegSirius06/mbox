@@ -1,3 +1,5 @@
+> **beta.4.4 additions:** an operator has tested QUIC DATAGRAM idle sleep/reattach, physical-network handovers and recovery, plus DK/KZ country exits and beta.4.3 legacy default compatibility. These are deployment-specific reports, **not** a carrier-wide throughput or power benchmark; the beta.4.1 observations below are historical.
+
 # Network compatibility — beta.4.1
 
 [Русский](ru/NETWORK_COMPATIBILITY.md) · [Testing](TESTING.md)

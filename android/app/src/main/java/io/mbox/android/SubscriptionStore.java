@@ -109,7 +109,7 @@ final class SubscriptionStore {
             conn.setConnectTimeout(7000);
             conn.setReadTimeout(7000);
             conn.setUseCaches(false);
-            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Accept", "application/vnd.mbox.subscription.v2+json, application/json");
             int status = conn.getResponseCode();
             if (status != 200) throw new Exception("Сервер подписки вернул HTTP " + status);
             if (conn.getContentLength() > MAX_BYTES) throw new Exception("Слишком большая подписка");
@@ -128,7 +128,7 @@ final class SubscriptionStore {
         } finally { if (conn != null) conn.disconnect(); }
     }
     private static void validate(JSONObject doc) throws Exception {
-        if (doc.getInt("version") != 1) throw new Exception("Неподдерживаемый формат подписки");
+        if (doc.getInt("version") != 1 && doc.getInt("version") != 2) throw new Exception("Неподдерживаемый формат подписки");
         JSONArray ps = doc.getJSONArray("profiles");
         if (ps.length() < 1 || ps.length() > 12) throw new Exception("Недопустимое число точек входа");
         String client = null, psk = null, server = null;
@@ -245,7 +245,7 @@ final class SubscriptionStore {
             String prefix = id.equals(activeId(c)) ? "● " : "";
             String name = candidate.name;
             if (name.length() > 50) name = name.substring(0, 50);
-            labels[i] = prefix + name + " · " + ps.length() + " вход(ов)";
+            labels[i] = prefix + name + " · " + ps.length() + " профилей";
         }
         return labels;
     }
@@ -273,9 +273,11 @@ final class SubscriptionStore {
     static void activate(Context c, String id) throws Exception {
         JSONArray ps = cached(c,id).getJSONArray("profiles");
         String selected = selectedEndpoint(c,id);
-        int index = 0;
+        int index = selected.isEmpty() ? 0 : -1;
         for (int i = 0; i < ps.length(); i++)
             if (ps.getJSONObject(i).getString("id").equals(selected)) { index = i; break; }
+        // Never silently switch countries if a previously selected exit vanished.
+        if (index < 0) throw new Exception("Выбранная страна больше не доступна. Выберите профиль вручную.");
         selectEndpoint(c,id,index);
     }
     static void applySelected(Context c) throws Exception {

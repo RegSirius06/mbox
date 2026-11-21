@@ -3,14 +3,14 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 
 def test_all_version_gates_agree():
-    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4.3'
+    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4.4'
     gradle=(ROOT/'android/app/build.gradle').read_text()
-    assert "versionName '1.0.0-beta.4.3'" in gradle
-    assert 'versionCode 10' in gradle
-    assert "mboxctl 1.0.0-beta.4.3" in (ROOT/'tools/mboxctl/mboxctl.py').read_text()
-    assert '1.0.0-beta.4.3' in (ROOT/'tools/build-release-apk.sh').read_text()
+    assert "versionName '1.0.0-beta.4.4'" in gradle
+    assert 'versionCode 11' in gradle
+    assert "mboxctl 1.0.0-beta.4.4" in (ROOT/'tools/mboxctl/mboxctl.py').read_text()
+    assert '1.0.0-beta.4.4' in (ROOT/'tools/build-release-apk.sh').read_text()
     gate=(ROOT/'tools/check-production-apk.sh').read_text()
-    assert "versionCode='10' versionName='1.0.0-beta.4.3'" in gate
+    assert "versionCode='11' versionName='1.0.0-beta.4.4'" in gate
 
 def test_ui_stays_cosmetic():
     ui=(ROOT/'android/app/src/main/java/io/mbox/android/MainActivity.java').read_text()

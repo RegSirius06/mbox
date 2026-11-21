@@ -1,4 +1,6 @@
-# MBox Android 1.0.0-beta.4.3
+**beta.4.4:** on-demand QUIC DATAGRAM for application UDP; no periodic PING, hidden three-way UDP developer selector; subscription v2 country profiles. See [DATAGRAM](../docs/BETA44_DATAGRAM_EXPERIMENT.md). Production-signed APK requires original certificate and versionCode 11.
+
+# MBox Android 1.0.0-beta.4.4
 
 [Русский](README.ru.md) · [User guide](../docs/GETTING_STARTED.md) · [Build and signing](../docs/RELEASE_ENGINEERING_BETA43.md)
 

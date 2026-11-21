@@ -65,7 +65,7 @@ if ! grep -q "package: name='io.mbox.android'" <<< "$package_info"; then
     exit 1
 fi
 # Refuse a signed APK with a stale version masquerading as the new release.
-if ! grep -q "versionCode='10' versionName='1.0.0-beta.4.3'" <<< "$package_info"; then
+if ! grep -q "versionCode='11' versionName='1.0.0-beta.4.4'" <<< "$package_info"; then
     echo 'FAIL: APK manifest version does not match beta.4.3' >&2
     exit 1
 fi

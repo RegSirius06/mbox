@@ -17,6 +17,7 @@ type runtimeTransportConfig struct {
 	Upstream             string `json:"upstream"`
 	BasePath             string `json:"base_path"`
 	OriginHMACSecretFile string `json:"origin_hmac_secret_file"`
+	EnableUDP            bool   `json:"enable_udp,omitempty"`
 	EnableUDPLab         bool   `json:"enable_udp_lab,omitempty"`
 }
 
@@ -69,7 +70,8 @@ type runtimeCryptoConfig struct {
 	ServerPrivateKeyFile        string                         `json:"server_private_key_file"`
 	CredentialDir               string                         `json:"credential_dir,omitempty"`
 	CredentialReloadSocket      string                         `json:"credential_reload_socket,omitempty"`
-	RequireAuthenticatedControl bool                           `json:"require_authenticated_control,omitempty"`
+	RequireAuthenticatedControl *bool                           `json:"require_authenticated_control,omitempty"`
+	AcceptLegacyEmptyOpen        *bool                          `json:"accept_legacy_empty_open,omitempty"`
 	Clients                     map[string]runtimeClientConfig `json:"clients"`
 }
 
@@ -86,6 +88,7 @@ var (
 	clientPolicies              = map[string]clientPolicy{}
 	coverCfg                    coverConfig
 	requireAuthenticatedControl bool
+	acceptLegacyEmptyOpen        = false
 	enableUDPLabServer          bool
 )
 
@@ -279,8 +282,10 @@ func loadRuntimeConfig(path string) error {
 	runtimeLimits = limits
 	credentialDirPath = cfg.Crypto.CredentialDir
 	credentialReloadSock = cfg.Crypto.CredentialReloadSocket
-	requireAuthenticatedControl = cfg.Crypto.RequireAuthenticatedControl
-	enableUDPLabServer = cfg.Transport.EnableUDPLab
+	requireAuthenticatedControl = cfg.Crypto.RequireAuthenticatedControl == nil || *cfg.Crypto.RequireAuthenticatedControl
+	acceptLegacyEmptyOpen = cfg.Crypto.AcceptLegacyEmptyOpen != nil && *cfg.Crypto.AcceptLegacyEmptyOpen
+	// The legacy variable gates authenticated UDP associations, not developer mode.
+	enableUDPLabServer = cfg.Transport.EnableUDP || cfg.Transport.EnableUDPLab
 	clientAuthMu.Lock()
 	clientPolicies = policies
 	policyIDsByAccount = buildPolicyAccountIndex(policies)

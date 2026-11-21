@@ -12,7 +12,7 @@ import (
 	noise "../common/noise"
 )
 
-func TestServerNoiseOnlyHandshakeInteroperates(t *testing.T) {
+func TestServerNoiseOnlyHandshakeInteroperatesBeta43(t *testing.T) {
 	oldPolicies, oldPriv, oldStatic := clientPolicies, serverPrivFile, append([]byte(nil), serverStaticPrivate...)
 	defer func() { clientPolicies, serverPrivFile, serverStaticPrivate = oldPolicies, oldPriv, oldStatic }()
 
@@ -34,7 +34,7 @@ func TestServerNoiseOnlyHandshakeInteroperates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg1, _, _, err := init.WriteMessage(nil)
+	msg1, _, _, err := init.WriteMessage(append([]byte("MBD1"), bytes.Repeat([]byte{0x11}, 16)...))
 	if err != nil {
 		t.Fatal(err)
 	}

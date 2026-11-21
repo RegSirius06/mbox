@@ -1,3 +1,5 @@
+> **beta.4.4 security status:** an independently authenticated QUIC DATAGRAM UDP lane and MBD2 country routing are now implemented; the additional AEAD epoch/replay scheme has **not** had independent cryptographic review. Neither successful Android reconnects nor passing Go tests prove physical-interface no-leak, Lockdown, TLS rotation or shared-host resource safety. See [current architecture](ARCHITECTURE.md) and [release checklist](../RELEASE_CHECKLIST.md). The older beta.4.1 section below is historical.
+
 > Candidate beta.4.1: [security verification pending](BETA4_1_STATUS.md) and [QUIC TLS operator runbook](QUIC_TLS_ROTATION.md). Physical leak capture is required before any P0 claim.
 
 <!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->

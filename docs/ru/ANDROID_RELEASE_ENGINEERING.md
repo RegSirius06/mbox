@@ -1,3 +1,5 @@
+**beta.4.4:** подписанный ARM64 APK должен иметь versionCode 11 и прежний сертификат. Проверьте `adb install -r` поверх подписанной beta.4.3 с сохранением профилей/Keystore. Скрытые режимы UDP включены в релиз, но не показаны на главном экране. См. [чек-лист](../../RELEASE_CHECKLIST.ru.md).
+
 # Сборка и подпись Android — MBox 1.0.0-beta.4.3
 
 [English](../ANDROID_RELEASE_ENGINEERING.md) · [Полное релизное руководство](RELEASE_ENGINEERING_BETA43.md)
