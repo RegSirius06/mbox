@@ -70,8 +70,8 @@ type runtimeCryptoConfig struct {
 	ServerPrivateKeyFile        string                         `json:"server_private_key_file"`
 	CredentialDir               string                         `json:"credential_dir,omitempty"`
 	CredentialReloadSocket      string                         `json:"credential_reload_socket,omitempty"`
-	RequireAuthenticatedControl *bool                           `json:"require_authenticated_control,omitempty"`
-	AcceptLegacyEmptyOpen        *bool                          `json:"accept_legacy_empty_open,omitempty"`
+	RequireAuthenticatedControl *bool                          `json:"require_authenticated_control,omitempty"`
+	AcceptLegacyEmptyOpen       *bool                          `json:"accept_legacy_empty_open,omitempty"`
 	Clients                     map[string]runtimeClientConfig `json:"clients"`
 }
 
@@ -88,7 +88,7 @@ var (
 	clientPolicies              = map[string]clientPolicy{}
 	coverCfg                    coverConfig
 	requireAuthenticatedControl bool
-	acceptLegacyEmptyOpen        = false
+	acceptLegacyEmptyOpen       = false
 	enableUDPLabServer          bool
 )
 
