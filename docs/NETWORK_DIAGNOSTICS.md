@@ -1,3 +1,5 @@
+**beta.4.4:** `DATAGRAM ACTIVE` followed by `STREAMS_FALLBACK` after about 30s without traffic may be an expected idle transition. Send a new *real* UDP packet to test on-demand reattach without restarting Noise. `REQUESTED` is not proof that a socket is connected or an attach was sent. Prefer stage codes and timestamps; sanitize log snippets.
+
 # Network diagnostics
 
 <!-- MBOX-BETA4.1-ACTIVE-CONTEXT -->

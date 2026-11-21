@@ -1,0 +1,5 @@
+# beta.4.4: managed relay updates
+
+`bash install.sh --relay-only` builds and tests the current relay, checks the config ABI, backs up the local CLI and relay, and installs them at their standard paths. It does not restart origin/QUIC or upload to REG.RU.
+
+Once: `mboxctl relay configure --ssh USER@HOST --remote-dir /path/to/site --remote-private-dir /path/to/private`. Settings are stored in `/etc/mbox/relay-deploy.json` (0600; no passwords). `mboxctl relay deploy --dry-run`, then `mboxctl relay deploy` use the installed relay and active server.json. Explicit staging overrides remain available. `mboxctl relay status` compares the local and remote SHA-256 and reports the latest backup. After SSH disconnect inspect status before repeating deployment. Existing health checks and rollback remain. No intentional change to origin keys, limits, routing or DNS; deploy transfers the existing HMAC and generated config as before. If local installation is interrupted between replacements, restore the files from LOCAL_BACKUP. Real shared-host acceptance remains required.

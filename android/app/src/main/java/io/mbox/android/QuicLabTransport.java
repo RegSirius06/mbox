@@ -39,8 +39,13 @@ final class QuicLabTransport implements Closeable {
     }
 
     static TransportPolicy.Mode mode(Context c) {
+        TransportPolicy.Mode explicit = TransportSettings.mode(c);
+        // Explicit forced modes never silently fall back. A forced QUIC profile
+        // without QUIC configuration fails closed at service startup.
+        if (explicit == TransportPolicy.Mode.QUIC || explicit == TransportPolicy.Mode.HTTPS) return explicit;
         if (!configured(c)) return TransportPolicy.Mode.HTTPS;
-        // Public APK ignores all old laboratory/manual transport preferences.
+        if (explicit == TransportPolicy.Mode.AUTO) return explicit;
+        // Public APK still ignores old laboratory preferences.
         if (!AppRuntime.udpLabEnabled(c)) return TransportPolicy.Mode.AUTO;
         android.content.SharedPreferences prefs = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String selected = prefs.getString(MODE, null);
@@ -62,6 +67,12 @@ final class QuicLabTransport implements Closeable {
         TransportPolicy.Mode next = current == TransportPolicy.Mode.AUTO ? TransportPolicy.Mode.HTTPS
                 : current == TransportPolicy.Mode.HTTPS ? TransportPolicy.Mode.QUIC
                 : TransportPolicy.Mode.AUTO;
+        // If the safe production preference was explicitly saved, the debug
+        // selector uses it too. The old debug preferences remain debug-only.
+        if (TransportSettings.mode(c) != null) {
+            TransportSettings.setMode(c, next);
+            return next;
+        }
         if (!c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(MODE, next.name()).commit()) {
             throw new IllegalStateException("Cannot persist transport selection");
@@ -82,6 +93,16 @@ final class QuicLabTransport implements Closeable {
     boolean isAlive() { return process.isAlive(); }
 
     QuicLabTransport(Context context, Network network) throws Exception {
+        this(context, network, false);
+    }
+
+    static QuicLabTransport startProbe(Context context, Network network) throws Exception {
+        return new QuicLabTransport(context, network, true);
+    }
+
+    boolean probeSucceeded() { return !process.isAlive() && process.exitValue() == 0; }
+
+    private QuicLabTransport(Context context, Network network, boolean probeOnly) throws Exception {
         if (!configured(context)) throw new IllegalStateException("QUIC not configured in profile");
         workDir = Files.createTempDirectory(context.getCacheDir().toPath(), "mbox-quic-").toFile();
         socketFile = new File(workDir, "http.sock");
@@ -133,28 +154,39 @@ final class QuicLabTransport implements Closeable {
 
             broker = new QuicSocketProtector(network);
             String binary = context.getApplicationInfo().nativeLibraryDir + "/libmboxquic.so";
-            child = new ProcessBuilder(binary, "client", "--unix-listen", socketFile.getAbsolutePath(),
+            ProcessBuilder builder = new ProcessBuilder(binary, "client", "--unix-listen", socketFile.getAbsolutePath(),
                     "--remote", remote, "--ca", ca.exists() ? ca.getAbsolutePath() : "",
                     "--server-name", profileQuic != null ? profileQuic.serverName : "",
                     "--server-config", routesFile.getAbsolutePath(),
                     "--protect-socket", broker.socketAddress(),
-                    "--protect-token", broker.token())
-                    .redirectErrorStream(true).start();
-            final Process loggedProcess = child;
-            new Thread(() -> {
-                try (java.io.BufferedReader lines = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(loggedProcess.getInputStream()))) {
-                    String line;
-                    while ((line = lines.readLine()) != null) Log.i("MBox", "QUIC: " + MBoxLogSanitizer.sanitize(line));
-                } catch (Exception ignored) { }
-            }, "MBox-quic-log").start();
-            for (int i = 0; i < 50 && !socketFile.exists() && child.isAlive(); i++) {
-                Thread.sleep(100);
+                    "--protect-token", broker.token());
+            if (probeOnly) {
+                builder.command().add("--probe");
+                builder.redirectOutput(new File("/dev/null"));
             }
-            if (!socketFile.exists() || !child.isAlive()) throw new Exception("QUIC gateway failed to start");
+            if (!probeOnly && TransportSettings.datagrams(context)) {
+                if (TransportSettings.udpMode(context) != TransportSettings.UdpMode.STREAMS) {
+                    builder.command().add("--datagrams");
+                }
+            }
+            child = builder.redirectErrorStream(true).start();
+            if (!probeOnly) {
+                final Process loggedProcess = child;
+                new Thread(() -> {
+                    try (java.io.BufferedReader lines = new java.io.BufferedReader(
+                            new java.io.InputStreamReader(loggedProcess.getInputStream()))) {
+                        String line;
+                        while ((line = lines.readLine()) != null) Log.i("MBox", "QUIC: " + MBoxLogSanitizer.sanitize(line));
+                    } catch (Exception ignored) { }
+                }, "MBox-quic-log").start();
+                for (int i = 0; i < 50 && !socketFile.exists() && child.isAlive(); i++) {
+                    Thread.sleep(100);
+                }
+                if (!socketFile.exists() || !child.isAlive()) throw new Exception("QUIC gateway failed to start");
+            }
             protector = broker;
             process = child;
-            Log.i("MBox", "QUIC Android gateway ready");
+            if (!probeOnly) Log.i("MBox", "QUIC Android gateway ready");
         } catch (Exception failure) {
             if (child != null) child.destroyForcibly();
             if (broker != null) broker.close();
@@ -164,11 +196,21 @@ final class QuicLabTransport implements Closeable {
     }
 
     @Override public void close() {
-        process.destroy();
-        try { if (!process.waitFor(1, TimeUnit.SECONDS)) process.destroyForcibly(); }
-        catch (InterruptedException stop) { Thread.currentThread().interrupt(); process.destroyForcibly(); }
-        protector.close();
-        removeWorkDir(workDir);
+        try {
+            if (process.isAlive()) {
+                process.destroy();
+                if (!process.waitFor(1, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    process.waitFor(1, TimeUnit.SECONDS);
+                }
+            }
+        } catch (InterruptedException stop) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+        } finally {
+            try { protector.close(); }
+            finally { removeWorkDir(workDir); }
+        }
     }
 
     private static void removeWorkDir(File root) {

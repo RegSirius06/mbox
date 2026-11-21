@@ -1,0 +1,7 @@
+# MBox beta.4.4 — REG.RU monitoring preview
+
+On-demand limited SSH sampling of FastCGI CPU (percent of one CPU core, lower bound for surviving PID/starttime pairs), summed RSS (shared pages may be counted repeatedly), observed FLOCK slots and worker count. No account-wide provider CPU accounting. First sample has no CPU rate. One in-memory result; export CSV before starting the next run. Closing the browser does not extend the server timer. Stop closes SSH; the remote sampler exits at its next failed write or its independent alarm deadline.
+
+Apply on the beta.4.4 worktree: `python3 apply.py ~/src/mbox-main`. From checkout run `python3 -m pytest -q tests/test_beta44_monitor.py`. Copy updated admin files and setup/deploy helpers to VPS, run `python3 setup-relay-monitor.py`, then `bash deploy-monitor-admin.sh` as root. Config uses the saved relay profile and previously trusted SSH host key; no automatic host trust. Key-only authentication after interactive setup, private key root-only, forced command and no forwarding/PTY on remote. If setup fails, revoke only the `mbox-relay-monitor` entry in the remote authorized_keys; do not delete unrelated keys. Deployment backs up old admin files and restarts only that service, rolling back on failed HTTP checks. No changes to origin, relay, users or client configuration.
+
+Provider account quotas, HTTP 5xx history, origin statistics and persistent monitoring history are not implemented in this preview. Full repository, browser and real SSH tests remain required.

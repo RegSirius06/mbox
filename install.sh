@@ -4,20 +4,35 @@
 set -euo pipefail
 umask 077
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Relay-only installation is deliberately separate from origin and TLS.
+if [[ $# == 1 && $1 == --relay-only ]]; then
+  exec bash "$ROOT/tools/install-relay.sh"
+fi
 CHECK_ONLY=0
 UPGRADE_ORIGIN=0
 FRESH_INSTALL=0
 WITH_QUIC=0
 WITH_ADMIN=0
 WITH_SUBSCRIPTIONS=0
+# Preserve existing settings on upgrades. New installs default to strict authenticated controls.
+LEGACY_IDS_MODE=""
+LEGACY_EMPTY_MODE=""
+LEGACY_CONTROL_MODE=""
 usage() {
   cat <<'EOF'
-Usage: ./install.sh --check|--upgrade-origin|--with-admin|--with-subscriptions|--fresh-install
+Usage: ./install.sh --check|--upgrade-origin|--with-admin|--with-subscriptions|--fresh-install|--relay-only
+  --relay-only      Build/test/install local Relay and CLI; no services restarted, no REG.RU upload.
   --check           Read-only: source and toolchain prerequisites, no changes.
   --upgrade-origin  Explicit upgrade of main origin / CLI (may interrupt sessions).
   --with-admin      Install/update SSH-only admin UI + mboxctl; NO origin restart.
   --with-subscriptions Install/update subscription server + SSH admin UI; NO origin restart.
   --fresh-install   Explicit first installation. Refuses an existing installation.
+  --legacy-client-ids=on|off  Accept old account IDs (fresh-install default: on).
+  --legacy-empty-open=on|off Accept old empty Noise OPEN (fresh-install default: off).
+  --legacy-unsigned-control=on|off Accept unsigned HTTP control requests
+                                (fresh-install default: off; INSECURE, requires TTY confirmation).
+  Compatibility switches require --fresh-install or --upgrade-origin.
+  During upgrades, existing compatibility settings are kept unless specified.
   --with-quic       Disabled for now: existing 7443/7444 gateways are managed
                     separately, preventing port collisions and trust changes.
   Without a flag:   No changes. Install and upgrade are never implicit.
@@ -27,13 +42,16 @@ EOF
 }
 # MBOX_BETA43_RELEASE_CONSISTENCY9: explicit opt-in interactive installer.
 # No arguments in a terminal show a menu; noninteractive no-args stays a no-op.
+WIZARD=0
 if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then
+  WIZARD=1
   printf '\nMBox %s · installer\n' "$(cat "$ROOT/VERSION")"
   printf '  1) New server installation (includes optional REG.RU wizard)\n'
   printf '  2) Update admin panel only\n'
   printf '  3) Update subscriptions and admin panel\n'
   printf '  4) Check prerequisites (read-only)\n'
   printf '  5) Upgrade origin (interrupts active VPN sessions)\n'
+  printf '  6) Install relay tools only (no remote deployment)\n'
   printf '  0) Exit\n'
   read -r -p 'Choose [0]: ' choice
   case "${choice:-0}" in
@@ -45,9 +63,46 @@ if (( $# == 0 )) && [[ -t 0 && -t 1 ]]; then
       read -r -p 'This restarts production origin. Type UPGRADE: ' confirm
       [[ "$confirm" == UPGRADE ]] || { echo 'Cancelled.'; exit 0; }
       set -- --upgrade-origin ;;
+    6) exec bash "$ROOT/tools/install-relay.sh" ;;
     0) echo 'No changes.'; exit 0 ;;
     *) echo 'Unknown selection. Nothing changed.' >&2; exit 2 ;;
   esac
+fi
+
+# Compatibility preferences are part of the interactive install/upgrade wizard,
+# not hidden flags. Enter defaults to keep a new install secure or leave existing
+# production settings untouched. Never silently relax auth during upgrades.
+if (( WIZARD )) && [[ "${1:-}" == --fresh-install || "${1:-}" == --upgrade-origin ]]; then
+  printf '\nCompatibility (beta.4.3 remains supported by Noise MBD1 and signed controls).\n'
+  if [[ $1 == --fresh-install ]]; then
+    printf 'Defaults: legacy account IDs ON, empty Noise OPEN OFF, unsigned HTTP controls OFF.\n'
+    read -r -p 'Customize compatibility? [y/N] ' answer
+    case "${answer,,}" in
+      y|yes)
+        read -r -p 'Legacy account IDs for older profiles? [Y/n] ' answer
+        case "${answer,,}" in n|no) LEGACY_IDS_MODE=false ;; *) LEGACY_IDS_MODE=true ;; esac
+        read -r -p 'Pre-beta.4.3 empty Noise OPEN? [y/N] ' answer
+        case "${answer,,}" in y|yes) LEGACY_EMPTY_MODE=true ;; *) LEGACY_EMPTY_MODE=false ;; esac
+        read -r -p 'UNSAFE: allow unsigned HTTP control requests? [y/N] ' answer
+        case "${answer,,}" in y|yes) LEGACY_CONTROL_MODE=true ;; *) LEGACY_CONTROL_MODE=false ;; esac
+        ;;
+      *) : ;;
+    esac
+  else
+    printf 'Existing production compatibility settings will be preserved.\n'
+    read -r -p 'Change compatibility settings? [y/N] ' answer
+    case "${answer,,}" in
+      y|yes)
+        read -r -p 'Legacy account IDs [keep/on/off]: ' answer
+        case "${answer,,}" in on) LEGACY_IDS_MODE=true ;; off) LEGACY_IDS_MODE=false ;; ''|keep) : ;; *) echo 'Invalid answer'; exit 2 ;; esac
+        read -r -p 'Pre-beta.4.3 empty Noise OPEN [keep/on/off]: ' answer
+        case "${answer,,}" in on) LEGACY_EMPTY_MODE=true ;; off) LEGACY_EMPTY_MODE=false ;; ''|keep) : ;; *) echo 'Invalid answer'; exit 2 ;; esac
+        read -r -p 'UNSAFE: unsigned HTTP control requests [keep/on/off]: ' answer
+        case "${answer,,}" in on) LEGACY_CONTROL_MODE=true ;; off) LEGACY_CONTROL_MODE=false ;; ''|keep) : ;; *) echo 'Invalid answer'; exit 2 ;; esac
+        ;;
+      *) : ;;
+    esac
+  fi
 fi
 
 for opt in "$@"; do
@@ -58,6 +113,12 @@ for opt in "$@"; do
     --with-quic) WITH_QUIC=1 ;;
     --with-admin) WITH_ADMIN=1 ;;
     --with-subscriptions) WITH_SUBSCRIPTIONS=1 ;;
+    --legacy-client-ids=on) LEGACY_IDS_MODE=true ;;
+    --legacy-client-ids=off) LEGACY_IDS_MODE=false ;;
+    --legacy-empty-open=on) LEGACY_EMPTY_MODE=true ;;
+    --legacy-empty-open=off) LEGACY_EMPTY_MODE=false ;;
+    --legacy-unsigned-control=on) LEGACY_CONTROL_MODE=true ;;
+    --legacy-unsigned-control=off) LEGACY_CONTROL_MODE=false ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $opt" >&2; usage >&2; exit 2 ;;
   esac
@@ -65,6 +126,21 @@ done
 if (( CHECK_ONLY + UPGRADE_ORIGIN + FRESH_INSTALL + WITH_QUIC + WITH_ADMIN + WITH_SUBSCRIPTIONS > 1 )); then
   echo 'Choose exactly one mode; install operations are deliberately separate.' >&2
   exit 2
+fi
+if [[ -n "$LEGACY_IDS_MODE$LEGACY_EMPTY_MODE$LEGACY_CONTROL_MODE" ]] && (( ! UPGRADE_ORIGIN && ! FRESH_INSTALL )); then
+  echo 'Compatibility switches require --fresh-install or --upgrade-origin.' >&2
+  exit 2
+fi
+# Enabling unsigned HTTP controls weakens the authentication boundary.
+# It must never be enabled accidentally, by a default, or in an unattended job.
+if [[ $LEGACY_CONTROL_MODE == true ]]; then
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    echo 'REFUSED: unsigned controls require interactive confirmation.' >&2
+    exit 2
+  fi
+  printf 'WARNING: unsigned HTTP control requests reduce MBox security.\n' >&2
+  read -r -p 'Type ALLOW-UNSIGNED to continue: ' unsafe_confirmation
+  [[ $unsafe_confirmation == ALLOW-UNSIGNED ]] || { echo 'No changes; cancelled.'; exit 0; }
 fi
 if (( WITH_QUIC )); then
   echo 'REFUSED: native QUIC 7443/7444 is managed separately with LoadCredential.' >&2
@@ -80,8 +156,8 @@ need() { command -v "$1" >/dev/null 2>&1; }
 say() { printf '\n==> %s\n' "$*"; }
 # Never install a mixed client/server release by mistake.
 source_version=$(cat "$ROOT/VERSION")
-[[ "$source_version" == "1.0.0-beta.4.3" ]] || {
-  echo "Expected MBox 1.0.0-beta.4.3; found: $source_version" >&2; exit 1;
+[[ "$source_version" == "1.0.0-beta.4.4" ]] || {
+  echo "Expected MBox 1.0.0-beta.4.4; found: $source_version" >&2; exit 1;
 }
 grep -Fq "mboxctl $source_version" "$ROOT/tools/mboxctl/mboxctl.py" || {
   echo "CLI version differs from VERSION; refusing mixed release" >&2; exit 1;
@@ -99,8 +175,8 @@ if (( CHECK_ONLY )); then
   echo "Version: $(cat "$ROOT/VERSION")"
   if ((${#missing[@]})); then printf 'Missing tools: %s\n' "${missing[*]}"; exit 1; fi
   go version
-  (cd "$ROOT/native-quic" && go env GOVERSION GOTOOLCHAIN)
-  echo 'CHECK ONLY: no files modified; no processes restarted.'
+  echo "Native QUIC module requires Go $(awk '$1 == "go" { print $2; exit }' "$ROOT/native-quic/go.mod")"
+  echo 'CHECK ONLY: no files modified; no processes restarted; no toolchain download.'
   exit 0
 fi
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
@@ -113,6 +189,10 @@ existing=0
 [[ -s /etc/mbox/mbox.conf || -s /etc/mbox/server.json ]] && existing=1
 if (( UPGRADE_ORIGIN && ! existing )); then
   echo 'REFUSED: no existing MBox config; use --fresh-install instead.' >&2
+  exit 1
+fi
+if (( UPGRADE_ORIGIN )) && [[ ! -f /etc/systemd/system/mbox-server.service ]]; then
+  echo 'REFUSED: installed origin service unit missing; repair separately.' >&2
   exit 1
 fi
 if (( FRESH_INSTALL && existing )); then
@@ -258,10 +338,13 @@ for entry in 'server:mbox-server' 'client:mbox-client' 'tools/mbox-key:mbox-key'
   dir=${entry%%:*}; name=${entry#*:}
   (cd "$ROOT/$dir" && GO111MODULE=off go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/$name" .)
 done
-(cd "$ROOT/relay" && GO111MODULE=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/relay.fcgi" .)
-(cd "$ROOT/native-quic" && GO111MODULE=on GOTOOLCHAIN=auto \
-  go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/mbox-native-quic" .)
+bash "$ROOT/tools/build-relay.sh" "$BUILD_DIR/relay.fcgi"
+# An existing QUIC gateway uses an independently managed binary and TLS.
+# Do not rebuild or replace it during a routine origin upgrade.
+if (( FRESH_INSTALL )); then
+  (cd "$ROOT/native-quic" && GO111MODULE=on GOTOOLCHAIN=auto \
+    go build -trimpath -ldflags='-s -w' -o "$BUILD_DIR/mbox-native-quic" .)
+fi
 python3 -m py_compile "$ROOT/tools/mboxctl/mboxctl.py"
 
 say 'Creating pre-change backup (SQLite online snapshot + file archive)'
@@ -315,7 +398,9 @@ if ! id -u mbox >/dev/null 2>&1; then useradd --system --gid mbox --home-dir /no
 
 say 'Installing origin binaries (explicit operator-approved action)'
 install -d -m 0755 /usr/local/lib/mbox /usr/local/share/mbox/regru-site
-for n in mbox-server mbox-client mbox-key mbox-link mbox-native-quic; do
+origin_bins=(mbox-server mbox-client mbox-key mbox-link)
+if (( FRESH_INSTALL )); then origin_bins+=(mbox-native-quic); fi
+for n in "${origin_bins[@]}"; do
   install -m 0755 "$BUILD_DIR/$n" "/usr/local/bin/.$n.new.$$"
   mv -f -- "/usr/local/bin/.$n.new.$$" "/usr/local/bin/$n"
 done
@@ -324,7 +409,11 @@ mv -f -- "/usr/local/bin/.mboxctl.new.$$" /usr/local/bin/mboxctl
 install -m 0755 "$BUILD_DIR/relay.fcgi" /usr/local/lib/mbox/relay.fcgi
 install -m 0644 "$ROOT/deploy/regru/site/index.html" /usr/local/share/mbox/regru-site/index.html
 install -m 0644 "$ROOT/deploy/regru/site/404.html" /usr/local/share/mbox/regru-site/404.html
-install -m 0644 "$ROOT/deploy/mbox-server.service" /etc/systemd/system/mbox-server.service
+# Keep the operator's current systemd unit and DATAGRAM ACL hooks on upgrades.
+# Fresh installs still receive the repository's default unit.
+if (( FRESH_INSTALL )); then
+  install -m 0644 "$ROOT/deploy/mbox-server.service" /etc/systemd/system/mbox-server.service
+fi
 # Stage renewal tooling, but never enable it without an authenticated CA migration.
 install -d -m 0755 /usr/local/libexec
 install -m 0755 "$ROOT/tools/quic-cert-renew.sh" /usr/local/libexec/mbox-quic-cert-renew
@@ -343,6 +432,35 @@ elif [[ -s /etc/mbox/server.json ]]; then
 else
   echo 'Fresh install: configure public HTTPS frontend, origin URL and first user.'
   mboxctl init
+fi
+# Apply explicit compatibility changes only after the backup and config upgrade,
+# but before the single final origin restart. Do not use mboxctl config set:
+# that command would restart production once per flag.
+if [[ -n "$LEGACY_IDS_MODE$LEGACY_EMPTY_MODE$LEGACY_CONTROL_MODE" ]]; then
+  python3 - "$LEGACY_IDS_MODE" "$LEGACY_EMPTY_MODE" "$LEGACY_CONTROL_MODE" <<'PYCOMPAT'
+import configparser, os, sys, tempfile
+from pathlib import Path
+path = Path('/etc/mbox/mbox.conf')
+cp = configparser.ConfigParser(interpolation=None)
+if not cp.read(path) or not cp.has_section('auth'):
+    raise SystemExit('Compatibility settings need [auth] in mbox.conf')
+legacy_ids, empty_open, unsigned_control = sys.argv[1:]
+for name, value in (('accept_legacy_client_ids', legacy_ids),
+                    ('accept_legacy_empty_open', empty_open)):
+    if value: cp['auth'][name] = value
+if unsigned_control:
+    cp['auth']['require_authenticated_control'] = 'false' if unsigned_control == 'true' else 'true'
+fd, tmp = tempfile.mkstemp(prefix='.mbox-conf-compat-', dir=str(path.parent))
+try:
+    with os.fdopen(fd, 'w') as f:
+        os.fchmod(f.fileno(), 0o600)
+        cp.write(f)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, path)
+finally:
+    if os.path.exists(tmp): os.unlink(tmp)
+PYCOMPAT
+  mboxctl config validate
 fi
 mboxctl sync >/dev/null
 systemctl enable mbox-server.service >/dev/null

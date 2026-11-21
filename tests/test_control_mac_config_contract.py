@@ -9,7 +9,7 @@ def test_control_mac_requires_explicit_strict_opt_in():
     spec = importlib.util.spec_from_file_location("mboxctl_control_mac_contract", MODULE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.DEFAULT_AUTH["require_authenticated_control"] == "false"
+    assert module.DEFAULT_AUTH["require_authenticated_control"] == "true"
     text = MODULE.read_text()
     assert '"require_authenticated_control": cp.getboolean("auth", "require_authenticated_control")' in text
     assert "auth.require_authenticated_control must be true or false" in text

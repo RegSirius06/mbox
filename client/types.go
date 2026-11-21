@@ -1,11 +1,13 @@
 package main
 
 import (
+	"../common/dgram"
 	flowctl "../common/flowctl"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -37,8 +39,14 @@ type localStream struct {
 }
 
 type tunnel struct {
-	sid    string
-	crypto *cryptoState
+	udpMode            string // auto, streams, datagrams; set once at tunnel creation
+	sid                string
+	crypto             *cryptoState
+	datagramMu         sync.Mutex
+	datagramRunning    bool
+	datagramEpoch      uint32
+	datagramRetryAfter time.Time
+	datagramLane       atomic.Pointer[dgram.Lane]
 
 	streamsMu sync.Mutex
 	streams   map[uint32]*localStream

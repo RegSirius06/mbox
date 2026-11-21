@@ -42,9 +42,9 @@ def test_admin_preserves_api_and_no_live_regru_polling():
     assert 'data-mbox-tab="clients"' in ADMIN
     assert 'data-mbox-tab="subscriptions"' in ADMIN
     assert 'data-mbox-tab="diagnostics"' in ADMIN
-    assert 'beta.4.3' in ADMIN
+    assert 'beta.4.4' in ADMIN
     assert 'REG.RU · CPU / ресурсы' in ADMIN
-    assert 'Нет интеграции с REG.RU' in ADMIN
+    assert 'Не тарифная статистика REG.RU.' in ADMIN
     assert 'Автоматического опроса нет.' in ADMIN
     assert "req('/api/action'" in ADMIN
     assert "X-MBox-CSRF" in ADMIN

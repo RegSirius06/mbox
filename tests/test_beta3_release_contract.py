@@ -12,15 +12,15 @@ def test_release_does_not_package_debug_apk():
     assert 'app-debug.apk' not in script
 
 def test_release_notes_and_readmes_are_consistent():
-    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4.3'
+    assert (ROOT/'VERSION').read_text().strip() == '1.0.0-beta.4.4'
     # Historical beta.3 notes remain historical; the new status docs are the
     # authoritative description of beta.4 until a signed release is published.
-    for filename in ('docs/BETA4_RELEASE_STATUS.md',
-                     'docs/ru/BETA4_RELEASE_STATUS.md'):
+    for filename in ('docs/README.md',
+                     'docs/ru/README.md'):
         assert '1.0.0-beta.4' in (ROOT / filename).read_text(), filename
     for filename, target in (
-        ('README.md', 'docs/BETA4_RELEASE_STATUS.md'),
-        ('README.ru.md', 'docs/ru/BETA4_RELEASE_STATUS.md'),
+        ('README.md', 'docs/README.md'),
+        ('README.ru.md', 'docs/ru/README.md'),
     ):
         text = (ROOT / filename).read_text()
         assert f']({target})' in text, filename

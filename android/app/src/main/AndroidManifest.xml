@@ -38,6 +38,20 @@
             </intent-filter>
         </activity>
 
+        <!-- A user-added Android Quick Settings tile (Android 10+). -->
+        <service
+            android:name=".MBoxTileService"
+            android:label="MBox VPN"
+            android:icon="@drawable/ic_mbox_tile"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+
         <!-- Allow the Android VPN controller to discover/start this component
              across system-managed Always-on lifecycle transitions. BIND_VPN_SERVICE is a signature
              permission, so exporting the component does not let third-party

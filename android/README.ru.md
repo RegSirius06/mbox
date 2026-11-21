@@ -1,4 +1,6 @@
-# Android-клиент MBox 1.0.0-beta.4.3
+**beta.4.4:** DATAGRAM для UDP по запросу без периодических PING; три режима UDP в скрытой диагностике, страны подписки v2. См. [DATAGRAM](../docs/ru/BETA44_DATAGRAM_EXPERIMENT.md). Нужны прежний сертификат подписи и versionCode 11.
+
+# Android-клиент MBox 1.0.0-beta.4.4
 
 [English](README.md) · [Инструкция пользователя](../docs/ru/GETTING_STARTED.md) · [Сборка и подпись](../docs/ru/RELEASE_ENGINEERING_BETA43.md)
 

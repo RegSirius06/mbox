@@ -8,6 +8,7 @@ import (
 
 func newTunnel() (*tunnel, error) {
 	t := &tunnel{
+		udpMode: udpModeFromEnv(),
 		streams: make(map[uint32]*localStream), udpFlows: make(map[uint32]*localUDPFlow), upQueues: make(map[uint32][][]byte), upPerStream: make(map[uint32]int), upSpace: make(chan struct{}, 1), wake: make(chan struct{}, 1), downWake: make(chan struct{}, 1), downDeliver: make(chan []byte, 64), done: make(chan struct{}), downPending: make(map[uint64][]byte), nextDown: 1, fatalErr: make(chan error, 1),
 	}
 
@@ -30,7 +31,7 @@ func newTunnel() (*tunnel, error) {
 	// beta.2 servers reject non-empty Noise OPEN payloads. Retry once with
 	// the legacy empty payload so a new Android client can still connect
 	// during a rolling server upgrade.
-	if status == http.StatusNotFound && deviceID != "" {
+	if status == http.StatusNotFound && deviceID != "" && egressID == "" {
 		log.Printf("NET stage=MBOX_OPEN code=OPEN_RETRY_LEGACY")
 		openBody, noiseHS, openPSK, err = buildLegacyOpenRequest()
 		if err != nil {

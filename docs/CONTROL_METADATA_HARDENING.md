@@ -39,7 +39,7 @@ handler; this cannot be selected by the relay independently of the handler.
    client. The current server ignores the extra `cmac` query parameter, so
    this first stage is backward-compatible (but **not yet enforcing security**).
 3. Upgrade and smoke-test the server on a separate staging instance using
-   `auth.require_authenticated_control=false` (the default). The server
+   `auth.require_authenticated_control=false` (historical staging setting; new installs now default to `true`). The server
    validates a supplied MAC, but accepts missing MACs for old clients. A
    compromised relay can still strip MACs **in this transitional mode**.
 4. Once every client is on the patched build, perform a controlled production

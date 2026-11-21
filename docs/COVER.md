@@ -10,7 +10,7 @@ MBox includes an optional server-originated cover traffic engine.
 
 ## Goal
 
-Keep the public shared-host frontend from having a simple history of “almost completely idle until a real VPN client appears”. The MBox origin/server generates irregular HTTPS activity through the public frontend only while no real MBox session is active.
+Keep the public shared-host frontend from having a simple history of “almost completely idle until a real VPN client appears”. The MBox origin generates irregular HTTPS activity through the public frontend only while no authenticated MBox session has recent activity. This costs FastCGI CPU when the frontend forwards cover requests.
 
 ## Path
 
@@ -26,7 +26,9 @@ No second `mbox-client` is required on the server.
 
 ## Suppression by real users
 
-A successful authenticated MBox OPEN immediately cancels the current cover context. The cover loop remains suppressed while at least one session has recent authenticated activity. A clean session close makes the server idle immediately; an unclean network disappearance is handled by `idle_after_ms`.
+A successful authenticated MBox OPEN cancels an in-flight cover profile; the cover loop checks active sessions at least once per second and enters `suppressed`. No new cover requests are started while a session has authenticated activity within `idle_after_ms`. A clean session close removes it from the active set; an unclean network disappearance ages out after `idle_after_ms`. A request already in flight at OPEN may finish/cancel. A fresh randomized start grace applies when cover resumes.
+
+**Trade-off:** suppressing cover reduces shared-host CPU use but produces a traffic-rate correlation with real session activity. Do not describe this as indistinguishable browser traffic or complete DPI resistance.
 
 ## Traffic model
 
@@ -37,7 +39,7 @@ The engine chooses weighted states:
 - `active`: 3–12 larger groups;
 - `burst`: 30–120 resource requests with short randomized gaps.
 
-Requests use varied asset-like paths/extensions and browser-like headers. Responses vary by resource type and size. This is intentionally stochastic rather than periodic.
+Requests use varied asset-like paths/extensions and Go HTTP-client headers (not a browser fingerprint). Responses vary by resource type and size. This is intentionally stochastic rather than periodic.
 
 ## Safety limits
 

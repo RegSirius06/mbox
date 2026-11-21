@@ -1,3 +1,5 @@
+**beta.4.4:** production-signed ARM64 APK must have versionCode 11 and the original signing cert. Test `adb install -r` over an existing signed beta.4.3 and verify that profiles/Keystore survive. Hidden UDP modes are present in production release but not on the normal home screen. See [release checklist](../RELEASE_CHECKLIST.md).
+
 # Android release engineering — MBox 1.0.0-beta.4.3
 
 [Русский](ru/ANDROID_RELEASE_ENGINEERING.md) · [Complete release workflow](RELEASE_ENGINEERING_BETA43.md)

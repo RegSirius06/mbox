@@ -35,7 +35,7 @@ def run_gate(tmp_path, signer_output, manifest_output, signer_exit=0, pinned=Tru
 
 
 SIGNATURE = 'Signer #1 certificate DN: CN=MBox Release, O=Example\nSigner #1 certificate SHA-256 digest: ' + 'a'*64
-MANIFEST = "package: name='io.mbox.android' versionCode='10' versionName='1.0.0-beta.4.3'"
+MANIFEST = "package: name='io.mbox.android' versionCode='11' versionName='1.0.0-beta.4.4'"
 
 
 def test_accepted_signed_release(tmp_path):
@@ -89,8 +89,8 @@ def test_release_multiple_signers_rejected(tmp_path):
 
 
 def test_release_wrong_version_rejected(tmp_path):
-    assert "versionCode='10'" in MANIFEST
-    wrong_manifest = MANIFEST.replace("versionCode='10'", "versionCode='9'")
+    assert "versionCode='11'" in MANIFEST
+    wrong_manifest = MANIFEST.replace("versionCode='11'", "versionCode='9'")
     assert wrong_manifest != MANIFEST
     r = run_gate(tmp_path, SIGNATURE, wrong_manifest)
     assert r.returncode != 0
@@ -98,8 +98,8 @@ def test_release_wrong_version_rejected(tmp_path):
 
 
 def test_release_wrong_version_name_rejected(tmp_path):
-    assert "versionName='1.0.0-beta.4.3'" in MANIFEST
-    wrong_manifest = MANIFEST.replace("versionName='1.0.0-beta.4.3'", "versionName='1.0.0-beta.4.1'")
+    assert "versionName='1.0.0-beta.4.4'" in MANIFEST
+    wrong_manifest = MANIFEST.replace("versionName='1.0.0-beta.4.4'", "versionName='1.0.0-beta.4.1'")
     assert wrong_manifest != MANIFEST
     r = run_gate(tmp_path, SIGNATURE, wrong_manifest)
     assert r.returncode != 0

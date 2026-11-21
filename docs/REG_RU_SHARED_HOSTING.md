@@ -1,3 +1,5 @@
+> **beta.4.4 OPEN HIGH-PRIORITY OPERATIONAL RISK — shared-host FastCGI CPU/worker exhaustion.** The frontend uses a provider CPU/process budget not controlled by MBox. Aggressive HTTPS polling, idle workers and parallel users can cause throttling or termination; current resource headroom and safe concurrency are **not measured or guaranteed**. Relay self-check only validates the binary, not CPU safety. QUIC DATAGRAM bypasses FastCGI and does not solve HTTPS frontend load. Do not silently alter a working shared-host deployment; open a reproducible issue with anonymized provider limits, worker count, representative load and timestamps, **never credentials or full subscription URLs**. Confirm provider terms permit the intended use.
+
 <!-- MBOX_BETA43_DOCS10 -->
 > **beta.4.3 context:** For beta.4.3 start with [server quickstart](SERVER_QUICKSTART.md) and [installer wizard](BETA4_3_INSTALL_WIZARD.md). The following provider observations include historical beta.4.1 and older context. REG.RU resource CPU metrics are **not currently integrated** with MBox.
 

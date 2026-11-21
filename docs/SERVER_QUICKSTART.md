@@ -1,4 +1,6 @@
-# MBox 1.0.0-beta.4.3: first-time server setup
+**beta.4.4 operator note:** `bash install.sh --check` is read-only and does not prove a clean fresh-install. Updating a working VPS must preserve its configured systemd unit, DATAGRAM Unix socket/ACL and separate native QUIC gateway. Do not use a general installer as a substitute for backups and an explicit maintenance window. For multiple exit countries, see [Subscriptions](MBOX_SUBSCRIPTIONS.md).
+
+# MBox 1.0.0-beta.4.4: first-time server setup
 
 [Русский](ru/SERVER_QUICKSTART.md) · [Android user guide](GETTING_STARTED.md) · [Admin reference](ADMIN.md)
 

@@ -85,6 +85,12 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
 #app td button{font-size:12px;padding:8px 9px}
 #app .configrow{grid-template-columns:minmax(150px,1fr) minmax(200px,2fr)}
 #app #secretbox{border-color:#528d7e;background:#13272a}
+/* Label exit fields explicitly; preserve existing action IDs and backend APIs. */
+#exitform{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+#exitform label{display:flex;flex-direction:column;gap:7px;color:var(--mbox-muted);font-size:13px;font-weight:600}
+#exitform label input{width:100%;font-weight:400}
+#exitform button{grid-column:1/-1;justify-self:start;background:var(--mbox-accent);color:#073b31;border-color:var(--mbox-accent);font-weight:700}
+@media(max-width:850px){#exitform{grid-template-columns:1fr}}
 #login{border-color:var(--mbox-edge)}
 @media(max-width:1050px){#mbox-overview .mbox-columns{grid-template-columns:1fr}#mbox-overview .mbox-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:800px){body{padding:0!important}.mbox-rail{position:sticky;top:0;left:auto;bottom:auto;width:100%;height:auto;padding:10px 12px;flex-direction:row;align-items:center;gap:10px;border-right:0;border-bottom:1px solid var(--mbox-edge)}.mbox-brand{padding:0}.mbox-mark{height:32px;flex-basis:32px;font-size:18px;border-radius:9px}.mbox-brand strong{font-size:15px}.mbox-brand small,.mbox-rail-foot{display:none!important}.mbox-rail #mbox-nav{display:flex;flex:1;overflow:auto;gap:4px;white-space:nowrap}.mbox-rail #mbox-nav button{width:auto;min-width:max-content;font-size:12px;padding:8px 10px}body>header{padding-top:16px}#mbox-overview .mbox-cards{grid-template-columns:repeat(2,minmax(0,1fr))}#app .configrow{grid-template-columns:1fr}#app section{padding:16px}}
@@ -92,17 +98,18 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
 
 </style>
 <aside class="mbox-rail" aria-label="MBox Admin">
-  <div class="mbox-brand"><div class="mbox-mark" aria-hidden="true">M</div><div><strong>MBox</strong><small>CONTROL CENTER · beta.4.3</small></div></div>
+  <div class="mbox-brand"><div class="mbox-mark" aria-hidden="true">M</div><div><strong>MBox</strong><small>CONTROL CENTER · beta.4.4</small></div></div>
   <nav id="mbox-nav" aria-label="Sections">
     <button type="button" data-mbox-tab="overview" aria-current="page">Обзор</button>
     <button type="button" data-mbox-tab="clients">Клиенты</button>
     <button type="button" data-mbox-tab="subscriptions">Подписки</button>
     <button type="button" data-mbox-tab="configuration">Конфигурация</button>
+    <button type="button" data-mbox-tab="monitoring">Мониторинг</button>
     <button type="button" data-mbox-tab="diagnostics">Диагностика</button>
   </nav>
-  <div class="mbox-rail-foot"><span>●</span> Панель администратора<br>SSH (рекомендуется) · HTTPS-домен (по настройке)</div>
+  <div class="mbox-rail-foot"><span>●</span> Панель администратора<br>SSH (рекомендуется) · HTTPS-домен (по настройке)<br><a href="https://t.me/github_mailbox" target="_blank" rel="noopener noreferrer">Сообщество MBox</a></div>
 </aside>
-<header><div><h1>MBox <span class="quiet">beta.4.3</span></h1><small>Управление VPN · защищённый доступ</small></div><button id="logout" class="hidden">Выйти</button></header>
+<header><div><h1>MBox <span class="quiet">beta.4.4</span></h1><small>Управление VPN · защищённый доступ</small></div><button id="logout" class="hidden">Выйти</button></header>
 <p id="message" role="status"></p>
 <section id="login"><h2>Вход</h2><form id="loginform" class="row"><input id="password" type="password" autocomplete="current-password" required placeholder="Пароль администратора"><button>Войти</button></form></section>
 <main id="app" class="hidden">
@@ -111,7 +118,7 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
   <div class="mbox-cards">
     <div class="mbox-metric"><span class="caption">Клиенты</span><strong id="mbox-stat-clients">—</strong><div class="desc">В текущей выдаче API</div></div>
     <div class="mbox-metric"><span class="caption">Активные сессии</span><strong id="mbox-stat-sessions">—</strong><div class="desc">Сессии, не уникальные IP</div></div>
-    <div class="mbox-metric"><span class="caption">REG.RU · CPU / ресурсы</span><strong class="mbox-not-configured">Нет интеграции с REG.RU</strong><div class="desc">Это не ошибка настройки: MBox не получает CPU-статистику аккаунта REG.RU. Проверяйте её в личном кабинете хостинга. Автоматического опроса нет.</div><a href="https://help.reg.ru/support/hosting/dostupy-i-podklyucheniye-panel-upravleniya-ftp-ssh/kak-voyti-v-panel-upravleniya-hostingom" target="_blank" rel="noopener noreferrer">Как открыть панель хостинга REG.RU</a></div>
+    <div class="mbox-metric"><span class="caption">REG.RU · CPU / ресурсы</span><strong>По запросу</strong><div class="desc">Ограниченный сеанс наблюдения.</div><button type="button" data-mbox-open="monitoring">Мониторинг</button></div>
   </div>
   <div class="mbox-columns">
     <div class="mbox-pane"><h3>Клиенты</h3><p>Последние записи в текущей выдаче (не история подключений).</p><ul id="mbox-recent-users"><li><span class="quiet">Данные появятся после входа.</span></li></ul>
@@ -135,7 +142,25 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
 <input id="endpointname" required maxlength="48" placeholder="Название: Beget" aria-label="Название точки входа">
 <input id="endpointurl" required type="url" placeholder="https://example.com/base" style="flex:1;min-width:250px" aria-label="HTTPS URL точки входа">
 <button>Добавить / сохранить</button></form>
-<small>Один вход — один публичный HTTPS-релей к origin. Для Beget укажи его рабочий FastCGI URL, а не адрес VPS. Записи обновляют подписки динамически.</small></section>
+<small>Один вход — один публичный HTTPS-релей к origin. Дополнительные страны не требуют дополнительных REG.RU-аккаунтов.</small>
+<h3>Конечные страны (выходы)</h3>
+<small><b>Шаг 1 — основной выход.</b> Укажи только отображаемое имя. Его маршрут уже настроен на origin, менять SOCKS5 здесь не требуется.</small>
+<form id="exitdefaultform" class="row" style="margin-top:14px">
+<label for="exitdefaultname">Название основного выхода</label>
+<input id="exitdefaultname" required maxlength="48" placeholder="Дания · каскад" aria-label="Название основного выхода">
+<button type="submit">Сохранить название</button></form>
+<small>Внутренний ID <code>primary</code> сохраняется для совместимости, но в новых подписках будет показано выбранное имя после добавления второго выхода.</small>
+<h4>Шаг 2 — дополнительный выход</h4>
+<small>Добавь маршрут, который уже работает на RU VPS. Например: <code>kz</code> → «Kazakhstan | Cascade» → <code>127.0.0.1:2085</code>. Дания по умолчанию добавляется автоматически — второй раз её создавать не нужно.</small>
+<form id="exitform" style="margin-top:14px">
+<label for="exitid">Код выхода (ID)<input id="exitid" required maxlength="16" pattern="[a-z][a-z0-9_-]*" placeholder="kz"></label>
+<label for="exitname">Название в подписке<input id="exitname" required maxlength="48" placeholder="Kazakhstan | Cascade"></label>
+<label for="exitupstream">Локальный SOCKS5 на RU VPS<input id="exitupstream" required maxlength="64" placeholder="127.0.0.1:2085"></label>
+<button type="submit">Добавить / сохранить выход</button></form>
+<h4>Шаг 3 — проверить и обновить подписку</h4>
+<div class="row"><button type="button" id="exits-read">Обновить список выходов</button></div>
+<div id="exitcards" class="endpointcards"></div>
+<small>После сохранения <code>kz</code> здесь появится карточка выхода. Затем обнови прежний URL подписки в Android: будут доступны основной профиль (Дания) и новый (Казахстан). beta.4.3 продолжает получать прежний маршрут.</small></section>
 <section id="settingspanel" data-mbox-panel="configuration"><h2>Конфигурация MBox</h2>
 <small>Все параметры mbox.conf. Изменения применяются после проверки; для части параметров сервер будет перезапущен один раз. Секреты скрыты и не меняются, пока ты не введёшь новое значение.</small>
 <div class="row"><label for="cfgSection">Раздел</label><select id="cfgSection" aria-label="Раздел конфигурации"></select><button id="cfgReload">Обновить конфигурацию</button></div>
@@ -145,6 +170,12 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
 <small>Путь подписки: поле <code>subscription.public_url</code>. Например <code>https://lupka.zalupka.fun/api/v2</code>. При изменении старые ссылки перестанут открываться — новые адреса нужно отправить пользователям.</small>
 </section>
 <section data-mbox-panel="diagnostics"><h2>Состояние системы</h2><div class="row"><select id="ctlcommand"><option value="doctor">Проверить состояние</option><option value="resources">Ресурсы и лимиты</option><option value="db-check">Проверить базу</option><option value="user-list">Список клиентов</option><option value="user-count">Количество клиентов</option><option value="version">Версия MBox</option></select><button id="runctl">Выполнить</button></div><pre id="ctloutput" style="white-space:pre-wrap"></pre><small>Проверки не изменяют настройки и не перезапускают VPN.</small></section>
+<section data-mbox-panel="monitoring"><h2>Мониторинг REG.RU</h2>
+<p>CPU FastCGI (% одного ядра), суммарный RSS и слоты. Не тарифная статистика REG.RU. Автоматического опроса нет. CPU — нижняя оценка: короткоживущие workers могут не попасть в измерения.</p>
+<div class="row"><label>Время <select id="mon-duration"><option value="300">5 мин</option><option value="900" selected>15 мин</option><option value="1800">30 мин</option><option value="3600">60 мин</option></select></label><label>Интервал <select id="mon-interval"><option value="5">5 с</option><option value="10" selected>10 с</option><option value="30">30 с</option></select></label><button type="button" id="mon-start">Начать</button><button type="button" id="mon-stop">Остановить</button><button type="button" id="mon-snapshot">Снимок</button><button type="button" id="mon-read">Обновить результат</button><button type="button" id="mon-export">CSV</button></div>
+<p id="mon-state" role="status">Нет измерений</p><div class="mbox-cards"><div class="mbox-metric"><span class="caption">CPU FastCGI</span><strong id="mon-cpu">—</strong></div><div class="mbox-metric"><span class="caption">RSS</span><strong id="mon-rss">—</strong></div><div class="mbox-metric"><span class="caption">Workers</span><strong id="mon-workers">—</strong></div><div class="mbox-metric"><span class="caption">Активные слоты</span><strong id="mon-slots">—</strong></div></div>
+<div id="mon-charts"></div><p class="quiet" id="mon-warning"></p>
+</section>
 <section id="secretbox" class="hidden"><h2>Личная ссылка</h2><p class="error">Ссылка (профиль или подписка) даёт доступ к VPN. Не публикуйте и не отправляйте посторонним.</p><textarea id="link" readonly spellcheck="false"></textarea><div class="row"><button id="copy">Скопировать</button><button id="showqr">Показать QR</button><button id="close">Скрыть</button></div><img id="secretqr" class="hidden" alt="QR подписки или профиля" style="max-width:min(100%,360px);image-rendering:pixelated;margin-top:14px"></section>
 </main>
 <script>
@@ -152,7 +183,7 @@ body:has(#app.hidden)>#login{max-width:570px;margin-top:5vh!important}
 let csrf='',loggedIn=false;
 const $=id=>document.getElementById(id);
 const setmsg=(s,bad=false)=>{$('message').textContent=s;$('message').className=bad?'error':'good'};
-const showLogin=()=>{loggedIn=false;csrf='';$('app').classList.add('hidden');$('login').classList.remove('hidden');$('logout').classList.add('hidden');$('link').value='';$('secretbox').classList.add('hidden')};
+const showLogin=()=>{monCancelPoll();monRows=[];loggedIn=false;csrf='';$('app').classList.add('hidden');$('login').classList.remove('hidden');$('logout').classList.add('hidden');$('link').value='';$('secretbox').classList.add('hidden')};
 const positiveDays=s=>{const v=String(s).trim();if(!/^[0-9]+$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)<1||Number(v)>3650)throw Error('Укажите целое число дней от 1 до 3650');return Number(v)};
 const sessionLimit=s=>{const v=String(s).trim();if(!/^(?:-1|[0-9]+)$/.test(v)||!Number.isSafeInteger(Number(v))||(Number(v)!==-1&&(Number(v)<1||Number(v)>10000)))throw Error('Лимит: от 1 до 10000 или -1 без ограничений');return Number(v)};
 async function req(path,data){
@@ -333,6 +364,43 @@ $('endpointform').onsubmit=async e=>{
  try{const ok=await action({action:'endpoint_set',endpoint_id:id,endpoint_name:name,endpoint_url:url});if(ok){e.target.reset();await readEndpoints()}}
  catch(err){setmsg(err.message,true)}
 };
+async function readExits(){
+ const r=await req('/api/action',{action:'exit_list'});
+ const parent=$('exitcards');parent.replaceChildren();
+ for(const line of String(r.output||'').split('\n').filter(Boolean)){
+  const p=line.split('\t');if(p.length!==3)continue;
+  const [id,name,upstream]=p;
+  const card=document.createElement('div');card.className='endpointcard';
+  const title=document.createElement('strong');title.textContent=name;card.appendChild(title);
+  const detail=document.createElement('small');detail.textContent=id+' · SOCKS5 '+upstream;card.appendChild(detail);
+  const actions=document.createElement('div');actions.className='row';
+  const edit=document.createElement('button');edit.textContent='Изменить';edit.onclick=()=>{
+    $('exitid').value=id;$('exitname').value=name;$('exitupstream').value=upstream;
+    $('exitform').scrollIntoView({block:'center'});
+  };actions.appendChild(edit);
+  const del=document.createElement('button');del.textContent='Удалить';del.onclick=async()=>{
+    if(!confirm('Удалить выход '+name+' из новых подписок?'))return;
+    const typed=prompt('Введи точный ID:','');if(typed!==id)return;
+    try{await action({action:'exit_delete',exit_id:id,confirm_id:typed});await readExits()}catch(e){setmsg(e.message,true)}
+  };actions.appendChild(del);card.appendChild(actions);parent.appendChild(card);
+ }
+}
+async function readDefaultExitName(){
+ const r=await req('/api/action',{action:'exit_default_get'});
+ $('exitdefaultname').value=String(r.output||'Default');
+}
+$('exitdefaultform').onsubmit=async e=>{
+ e.preventDefault();const name=$('exitdefaultname').value.trim();
+ if(!name||name.length>48)return;
+ if(!confirm('Изменить название основного выхода на «'+name+'»? Маршрут останется прежним.'))return;
+ try{await req('/api/action',{action:'exit_default_set',default_exit_name:name});await readDefaultExitName();setmsg('Название основного выхода сохранено')}catch(err){setmsg(err.message,true)}
+};
+$('exits-read').onclick=async()=>{try{await readExits();await readDefaultExitName()}catch(e){setmsg(e.message,true)}};
+$('exitform').onsubmit=async e=>{
+ e.preventDefault();const id=$('exitid').value.trim(),name=$('exitname').value.trim(),upstream=$('exitupstream').value.trim();
+ if(!confirm('Сохранить '+name+'? Новый выход появится в подписках сразу; проверь, что SOCKS5 уже работает.'))return;
+ try{if(await action({action:'exit_set',exit_id:id,exit_name:name,exit_upstream:upstream})){e.target.reset();await readExits()}}catch(err){setmsg(err.message,true)}
+};
 let cfg=null;
 const cfgDocs={subscription:'Подписки',quic:'QUIC',server:'Сервер',relay:'HTTPS-релей',camouflage:'Маскировка',limits:'Лимиты',auth:'Аутентификация',cover:'Фоновый трафик'};
 const cfgNames={public_url:'Публичный URL',server_name:'TLS-имя сервера',enabled:'Включено',url:'Адрес',default_max_sessions_per_client:'Сессий на пользователя',max_sessions_global:'Всего сессий',upstream:'Адрес назначения',origin_url:'Origin URL',base_path:'Базовый путь',listen:'Локальный адрес'};
@@ -428,10 +496,36 @@ function mboxAdminSelectTab(name){
   });
 }
 document.querySelectorAll('[data-mbox-tab]').forEach(button=>
-  button.addEventListener('click',()=>mboxAdminSelectTab(button.dataset.mboxTab)));
+  button.addEventListener('click',()=>{mboxAdminSelectTab(button.dataset.mboxTab);if(button.dataset.mboxTab==='subscriptions')Promise.all([readExits(),readDefaultExitName()]).catch(e=>setmsg(e.message,true));}));
 mboxAdminSelectTab('overview');
 document.querySelectorAll('[data-mbox-open]').forEach(button =>
   button.addEventListener('click', () => mboxAdminSelectTab(button.dataset.mboxOpen)));
+
+// Poll local API only after explicit action; remote sampling is server-timed.
+let monTimer=null, monEpoch=0, monRows=[];
+function monCancelPoll(){monEpoch++;clearTimeout(monTimer);monTimer=null;}
+function monGraph(label, key, unit, scale=1){
+ const div=document.createElement('div');const name=document.createElement('h3');name.textContent=label;div.append(name);
+ const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 600 164');svg.setAttribute('width','100%');svg.setAttribute('role','img');svg.setAttribute('aria-label',label);
+ const make=(tag,a,t)=>{const el=document.createElementNS(ns,tag);for(const [k,v] of Object.entries(a))el.setAttribute(k,v);if(t!==undefined)el.textContent=t;svg.append(el);return el};
+ const vals=monRows.filter(r=>r[key]!==null);const top=Math.max(1,...vals.map(r=>r[key]*scale));const end=Math.max(1,...monRows.map(r=>r.elapsed_s));
+ for(let i=0;i<=4;i++){const y=12+32*i;make('line',{x1:65,x2:590,y1:y,y2:y,stroke:'currentColor',opacity:'.14'});make('text',{x:59,y:y+4,'text-anchor':'end','font-size':11,fill:'currentColor'},(top*(4-i)/4).toFixed(1)+unit)}
+ make('text',{x:65,y:158,'font-size':11,fill:'currentColor'},'0 с');make('text',{x:590,y:158,'text-anchor':'end','font-size':11,fill:'currentColor'},Math.round(end)+' с');
+ let segment=[];const flush=()=>{if(segment.length)make('polyline',{points:segment.join(' '),fill:'none',stroke:'#5796df','stroke-width':2});segment=[]};
+ for(const r of monRows){if(r[key]===null){flush();continue}const x=65+525*r.elapsed_s/end,y=140-128*r[key]*scale/top;segment.push(x+','+y);make('circle',{cx:x,cy:y,r:2,fill:'#5796df'})}flush();div.append(svg);return div;
+}
+function monRender(j){
+ monRows=j.samples||[];const last=monRows[monRows.length-1];const fmt=(n,s)=>n===null||n===undefined?'—':n+s;
+ $('mon-state').textContent=({idle:'Нет измерений',running:'Идёт сбор',finished:'Завершён',stopped:'Остановлен',error:'Ошибка SSH/сбора. Проверьте настройку VPS.'}[j.state]||'Неизвестно')+' · '+monRows.length+' измерений';
+ $('mon-cpu').textContent=fmt(last?.cpu_pct,'%');$('mon-rss').textContent=last?(last.rss_kib/1024).toFixed(2)+' МиБ':'—';$('mon-workers').textContent=fmt(last?.workers,'');$('mon-slots').textContent=last&&last.active_slots!==null?last.active_slots+' / '+last.max_slots:'—';
+ $('mon-warning').textContent=monRows.some(x=>x.incomplete||x.turnover)?'Некоторые процессы недоступны или сменились. CPU может быть занижен.':'CPU рассчитывается по разности счётчиков; первый снимок не содержит CPU.';
+ $('mon-charts').replaceChildren(monGraph('CPU FastCGI','cpu_pct','%'),monGraph('RSS FastCGI','rss_kib',' МиБ',1/1024),monGraph('Активные слоты','active_slots',''));
+ $('mon-start').disabled=$('mon-snapshot').disabled=j.state==='running';$('mon-stop').disabled=j.state!=='running';$('mon-export').disabled=!monRows.length;
+}
+async function monRead(epoch){try{const j=await req('/api/monitor');if(epoch!==monEpoch||!loggedIn)return;monRender(j);if(j.state==='running')monTimer=setTimeout(()=>monRead(epoch),2500)}catch(e){if(epoch===monEpoch)$('mon-state').textContent=e.message}}
+async function monAction(action,duration=0){monCancelPoll();const epoch=monEpoch;try{await req('/api/monitor',{action,duration,interval:Number($('mon-interval').value)});await monRead(epoch)}catch(e){if(epoch===monEpoch){$('mon-state').textContent=e.message}}}
+$('mon-start').onclick=()=>monAction('start',Number($('mon-duration').value));$('mon-snapshot').onclick=()=>monAction('start');$('mon-stop').onclick=()=>monAction('stop');$('mon-read').onclick=()=>{monCancelPoll();monRead(monEpoch)};
+$('mon-export').onclick=()=>{if(!monRows.length)return;const keys=['elapsed_s','cpu_pct','rss_kib','workers','active_slots','max_slots','incomplete','turnover'];const csv=[keys.join(','),...monRows.map(r=>keys.map(k=>r[k]??'').join(','))].join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download='mbox-monitor.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 
 auth();
 })();

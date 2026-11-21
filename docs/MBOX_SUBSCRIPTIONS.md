@@ -1,3 +1,5 @@
+> **Current beta.4.4 behavior (below is older v1 implementation context):** HTTPS subscription **v1** returns the legacy/default route for beta.4.3; **v2** returns that same route plus named country profiles. One canonical subscription URL remains unchanged. For a named exit the profile includes `transport.egress_id`; the beta.4.4 client binds it to authenticated Noise **MBD2** OPEN metadata, and origin selects only a configured loopback SOCKS5. `primary` remains an internal stable profile ID, not an indication of better speed or privileges. An exit label is display-only. `MBD1/MBD2` are not HTTP API versions. The origin's `egress.json` must remain readable by the `mbox` service user (`root:mbox 0640`); recheck this after panel writes. A country profile on Android is not a second ingress or second origin; verify its external exit country separately. See [architecture](ARCHITECTURE.md) and [Admin](ADMIN.md).
+
 <!-- MBOX_BETA43_DOCS10 -->
 > **beta.4.3 context:** The active beta.4.3 subscription user guide starts at [Android](GETTING_STARTED.md); this page retains the technical beta.4.2 protocol design as compatible historical reference.
 

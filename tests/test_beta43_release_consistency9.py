@@ -51,8 +51,8 @@ def test_installer_interactive_explicit_while_staging_safe():
 
 def test_release_metadata_agree():
     version=(ROOT/'VERSION').read_text().strip()
-    assert version=='1.0.0-beta.4.3'
+    assert version=='1.0.0-beta.4.4'
     assert 'mboxctl '+version in (ROOT/'tools/mboxctl/mboxctl.py').read_text()
     gradle=(ROOT/'android/app/build.gradle').read_text()
-    assert "versionName '1.0.0-beta.4.3'" in gradle
-    assert 'versionCode 10' in gradle
+    assert "versionName '1.0.0-beta.4.4'" in gradle
+    assert 'versionCode 11' in gradle

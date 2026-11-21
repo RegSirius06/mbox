@@ -56,6 +56,8 @@ public class MBoxVpnService extends VpnService {
     private static volatile State state = State.STOPPED;
     private static volatile String lastError = "";
     private static volatile String activeTransport = "";
+    private static volatile String datagramState = "off";
+    static String getDatagramState() { return datagramState; }
     private static volatile String connectionPhase = "";
     // MBOX_BETA43_POLISH: process-local, read-only diagnostics; no per-packet polling.
     private static final java.util.concurrent.atomic.AtomicLong connectionAttempts =
@@ -67,7 +69,8 @@ public class MBoxVpnService extends VpnService {
 
     private final AtomicBoolean stoppedLogged = new AtomicBoolean(true);
     private final AtomicLong underlyingChangeGeneration = new AtomicLong();
-    private final TransportPolicy transportPolicy = new TransportPolicy();
+    private final AtomicLong lastWakeProbeElapsed = new AtomicLong();
+    private final TransportPolicy transportPolicy = new TransportPolicy(MBoxVpnService::jitteredReconnectDelay);
 
     private volatile boolean desiredRunning;
     private volatile boolean cleaning;
@@ -126,12 +129,21 @@ public class MBoxVpnService extends VpnService {
                     android.os.PowerManager power = (android.os.PowerManager) getSystemService(POWER_SERVICE);
                     if (power != null && power.isDeviceIdleMode()) return;
                 }
-                // A signal requests a Noise ping; waking up is NOT proof of failure.
+                // Screen-on and Doze-exit may fire together: one authenticated
+                // probe is enough; never probe a disconnected core.
+                if (state != State.CONNECTED) return;
                 Process process = mbox;
                 if (process != null && process.isAlive()) {
                     int pid = corePid;
                     if (pid > 0) {
-                        try { android.os.Process.sendSignal(pid, OsConstants.SIGUSR1); }
+                        long now = SystemClock.elapsedRealtime();
+                        long previous = lastWakeProbeElapsed.get();
+                        if (previous != 0 && now - previous < 10_000L) return;
+                        if (!lastWakeProbeElapsed.compareAndSet(previous, now)) return;
+                        try {
+                            android.os.Process.sendSignal(pid, OsConstants.SIGUSR1);
+                            Log.i(TAG, "WAKE_PROBE requested");
+                        }
                         catch (RuntimeException failure) { Log.w(TAG, "Wake probe request failed"); }
                     }
                 }
@@ -210,6 +222,7 @@ public class MBoxVpnService extends VpnService {
         try {
             // Fail-closed: install the full-route TUN before any outer connection.
             updateState(State.CONNECTING, "");
+            TransportSettings.configure(this, transportPolicy);
             updatePhase("Preparing protected VPN interface and HEV…");
             ensureFailClosedVpnInterface();
 
@@ -237,6 +250,7 @@ public class MBoxVpnService extends VpnService {
                     Process process = startCoreTransport(path);
                     hasConnected = true;
                     long connectedAt = SystemClock.elapsedRealtime();
+                    transportPolicy.connected(requestedMode, path, attemptNetworkGeneration, connectedAt);
 
                     updateState(State.CONNECTED, "");
                     lastSuccessfulConnectionElapsed = SystemClock.elapsedRealtime();
@@ -245,20 +259,37 @@ public class MBoxVpnService extends VpnService {
                     Log.i(TAG, "VPN CONNECTED");
 
                     // The Go core may remain alive after its native QUIC gateway dies.
-                    // A 1-second bounded watch also observes HEV failure and stop requests.
-                    while (desiredRunning && process.isAlive()) {
-                        if (underlyingChangeGeneration.get() != attemptNetworkGeneration) {
-                            throw new Exception("Underlying network changed");
+                    // Poll at most every three seconds while connected. Android's
+                    // network callback and core shutdown still trigger recovery.
+                    boolean plannedFailback = false;
+                    try (QuicFailback failback = new QuicFailback(this, transportPolicy,
+                            requestedMode, path, attemptNetworkGeneration)) {
+                        while (desiredRunning && process.isAlive()) {
+                            if (underlyingChangeGeneration.get() != attemptNetworkGeneration) {
+                                throw new Exception("Underlying network changed");
+                            }
+                            if (quicLabTransport != null && !quicLabTransport.isAlive()) {
+                                throw new Exception("QUIC gateway terminated");
+                            }
+                            if (!TProxyService.TProxyIsRunning()) {
+                                throw new Exception("HEV tun2socks terminated");
+                            }
+                            if (failback.tick(networkMonitor, connectedAt)) {
+                                plannedFailback = true;
+                                break;
+                            }
+                            if (process.waitFor(3, TimeUnit.SECONDS)) break;
                         }
-                        if (quicLabTransport != null && !quicLabTransport.isAlive()) {
-                            throw new Exception("QUIC gateway terminated");
-                        }
-                        if (!TProxyService.TProxyIsRunning()) {
-                            throw new Exception("HEV tun2socks terminated");
-                        }
-                        if (process.waitFor(1, TimeUnit.SECONDS)) break;
                     }
                     if (!desiredRunning) break;
+                    if (plannedFailback && process == mbox && underlyingChangeGeneration.get() == attemptNetworkGeneration) {
+                        updateState(State.RECOVERING, "");
+                        updatePhase("QUIC reachable; verifying new encrypted session…");
+                        Log.i(TAG, "TRANSPORT mode=AUTO code=FAILBACK_REQUESTED");
+                        cleanupCoreTransport(); // Deliberately retain TUN + HEV.
+                        reconnectDelay = RECONNECT_MIN_MS;
+                        continue;
+                    }
                     int code = process.isAlive() ? -1 : process.exitValue();
                     long connectedFor = SystemClock.elapsedRealtime() - connectedAt;
                     if (connectedFor >= STABLE_CONNECTION_MS) {
@@ -319,7 +350,7 @@ public class MBoxVpnService extends VpnService {
                 if (immediateHttpsFallback) {
                     reconnectDelay = RECONNECT_MIN_MS;
                     Log.i(TAG, "TRANSPORT mode=AUTO code=QUIC_FAILED failover=HTTPS cooldown_ms="
-                            + TransportPolicy.QUIC_RETRY_MS);
+                            + transportPolicy.lastDelay());
                     updatePhase("QUIC unavailable; switching to HTTPS…");
                     continue;
                 }
@@ -477,9 +508,10 @@ public class MBoxVpnService extends VpnService {
                 .notify(NOTIFICATION_ID, notification);
     }
 
-    private static void updateState(State newState, String error) {
+    private void updateState(State newState, String error) {
         state = newState;
         lastError = MBoxLogSanitizer.sanitize(error);
+        MBoxTileService.requestRefresh(this);
     }
 
     private synchronized Process startCoreTransport(TransportPolicy.Path path) throws Exception {
@@ -549,11 +581,13 @@ public class MBoxVpnService extends VpnService {
             }
             if (quicLabTransport != null) {
                 processBuilder.environment().put("MBOX_QUIC_UNIX", quicLabTransport.unixPath());
+                if (TransportSettings.datagramsEnabled(this)) { processBuilder.environment().put("MBOX_DATAGRAM", "1"); datagramState = "requested"; }
             }
             if (cronetBridge != null) {
                 processBuilder.environment().put("MBOX_HTTP_BRIDGE_ADDR", cronetBridge.address());
                 processBuilder.environment().put("MBOX_HTTP_BRIDGE_TOKEN", cronetBridge.token());
             }
+            processBuilder.environment().put("MBOX_UDP_MODE", TransportSettings.udpMode(this).name().toLowerCase(java.util.Locale.ROOT));
             processBuilder.environment().put("MBOX_DEVICE_ID", ProfileStore.installationDeviceId(this));
             updatePhase("Starting MBox core and remote authentication…");
             Process process = processBuilder.start();
@@ -585,29 +619,42 @@ public class MBoxVpnService extends VpnService {
         return value.length() > 180 ? value.substring(0, 180) : value;
     }
 
+    // Go log.Printf prefixes timestamps: the PID marker is not at column zero.
+    static int parseCorePid(String line) {
+        final String marker = "NET stage=PROCESS code=CORE_PID pid=";
+        int at = line.indexOf(marker);
+        if (at < 0) return 0;
+        try {
+            int parsed = Integer.parseInt(line.substring(at + marker.length()).trim());
+            return parsed > 0 ? parsed : 0;
+        } catch (NumberFormatException invalid) {
+            return 0;
+        }
+    }
+
     private void readCoreLog(Process process, CountDownLatch ready, CountDownLatch verified) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 final String pidPrefix = "NET stage=PROCESS code=CORE_PID pid=";
-                if (line.startsWith(pidPrefix)) {
-                    try {
-                        int reported = Integer.parseInt(line.substring(pidPrefix.length()));
-                        if (reported > 0 && process == mbox) corePid = reported;
-                    } catch (NumberFormatException ignored) {
-                        Log.w(TAG, "Invalid core PID announcement");
-                    }
-                    continue;
-                }
-                // Keep each authenticated liveness event out of verbose logcat.
-                if (line.contains("NET stage=MBOX_HEALTH code=OK")) {
-                    verified.countDown();
-                    if (process == mbox && desiredRunning) {
-                        updatePhase("Authenticated Noise heartbeat confirmed");
-                    }
+                if (line.contains(pidPrefix)) {
+                    int reported = parseCorePid(line);
+                    if (reported > 0 && process == mbox) corePid = reported;
+                    else Log.w(TAG, "Invalid core PID announcement");
                     continue;
                 }
                 if (process == mbox && desiredRunning) {
+                    if (line.endsWith("DATAGRAM code=ACTIVE")) datagramState = "active";
+                    else if (line.endsWith("DATAGRAM code=STREAMS_FALLBACK")) datagramState = "streams fallback";
+                }
+                // Keep each authenticated liveness event out of verbose logcat.
+                if (line.contains("NET stage=MBOX_HEALTH code=OK")) {
+                    // The supervisor owns the final verified/connected phase. Later
+                    // in-core session renewals must not regress it to startup labels.
+                    verified.countDown();
+                    continue;
+                }
+                if (verified.getCount() != 0 && process == mbox && desiredRunning) {
                     if (line.contains("NET stage=MBOX_OPEN code=MBOX_OPEN_OK")) {
                         updatePhase("Remote MBox session opened; checking Noise…");
                     } else if (line.contains("NET stage=NOISE code=NOISE_OK")) {
@@ -616,7 +663,7 @@ public class MBoxVpnService extends VpnService {
                 }
                 Log.i(TAG, "core: " + MBoxLogSanitizer.sanitize(line));
                 if (line.contains("SOCKS listening on")) {
-                    if (process == mbox && desiredRunning) {
+                    if (verified.getCount() != 0 && process == mbox && desiredRunning) {
                         updatePhase("Local SOCKS ready; verifying remote heartbeat…");
                     }
                     ready.countDown();
@@ -720,6 +767,7 @@ public class MBoxVpnService extends VpnService {
     }
 
     private synchronized void cleanupCoreTransport() {
+        datagramState = "off";
         cleaning = true;
         try {
             corePid = 0;

@@ -26,8 +26,8 @@ jobs:
       - name: Format, vet, tests
         env: {GO111MODULE: 'off'}
         run: |
-          test -z "$(find common/noise common/controlmeta common/flowctl common/wire common/udpwire client server relay tools/mbox-key tools/mbox-link tools/mbox-netprobe -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
-          for d in common/noise common/controlmeta common/flowctl common/wire common/udpwire server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do (cd "$d" && go vet . && go test .); done
+          test -z "$(find common/noise common/controlmeta common/flowctl common/wire common/udpwire common/dgram client server relay tools/mbox-key tools/mbox-link tools/mbox-netprobe -name '*.go' -type f -print0 | xargs -0 gofmt -l)"
+          for d in common/noise common/controlmeta common/flowctl common/wire common/udpwire common/dgram server client relay tools/mbox-key tools/mbox-link tools/mbox-netprobe; do (cd "$d" && go vet . && go test .); done
   go-race:
     runs-on: ubuntu-24.04
     steps:
@@ -42,6 +42,7 @@ jobs:
           (cd common/flowctl && go test -race .)
           (cd common/wire && go test -race .)
           (cd common/udpwire && go test -race .)
+          (cd common/dgram && go test -race .)
           (cd server && go test -race .)
           (cd client && go test -race .)
           (cd relay && go test -race .)
@@ -88,6 +89,7 @@ jobs:
       - run: python -m pip install --disable-pip-version-check pytest==8.4.2
       - run: python -m pytest -q tests
       - run: python tools/check-source-layout.py
+      - run: python tools/check-release-docs.py
       - run: python -m py_compile tools/mboxctl/mboxctl.py && bash -n install.sh android/tools/*.sh tools/*.sh
   android:
     runs-on: ubuntu-24.04

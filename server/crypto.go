@@ -37,6 +37,7 @@ type cryptoState struct {
 	clientID    string
 	accountID   string
 	deviceID    string
+	egressID    string
 	authPSKHash [32]byte
 
 	mu sync.Mutex
@@ -86,6 +87,27 @@ func parseNoiseOpenPayload(payload []byte) (string, error) {
 	return hex.EncodeToString(payload[len(devicePayloadPrefix):]), nil
 }
 
+// MBD2 extends the authenticated Noise payload, never the unauthenticated HTTP URL.
+// Old MBD1 and empty payloads remain fully supported.
+func parseNoiseRoutePayload(payload []byte) (string, string, error) {
+	if len(payload) > 0 && len(payload) >= 4 && bytes.Equal(payload[:4], []byte("MBD2")) {
+		if len(payload) < 4+16+1 {
+			return "", "", errors.New("invalid routed Noise payload")
+		}
+		n := int(payload[20])
+		if n < 1 || n > 16 || len(payload) != 21+n {
+			return "", "", errors.New("invalid routed Noise payload")
+		}
+		route := string(payload[21:])
+		if !validEgressID(route) {
+			return "", "", errors.New("invalid routed Noise payload")
+		}
+		return hex.EncodeToString(payload[4:20]), route, nil
+	}
+	device, err := parseNoiseOpenPayload(payload)
+	return device, "", err
+}
+
 func noisePrologue(id string) []byte {
 	p := []byte("MBOX3-NOISE\x00")
 	p = append(p, []byte(id)...)
@@ -121,7 +143,12 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if err != nil {
 		return nil, nil, errors.New("open authentication failed")
 	}
-	deviceID, err := parseNoiseOpenPayload(payload)
+	// Only the historical empty payload is optional. MBD1 and MBD2 are
+	// authenticated Noise OPEN payloads and remain compatible regardless.
+	if len(payload) == 0 && !acceptLegacyEmptyOpen {
+		return nil, nil, errors.New("open authentication failed")
+	}
+	deviceID, egressID, err := parseNoiseRoutePayload(payload)
 	if err != nil {
 		return nil, nil, errors.New("open authentication failed")
 	}
@@ -136,7 +163,7 @@ func serverHandshake(openBody []byte, sid string) (*cryptoState, []byte, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	return &cryptoState{controlKey: key, up: recv, down: send, clientID: clientID, accountID: policy.AccountID, deviceID: deviceID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
+	return &cryptoState{controlKey: key, up: recv, down: send, clientID: clientID, accountID: policy.AccountID, deviceID: deviceID, egressID: egressID, authPSKHash: sha256.Sum256(policy.PSK)}, msg2, nil
 }
 
 func cryptoAAD(sid string, header []byte, chunkIndex uint16, chunkLen uint16) []byte {

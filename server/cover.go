@@ -175,15 +175,38 @@ func startCoverEngine(cfg coverConfig) {
 	go e.run()
 }
 
+func (e *coverEngine) hasActiveSessions() bool {
+	return activeRealSessions(time.Duration(e.cfg.IdleAfterMS)*time.Millisecond) > 0
+}
+
+// Called after a successful authenticated OPEN. Do not acquire sessionsMu
+// while holding the cover mutex: writeStatus takes them in that order.
+func coverSessionOpened() {
+	e := globalCover
+	if e == nil || !e.cfg.Enabled {
+		return
+	}
+	e.mu.Lock()
+	cancel := e.currentCancel
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 func (e *coverEngine) run() {
-	// Privacy invariant: server-side cover is frontend background activity, not
-	// a per-user signal. Its lifecycle must never depend on whether a real MBox
-	// session exists, otherwise frontend observers get a negative correlation
-	// oracle for real-session transitions.
 	for {
+		// Avoid unnecessary FastCGI work while genuine sessions are active.
+		// Check only once per second in suppression; status writes happen on
+		// transitions, not on every tick.
+		if e.hasActiveSessions() {
+			e.setState("suppressed")
+			time.Sleep(time.Second)
+			continue
+		}
 		grace := e.randDuration(e.cfg.StartGraceMinMS, e.cfg.StartGraceMaxMS)
 		e.setState("grace")
-		if !e.waitContext(context.Background(), grace) {
+		if !e.waitContext(context.Background(), grace) || e.hasActiveSessions() {
 			continue
 		}
 
@@ -249,7 +272,7 @@ func (e *coverEngine) runProfile(ctx context.Context, profile string) {
 
 func (e *coverEngine) page(ctx context.Context, count, minDelayMS, maxDelayMS int) bool {
 	for i := 0; i < count; i++ {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || e.hasActiveSessions() {
 			return false
 		}
 		if !e.sendOne(ctx) {
@@ -265,7 +288,7 @@ func (e *coverEngine) page(ctx context.Context, count, minDelayMS, maxDelayMS in
 }
 
 func (e *coverEngine) sendOne(ctx context.Context) bool {
-	if !e.allowRequest() {
+	if ctx.Err() != nil || e.hasActiveSessions() || !e.allowRequest() {
 		return false
 	}
 	ext := e.randomResourceType()
@@ -387,8 +410,11 @@ func (e *coverEngine) writeStatus() {
 
 func (e *coverEngine) waitContext(ctx context.Context, d time.Duration) bool {
 	deadline := time.Now().Add(d)
+	if e.hasActiveSessions() {
+		return false
+	}
 	for time.Now().Before(deadline) {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || e.hasActiveSessions() {
 			return false
 		}
 		step := time.Second

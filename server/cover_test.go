@@ -63,10 +63,48 @@ func TestActiveRealSessions(t *testing.T) {
 	}
 }
 
-func TestCoverSchedulingIsIndependentOfRealSessions(t *testing.T) {
-	e := &coverEngine{cfg: coverConfig{StatusFile: ""}, state: "active", stateSince: time.Now()}
-	if e.state != "active" {
-		t.Fatalf("unexpected cover state %q", e.state)
+func TestCoverSuppressesRequestsForRealSessions(t *testing.T) {
+	sessionsMu.Lock()
+	old := sessions
+	sessions = map[string]*session{"recent": {lastSeen: time.Now()}}
+	sessionsMu.Unlock()
+	defer func() { sessionsMu.Lock(); sessions = old; sessionsMu.Unlock() }()
+	requests := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	e := &coverEngine{
+		cfg: coverConfig{PublicURL: ts.URL, Path: "/assets/", IdleAfterMS: 120000, MaxRPS: 10, MaxRequestsPerHour: 10},
+		rng: seedRand(), client: ts.Client(),
+	}
+	if e.sendOne(context.Background()) || requests != 0 {
+		t.Fatal("cover must not call frontend while a real session is active")
+	}
+	if e.waitContext(context.Background(), time.Second) {
+		t.Fatal("cover wait must be interrupted by real session")
+	}
+	sessionsMu.Lock()
+	delete(sessions, "recent")
+	sessionsMu.Unlock()
+	if !e.sendOne(context.Background()) || requests != 1 {
+		t.Fatal("cover should resume after session closes")
+	}
+}
+
+func TestCoverOpenCancelsCurrentProfile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e := &coverEngine{cfg: coverConfig{Enabled: true}, currentCancel: cancel}
+	old := globalCover
+	globalCover = e
+	defer func() { globalCover = old }()
+	coverSessionOpened()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("authenticated OPEN must cancel in-flight cover profile")
 	}
 }
 

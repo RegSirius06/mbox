@@ -1,9 +1,9 @@
-# MBox status — 1.0.0-beta.4.3
+# MBox status — 1.0.0-beta.4.4 (pre-publication)
 
-[Русский](ru/STATUS.md) · [Release notes](../RELEASE_NOTES.md) · [Release process](RELEASE_ENGINEERING_BETA43.md)
+[Русский](ru/STATUS.md) · [Release notes](../RELEASE_NOTES.md) · [Checklist](../RELEASE_CHECKLIST.md)
 
-**Source candidate:** 1.0.0-beta.4.3; Android `versionCode=10`, package `io.mbox.android`. Reported latest checks: 273 Python tests passed after UX8, Android release compilation passed again after UX9. The exact final production-signed APK needs its own acceptance evidence, checksum, device upgrade, and CI run before publication.
+**Local source/production testing:** Android `versionCode=11`; origin rekey/UDP modes and subscriptions/admin updated on an operator's VPS. Two allowed SOCKS5 exits DK/KZ verified by external country check; beta.4.3 client refreshed subscription and connected through default DK. Separate QUIC DATAGRAM on-demand attach, ~30s idle expiration and reattach after new UDP validated in Android/server logs. Screen-off, airplane mode and Wi-Fi/mobile handovers reported working. `install.sh --check`, Go/race and several focused tests passed; those results do **not** mean an end-to-end fresh-install/rollback or final GitHub release validation passed.
 
-**Deployed VPS:** Admin UX7 works, but `mboxctl version` was reported as beta.4.2. Origin update is a separate operation with a maintenance window and backup. The shared-host FastCGI frontend is also a separate deployment. Do not call the whole production setup upgraded until these components are checked.
+**GitHub:** repository main currently still has beta.4.3 until the operator commits/pushes beta.4.4. Production-signed final APK and GitHub prerelease publication must be verified separately. REG.RU is an independent FastCGI ingress and was not automatically upgraded.
 
-**Open security evidence:** physical IPv4/IPv6/DNS/UDP capture, Android Lockdown matrix, long soak, and complete TLS certificate rotation remain separate from a cosmetic prerelease. No independent security audit or universal DPI bypass claimed. REG.RU CPU metrics and Android core packets/bytes/streams counters are not integrated.
+**Unresolved:** REG.RU CPU/worker resource budget (high-priority operational risk); battery profiling, full Lockdown/physical IPv4/IPv6/DNS/UDP capture, long soak, independent crypto review, and notification test from published beta.4.3 → beta.4.4. No absolute DPI or leak guarantees.

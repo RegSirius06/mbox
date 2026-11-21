@@ -38,6 +38,136 @@ SESSION_LIFETIME = 60 * 60
 ADMIN = None
 
 
+# MBOX_BETA44_MONITOR: one bounded, authenticated observation; no idle polling.
+import threading
+import selectors
+import math
+
+MONITOR_DIR = Path('/etc/mbox-admin/relay-monitor')
+MONITOR_LOCK = threading.Lock()
+MONITOR_JOB = None
+MONITOR_DURATIONS = (0, 300, 900, 1800, 3600)
+MONITOR_INTERVALS = (5, 10, 30)
+
+
+def monitor_settings():
+    # Only root-provisioned fixed target and pinned host key; never supplied by HTTP.
+    for p in (MONITOR_DIR, MONITOR_DIR/'config.json', MONITOR_DIR/'id_ed25519', MONITOR_DIR/'known_hosts'):
+        s = p.lstat()
+        expected = stat.S_ISDIR if p == MONITOR_DIR else stat.S_ISREG
+        if not expected(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o077:
+            raise ValueError('Unsafe monitor files')
+    host = json.loads((MONITOR_DIR/'config.json').read_text())['host']
+    if not isinstance(host, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*', host):
+        raise ValueError('Invalid monitor target')
+    return ['/usr/bin/ssh', '-F', '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+            '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile='+str(MONITOR_DIR/'known_hosts'),
+            '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=8',
+            '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2',
+            '-i', str(MONITOR_DIR/'id_ed25519'), host, 'mbox-monitor']
+
+
+def monitor_row(raw):
+    obj = json.loads(raw)
+    keys = ('elapsed_s', 'cpu_pct', 'rss_kib', 'workers', 'active_slots', 'max_slots', 'incomplete', 'turnover')
+    if not isinstance(obj, dict) or set(obj) != set(keys):
+        raise ValueError('Invalid sample')
+    for k in keys[:6]:
+        v = obj[k]
+        if v is None and k in ('cpu_pct', 'active_slots'):
+            continue
+        if type(v) not in (int, float) or v < 0 or v > 10**12 or not math.isfinite(v):
+            raise ValueError('Invalid sample')
+    if not 1 <= obj['max_slots'] <= 128 or (obj['active_slots'] is not None and obj['active_slots'] > obj['max_slots']):
+        raise ValueError('Invalid sample')
+    if any(type(obj[k]) is not bool for k in keys[6:]):
+        raise ValueError('Invalid sample')
+    return obj
+
+
+def monitor_worker(job, argv):
+    p = None
+    outcome = 'finished'
+    try:
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+        p.stdin.write((json.dumps({'duration':job['duration'], 'interval':job['interval']})+'\n').encode())
+        p.stdin.close()
+        deadline = time.monotonic() + job['duration'] + 25
+        buffer = b''
+        with selectors.DefaultSelector() as sel:
+            sel.register(p.stdout, selectors.EVENT_READ)
+            while not job['stop'].is_set():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('timeout')
+                if not sel.select(0.5):
+                    continue
+                chunk = os.read(p.stdout.fileno(), 4096)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b'\n' in buffer:
+                    line, buffer = buffer.split(b'\n', 1)
+                    if len(line) > 2048:
+                        raise ValueError('sample size')
+                    row = monitor_row(line)
+                    with MONITOR_LOCK:
+                        if len(job['samples']) >= 723:
+                            raise ValueError('sample limit')
+                        job['samples'].append(row)
+                if len(buffer) > 2048:
+                    raise ValueError('sample size')
+        if job['stop'].is_set():
+            outcome = 'stopped'
+        elif buffer or p.wait(timeout=3) != 0 or not job['samples']:
+            outcome = 'error'
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        outcome = 'error'
+    finally:
+        if p is not None:
+            if p.poll() is None:
+                p.terminate()
+                try: p.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    p.kill(); p.wait()
+            if p.stdout: p.stdout.close()
+            if p.stdin: p.stdin.close()
+        with MONITOR_LOCK:
+            job['state'] = outcome
+
+
+def monitor_start(data):
+    global MONITOR_JOB
+    duration, interval = data.get('duration'), data.get('interval')
+    if type(duration) is not int or type(interval) is not int or duration not in MONITOR_DURATIONS or interval not in MONITOR_INTERVALS:
+        raise ValueError('Invalid monitoring interval or duration')
+    try: argv = monitor_settings()
+    except (OSError, ValueError, KeyError, TypeError):
+        raise ValueError('Configure SSH monitoring on VPS first')
+    with MONITOR_LOCK:
+        if MONITOR_JOB and MONITOR_JOB['state'] == 'running':
+            raise ValueError('Monitoring already running')
+        job = {'state':'running', 'duration':duration, 'interval':interval, 'samples':[], 'stop':threading.Event()}
+        MONITOR_JOB = job
+        threading.Thread(target=monitor_worker, args=(job,argv), daemon=True).start()
+    return {'ok':True}
+
+
+def monitor_status():
+    with MONITOR_LOCK:
+        if MONITOR_JOB is None:
+            return {'state':'idle', 'samples':[]}
+        return {k: list(v) if k == 'samples' else v for k,v in MONITOR_JOB.items() if k != 'stop'}
+
+
+def monitor_stop():
+    with MONITOR_LOCK:
+        if MONITOR_JOB and MONITOR_JOB['state'] == 'running':
+            MONITOR_JOB['stop'].set()
+    return {'ok':True}
+
+
+
 def validate_uid(value):
     if not isinstance(value, str) or not USER_ID.fullmatch(value) or value.startswith('-'):
         raise ValueError('Invalid user ID (1..63 characters: letters, digits, . _ -; cannot start with -)')
@@ -193,6 +323,29 @@ class AdminConfig:
             if result.returncode or not result.stdout.startswith(b'\x89PNG\r\n\x1a\n') or len(result.stdout) > 120000:
                 raise ValueError('QR cannot hold this link; use subscription URL instead')
             return base64.b64encode(result.stdout).decode('ascii')
+        if action == 'exit_default_get':
+            return self.sub_run('exit-default-get')
+        if action == 'exit_default_set':
+            label = data.get('default_exit_name', '')
+            if not isinstance(label, str) or not 1 <= len(label) <= 48 or any(ord(c) < 32 or ord(c) == 127 for c in label):
+                raise ValueError('Invalid default exit name')
+            return self.sub_run('exit-default-set', label)
+        if action == 'exit_list':
+            return self.sub_run('exit-list')
+        if action == 'exit_set':
+            eid, label, upstream = data.get('exit_id',''),data.get('exit_name',''),data.get('exit_upstream','')
+            if not isinstance(eid,str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,15}',eid):
+                raise ValueError('Invalid exit ID')
+            if not isinstance(label,str) or not 1 <= len(label) <= 48 or any(ch in label for ch in '\r\n\t'):
+                raise ValueError('Invalid exit name')
+            if not isinstance(upstream,str) or len(upstream)>64:
+                raise ValueError('Invalid upstream')
+            return self.sub_run('exit-set',eid,label,upstream)
+        if action == 'exit_delete':
+            eid = data.get('exit_id','')
+            if not isinstance(eid,str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,15}',eid) or data.get('confirm_id') != eid:
+                raise ValueError('Exit deletion requires ID confirmation')
+            return self.sub_run('exit-delete',eid)
         if action == 'endpoint_list':
             return self.sub_run('endpoint-list')
         if action == 'endpoint_set':
@@ -418,6 +571,8 @@ class Handler(BaseHTTPRequestHandler):
         _, session = self.session()
         if not session:
             return self.respond(401, {'error': 'Authentication required'})
+        if path == '/api/monitor':
+            return self.respond(200, monitor_status())
         if path == '/api/session':
             return self.respond(200, {'csrf': session['csrf'], 'quic_profiles': ADMIN.quic_enabled()})
         if path == '/api/settings':
@@ -470,18 +625,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/logout':
             SESSIONS.pop(token, None)
             return self.respond(200, {'ok': True}, 'mbox_admin=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/')
+        if path == '/api/monitor':
+            try:
+                action = data.get('action')
+                if action == 'start': return self.respond(200, monitor_start(data))
+                if action == 'stop': return self.respond(200, monitor_stop())
+                raise ValueError('Invalid monitor action')
+            except ValueError as exc:
+                return self.respond(400, {'error': str(exc)})
         if path != '/api/action':
             return self.respond(404, {'error': 'Not found'})
         try:
             action = data.get('action')
-            if not isinstance(action, str) or action not in {'add','add_batch','enable','disable','revoke','rotate','renew','limit','expiry_clear','delete','delete_batch','link','sub_issue','sub_revoke','endpoint_list','endpoint_set','endpoint_delete','ctl_read','config_apply','qr_encode'}:
+            if not isinstance(action, str) or action not in {'add','add_batch','enable','disable','revoke','rotate','renew','limit','expiry_clear','delete','delete_batch','link','sub_issue','sub_revoke','endpoint_list','endpoint_set','endpoint_delete','exit_list','exit_set','exit_delete','exit_default_get','exit_default_set','ctl_read','config_apply','qr_encode'}:
                 raise ValueError('Invalid action')
             result = ADMIN.execute(action, data)
             if action in ('link', 'sub_issue'):
                 return self.respond(200, {'link': result})
             if action == 'config_apply':
                 return self.respond(200, result)
-            if action in ('endpoint_list', 'ctl_read'):
+            if action in ('endpoint_list', 'exit_list', 'exit_default_get', 'ctl_read'):
                 return self.respond(200, {'output': result})
             if action == 'qr_encode':
                 return self.respond(200, {'qr_png': result})

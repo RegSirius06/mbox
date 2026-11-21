@@ -237,6 +237,17 @@ func NewCipherState(key []byte) (*CipherState, error) {
 	return c, nil
 }
 
+// DatagramSecret exports a domain-separated derivative of this directional
+// Noise split secret, NOT the reliable-record key or PSK. The caller uses
+// distinct datagram-purpose subkeys; reliable records are unchanged.
+func (c *CipherState) DatagramSecret() [32]byte {
+	mac := hmac.New(sha256.New, c.key[:])
+	mac.Write([]byte("MBOX-NOISE-DATAGRAM-EXPORT-V1\x00"))
+	var out [32]byte
+	copy(out[:], mac.Sum(nil))
+	return out
+}
+
 func (c *CipherState) Overhead() int { return c.aead.Overhead() }
 func (c *CipherState) Seal(n uint64, ad, plain []byte) ([]byte, error) {
 	if len(plain)+c.aead.Overhead() > MaxMsgLen {

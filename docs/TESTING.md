@@ -1,3 +1,5 @@
+> **beta.4.4 final check:** use the commands in [release checklist](../RELEASE_CHECKLIST.md), including `GO111MODULE=off go test -race ./common/dgram ./common/noise ./client ./server ./relay`, native QUIC vet/race, complete Python tests, signed APK verification, v1/v2 + MBD1/MBD2 compatibility, real UDP AUTO/STREAMS/DATAGRAM routing, real exit IP (DK/KZ), battery and physical Lockdown capture. `bash install.sh --check` is read-only, **not** a fresh-install/rollback acceptance test. The beta.4.1 matrix below is historical.
+
 # MBox beta.4.1 — reproducible tests and evidence
 
 [Русский](ru/TESTING.md) · [Leak matrix](ANDROID_FAIL_CLOSED_TEST_PLAN.md) · [Acceptance](BETA4_1_STATUS.md)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"../common/dgram"
 	flowctl "../common/flowctl"
 	"net"
 	"sync"
@@ -66,9 +67,13 @@ type session struct {
 	clientID        string // opaque wire auth handle (legacy clients may still send account ID)
 	accountID       string // backend-only account grouping identity
 	deviceID        string
+	upstreamAddr    string // resolved from authenticated Noise route (no client-supplied address)
 	streams         map[uint32]*stream
 	udpFlows        map[uint32]*udpFlow
 	crypto          *cryptoState
+	datagramUsed    bool   // protected by mu; rejects replayed legacy attaches
+	datagramEpoch   uint32 // highest accepted rekeyed lane epoch
+	datagramLane    atomic.Pointer[dgram.Lane]
 	downFrames      [][]byte
 	downBytes       int
 	downReady       chan struct{}

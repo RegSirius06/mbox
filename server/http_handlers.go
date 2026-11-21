@@ -95,7 +95,14 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s := &session{clientID: cryptoState.clientID, accountID: cryptoState.accountID, deviceID: cryptoState.deviceID, streams: make(map[uint32]*stream), crypto: cryptoState, upCache: make(map[uint64]cachedUpResponse), downReady: make(chan struct{}, 1), downReplay: make(map[uint64]cachedDownResponse), downReqSeen: make(map[uint64]struct{}), done: make(chan struct{}), lastSeen: time.Now()}
+	// Fail closed on unknown routes: never silently send a selected country
+	// through the origin's default egress.
+	upstream, err := resolveSessionUpstream(cryptoState.egressID)
+	if err != nil {
+		camouflageNotFound(w)
+		return
+	}
+	s := &session{upstreamAddr: upstream, clientID: cryptoState.clientID, accountID: cryptoState.accountID, deviceID: cryptoState.deviceID, streams: make(map[uint32]*stream), crypto: cryptoState, upCache: make(map[uint64]cachedUpResponse), downReady: make(chan struct{}, 1), downReplay: make(map[uint64]cachedDownResponse), downReqSeen: make(map[uint64]struct{}), done: make(chan struct{}), lastSeen: time.Now()}
 	openReply, err := wire.EncodeHTTPEnvelope(noiseReply)
 	if err != nil {
 		camouflageNotFound(w)
@@ -108,6 +115,7 @@ func handleOpen(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
+	coverSessionOpened()
 	w.Header().Set("Content-Type", camouflage.ContentType)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(openReply)))

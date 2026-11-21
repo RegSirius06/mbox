@@ -1,0 +1,17 @@
+# beta.4.4: FastCGI recovery hardening (candidate)
+
+Observed on beta.4.3: HTTPS failed repeatedly after QUIC loss and recovered after the operator terminated only the site's FastCGI workers. This isolates the likely fault domain, but does not establish whether a stuck FastCGI socket, exhausted slots, stale origin connection or another hosting-layer condition caused that particular outage.
+
+The standard Go FastCGI server operates on an inherited listener without I/O deadlines and its request context is not an authoritative signal for browser disconnection. The existing 20-second origin request context does not bound a blocking FastCGI socket write.
+
+Changes:
+- Preserve the standard FastCGI implementation, inherited listener and all existing route, TLS, HMAC and slot checks. Set a 40-second read-inactivity and 5-second write-inactivity deadline on the accepted Apache-to-worker socket. Close it on I/O errors; do not forcibly close healthy connections on a periodic schedule.
+- A 45-second per-request hard watchdog wraps the complete application handler, including body reading/validation, slot admission and upstream proxy work. It therefore also bounds a slow-trickle upload after FastCGI has parsed the request headers. If a request wedges beyond the limit, only its worker process exits nonzero, allowing the kernel to release its locks. The hosting process manager must replace the worker. Other requests in that same worker can be interrupted; confirm the provider's worker model and keep all legitimate request paths below 45 seconds (the current origin budget is 20 seconds). The watchdog does not promise instant cancellation when a remote phone disconnects.
+- On upstream transport errors except context cancellation, close idle upstream connections only, preserving healthy pooling and active connections.
+- Logs: `FCGI_IO_TIMEOUT direction=read|write`, `FCGI_WATCHDOG_EXIT reason=upstream_handler_deadline`, `FCGI_SLOT_BUSY` (at most once per 30 seconds per worker). No IDs or request URLs are emitted by these new diagnostics. A read timeout can also be normal idle connection expiration, so is not proof of an outage.
+
+No new dependencies, public endpoints, configuration keys, scheduled process killing or changes to origin/client wire format; old Android and origin versions remain supported by design. Slot reservations, remote dashboard recycling and performance tuning are deliberately excluded pending measurements. CPU impact has not been measured.
+
+Tests: stdlib FastCGI over net.Pipe, real flock admission and release, successful next request after a blocked write, truncated request body, a watchdog around a stalled body reader, watchdog completion and expiry, OS lock release on watchdog subprocess exit. Test fixtures shorten deadlines. This is not the REG.RU deployment or a full VPN test.
+
+On Arch: `GO111MODULE=off go test -race ./relay`, `GO111MODULE=off go vet ./relay`, `./tools/build-relay.sh /tmp/mbox-relay-beta44.fcgi`. Use the existing explicit `mboxctl relay deploy --dry-run` workflow, with the newly built file's checksum, then a separately approved deploy; see SAFE_SSH_RELAY_DEPLOY.md. Keep the old binary/backup, verify health and actual HTTPS VPN traffic, and observe logs after induced QUIC outages. Do not delete live slot lock files: unlinking a held flock can invalidate cross-worker admission. No origin restart is required for this isolated relay-only change.

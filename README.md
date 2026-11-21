@@ -1,65 +1,30 @@
-# MBox — a self-hosted VPN using QUIC and HTTPS
+# MBox — a self-hosted Android VPN over QUIC and HTTPS
 
-[Русский](README.ru.md) · [Get connected](docs/GETTING_STARTED.md) · [Set up a server](docs/SERVER_QUICKSTART.md) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md)
+[Русский](README.ru.md) · [Install Android](docs/GETTING_STARTED.md) · [Run the server](docs/SERVER_QUICKSTART.md) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md)
 
-**Current release candidate: `1.0.0-beta.4.3`.** This is an experimental prerelease, not RC1. The signed APK should not be described as published until final checks are complete and a GitHub Release exists.
+**Release candidate: `1.0.0-beta.4.4`, Android `versionCode=11`.** Experimental **pre-release**, not RC1 or a claim of independent security certification. A GitHub release / APK is not considered published until the signed artifact, CI and final SHA are verified.
 
-## What is MBox?
-
-MBox is an experimental VPN you can run on **your own server**. The Android app creates an Android VPN interface and carries application traffic through an encrypted connection. You control the server, access credentials, and users rather than relying on someone else's VPN subscription.
-
-You need an **administrator-issued profile** or an **HTTPS subscription URL**. Installing the APK alone does not provide a working VPN.
-
-MBox supports two outer transports:
-
-- **QUIC:** direct UDP connection to the configured origin when the network allows it.
-- **HTTPS:** a TCP-based connection via an ordinary HTTPS frontend (for example, a REG.RU FastCGI shared-host site). This is a **backup ingress path**, not necessarily a second VPN server. Both paths can lead to the same origin.
-
-In **AUTO**, QUIC is preferred and HTTPS is attempted immediately after a QUIC failure. QUIC attempts are held off for 60 seconds following a failure; network changes reset the preference. Transport transitions can interrupt existing application connections; seamless multipath is not implemented.
+MBox uses Android VpnService/TUN with authenticated Noise (`Noise_NKpsk0_25519_AESGCM_SHA256`) and two outer **ingress transports**: direct QUIC/HTTP3 to a VPS gateway, or Chromium Cronet HTTPS/HTTP2 via an optional FastCGI web frontend. **AUTO transport** prefers QUIC and switches to HTTPS on failure. REG.RU is an optional ingress, not the exit country.
 
 ```text
-Android (MBox) --QUIC/UDP---------------------> origin VPS ----> Internet / configured exit
-       |                                           ^
-       +--HTTPS/TCP--> shared hosting FastCGI -----+
+                     +-- QUIC/HTTP3 --> VPS gateway ---+
+Android VPN + Noise -|                                  +--> MBox origin --> sing-box SOCKS5 --> DK / KZ / other exit
+                     +-- HTTPS/Cronet --> FastCGI ------+
 ```
 
-**Security limitations:** MBox is not an anonymity guarantee, does not promise connectivity in every network, and has not received an independent physical-network leak audit. The Android VPN is designed to fail closed, but you must validate this on the device, particularly with Always-on and Lockdown.
+**UDP in beta.4.4:** over QUIC, application UDP prefers a separate authenticated QUIC DATAGRAM lane. It is established only on real UDP demand, expires at idle, and can reattach to the same Noise session with a new authenticated AEAD epoch; **no periodic DATAGRAM PING**. While the lane is idle/connecting or unavailable, **AUTO UDP** uses reliable MBox streams. TCP and control traffic always use reliable streams. Under seven taps on the MBox title → Diagnostics → UDP routing, developers may select `AUTO` (default), `STREAMS only`, or `DATAGRAM only` (no UDP fallback; packets may be dropped). This developer option is deliberately hidden.
 
-## Connect on Android
+**Subscriptions and exits:** one stable secret HTTPS subscription URL may return multiple selectable profiles on Android beta.4.4. Subscription **v1** remains available for beta.4.3 (default exit); **v2** supplies per-profile authenticated `egress_id` for additional origin-controlled exits. MBD1/MBD2 are Noise OPEN payload formats, **not HTTP API version numbers**. Legacy clients use the configured default exit. Default and named exits are equally usable; the default exists for compatibility. Do not equate different exit countries with independent origin uptime.
 
-1. Use an **Android 10+ / ARM64** device.
-2. Once published, obtain the **production-signed** `MBox-1.0.0-beta.4.3-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases). Avoid third-party debug builds.
-3. Ask an administrator for a `mbox://` profile or HTTPS subscription URL. Treat either as a **secret**.
-4. In MBox, open Settings → Profiles to import a link or use the clipboard import shortcut.
-5. Tap **Connect**, accept the Android VPN permission, and check for **Connected**.
-6. Disconnect in the app or from the persistent VPN notification.
+**Compatibility:** operator-tested beta.4.3 subscription refresh and connection to the updated origin, and beta.4.4 Denmark/Kazakhstan routes via separate local SOCKS5 exits. This is **not** a guarantee for all earlier betas, hosts or networks. HTTPS works without QUIC; DATAGRAM is not needed for initial authentication.
 
-An APK signed with the **same production certificate** can be installed in place over beta.4.2, preserving app data. Never uninstall simply to upgrade; stored credentials may be lost. See the [Android user guide](docs/GETTING_STARTED.md).
+## Get started
 
-## Run your own server
+1. Obtain the **production-signed** `MBox-1.0.0-beta.4.4-android-arm64.apk` from [GitHub Releases](https://github.com/RegSirius06/mbox/releases) **after publication**. Android 10+, ARM64.
+2. Import an administrator-issued `mbox://` profile or secret HTTPS subscription URL. APKs do not contain public VPN credentials.
+3. Choose a profile, connect and approve Android VPN permission. With the same signing certificate use an in-place upgrade; **do not uninstall to update**.
+4. For servers, see [first installation](docs/SERVER_QUICKSTART.md), [operations](docs/BETA44_OPERATIONS.md), [subscriptions and exits](docs/MBOX_SUBSCRIPTIONS.md), and [security](docs/SECURITY.md).
 
-You need a Linux VPS, SSH administration access, and, depending on the selected path, domain/TLS configuration. The REG.RU HTTPS frontend is **optional** if direct QUIC meets your needs; it can serve as an alternate ingress.
+**Important limitations:** physical-device IPv4/IPv6/DNS/UDP leak capture, full Android Lockdown matrix, battery comparison, prolonged soak and REG.RU FastCGI CPU-budget tests remain open. Hosting may throttle/kill FastCGI workers; **the REG.RU CPU-risk issue is not fixed by DATAGRAM** because DATAGRAM bypasses that frontend. No promise of anonymity or universal filtering bypass. Never publish PSKs, `mbox://` links, subscription tokens, passwords, runtime configuration or keystore contents.
 
-[First-install guide](docs/SERVER_QUICKSTART.md) · [Web administration](docs/ADMIN.md) · [Optional panel domain](docs/MBOX_ADMIN_PUBLIC_ACCESS.md) · [Shared hosting](docs/REG_RU_SHARED_HOSTING.md).
-
-The interactive `./install.sh` targets **first-time origin installation**. Existing servers should use explicit modes such as `--check`, `--with-admin`, or `--with-subscriptions`. **`--upgrade-origin` restarts the origin and can disconnect users.** Never run it merely to update a displayed version label.
-
-## Changes in beta.4.3
-
-- Android screen redesign, profiles/subscriptions, Russian and English UI, system light/dark theme, readable Connect/Disconnect buttons, custom launcher icon, persistent notification with open/disconnect actions.
-- Hidden diagnostics (seven taps on MBox). Reports connection state, transport, recovery attempts, and notification status. **Actual core packets/bytes/streams counters are not yet available.**
-- GitHub Releases link and optional in-VPN new-version checks. When the VPN is down, no direct Internet fallback is used for update checks.
-- Refreshed MBox Admin with SSH access and an **opt-in** HTTPS domain mode. Public exposure is disabled by default.
-- Interactive setup with an explicitly confirmed REG.RU relay step; improved stale FastCGI worker handling during managed relay deployment.
-- **REG.RU CPU monitoring is not implemented.** The UI does not contain live provider metrics.
-
-Project source versioning is unified, but a VPS running the previous `mboxctl` remains beta.4.2 until you explicitly deploy an updated server component. Updating an HTML page does not update the origin.
-
-## Documentation and support
-
-[Historical beta.4 release status](docs/BETA4_RELEASE_STATUS.md) — legacy evidence, not a substitute for beta.4.3 acceptance.
-
-
-[Release notes](RELEASE_NOTES.md) · [Security limits](docs/SECURITY.md) · [Tests](docs/TESTING.md) · [Release checklist](RELEASE_CHECKLIST.md) · [Changelog](CHANGELOG.md).
-
-Source and releases: https://github.com/RegSirius06/mbox. Never post `mbox://` URLs, PSKs, HMAC secrets, signing keys, or private subscription links in issues, logs, or screenshots.
+[Release notes](RELEASE_NOTES.md) · [Release checklist](RELEASE_CHECKLIST.md) · [All docs](docs/README.md) · [Source and issues](https://github.com/RegSirius06/mbox).

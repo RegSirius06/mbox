@@ -1,21 +1,21 @@
-# MBox v1.0.0-beta.4.3 — Android & Admin prerelease
+# MBox v1.0.0-beta.4.4 — prerelease
 
-**DRAFT — DO NOT PUBLISH UNTIL ALL PENDING FIELDS ARE FILLED.**
+**DRAFT — REPLACE ALL PENDING FIELDS BEFORE PUBLISHING.** Android 10+, ARM64, `io.mbox.android`, versionCode 11. **Pre-release, not RC1.**
 
-Android 10+ / ARM64 · `io.mbox.android` · `versionCode=10` · **Pre-release, not RC1**.
+## Changes
 
-**New:** redesigned Android UI; Russian/English; Android system light/dark theme and corrected Connect/Disconnect contrast; custom MBox launcher icon; profile/subscription management; notification Disconnect; hidden diagnostics; GitHub update alerts; redesigned server web panel with optional HTTPS domain; interactive first-install shared-hosting setup.
+- On-demand authenticated QUIC DATAGRAM for application UDP; idle expiration and reattach using independent AEAD keys per epoch. No constant DATAGRAM PING. TCP/control still reliable streams.
+- Hidden diagnostics UDP modes: AUTO (default), STREAMS only, DATAGRAM only. Android recovery/power and profile selection UI improvements.
+- One stable subscription with v2 country profiles and authenticated origin `egress_id`; beta.4.3 retains v1/default-exit compatibility. Operator verified DK/KZ separate exits.
+- Updated MBox Admin/installer safety, private SSH access, FastCGI build self-check and origin rollback flow. QUIC and HTTPS remain independent ingress paths.
 
-**Connection:** QUIC is preferred, with HTTPS fallback via the configured ingress (such as REG.RU FastCGI). No intentional Noise/wire or provisioning format change; existing beta.4.2 client profiles should remain supported. Transport transitions may interrupt sessions. No QUIC DATAGRAM/multipath.
+## Limits / open issues
 
-**Limitations:** no independently audited physical no-leak guarantee, no universal DPI bypass, REG.RU CPU metrics not integrated, Android packets/bytes/streams counters unavailable. Deployed origin version may differ from the app version until explicitly upgraded. Do not expose the admin panel without documented TLS and access controls.
+REG.RU FastCGI CPU/worker quotas are **not fixed**; keepalive-free DATAGRAM does not reduce CPU on HTTPS FastCGI traffic. Battery claims need controlled measurement. No independent leak/Lockdown or cryptography audit, no universal DPI promise. GitHub update alerts require a post-release test on beta.4.3.
 
-**Artifacts:** production-signed APK only. Do not publish debug/unsigned APK, profiles, private subscription links, keystore or runtime secrets.
-
-- APK: `MBox-1.0.0-beta.4.3-android-arm64.apk`
+**Assets:** production-signed APK only, never debug/profile/keystore/runtime secrets.
+- APK: `MBox-1.0.0-beta.4.4-android-arm64.apk`
 - APK SHA-256: `PENDING_SIGNED_APK_SHA256`
-- Production signing certificate SHA-256: `17FD9F930B8356BECA8251DD215220771A3D020E56FB6A703B526C35CCCD7586`
-- Git commit: `PENDING_FINAL_GIT_SHA`
-- Final device test and server deployment status: `PENDING_FINAL_VERIFICATION`
-
-[English release notes](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.3/RELEASE_NOTES.md) · [Russian release notes](https://github.com/RegSirius06/mbox/blob/v1.0.0-beta.4.3/RELEASE_NOTES.ru.md)
+- Signing certificate SHA-256: `17FD9F930B8356BECA8251DD215220771A3D020E56FB6A703B526C35CCCD7586`
+- Git SHA: `PENDING_FINAL_GIT_SHA`
+- Signed APK field check / server status: `PENDING_FINAL_VERIFICATION`

@@ -1,3 +1,5 @@
+> **Финальная проверка beta.4.4:** команды в [чек-листе](../../RELEASE_CHECKLIST.ru.md), в том числе `GO111MODULE=off go test -race ./common/dgram ./common/noise ./client ./server ./relay`, vet/race native QUIC, полный pytest, подписанный APK, совместимость v1/v2 и MBD1/MBD2, три UDP-режима, внешний IP DK/KZ, батарея и физический Lockdown capture. `bash install.sh --check` read-only и **не** заменяет испытание fresh-install/rollback. Матрица beta.4.1 ниже — история.
+
 # MBox beta.4.1 — воспроизводимое тестирование и доказательства
 
 [English](../TESTING.md) · [Матрица утечек](ANDROID_FAIL_CLOSED_TEST_PLAN.md) · [Статус](BETA4_1_STATUS.md)

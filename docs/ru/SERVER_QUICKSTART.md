@@ -1,4 +1,6 @@
-# MBox 1.0.0-beta.4.3: первый запуск собственного сервера
+**Для beta.4.4:** `bash install.sh --check` ничего не меняет и **не** доказывает успешную установку с нуля. При обновлении production сохраняйте текущие systemd-unit, Unix-сокет DATAGRAM/ACL и отдельный QUIC gateway. Нужны backup, план отката и окно обслуживания. Несколько стран выхода — в [Подписках](MBOX_SUBSCRIPTIONS.md).
+
+# MBox 1.0.0-beta.4.4: первый запуск собственного сервера
 
 [English](../SERVER_QUICKSTART.md) · [Для пользователя Android](GETTING_STARTED.md) · [Администратор](ADMIN.md)
 
